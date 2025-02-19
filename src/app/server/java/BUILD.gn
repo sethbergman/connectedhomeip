@@ -27,6 +27,8 @@ static_library("jni") {
     "AndroidAppServerWrapper.cpp",
     "AndroidAppServerWrapper.h",
     "CHIPAppServer-JNI.cpp",
+    "ChipAppServerDelegate.cpp",
+    "ChipAppServerDelegate.h",
     "ChipFabricProvider-JNI.cpp",
     "ChipFabricProvider-JNI.h",
     "ChipThreadWork.cpp",
@@ -35,6 +37,7 @@ static_library("jni") {
 
   deps = [
     "${chip_root}/src/app/server",
+    "${chip_root}/src/data-model-providers/codegen:instance-header",
     "${chip_root}/src/inet",
     "${chip_root}/src/lib",
     "${chip_root}/src/platform",
@@ -43,6 +46,8 @@ static_library("jni") {
   ]
 
   public_configs = [ "${chip_root}/src:includes" ]
+
+  cflags = [ "-Wconversion" ]
 }
 
 android_library("java") {
@@ -60,6 +65,7 @@ android_library("java") {
 
   sources = [
     "src/chip/appserver/ChipAppServer.java",
+    "src/chip/appserver/ChipAppServerDelegate.java",
     "src/chip/appserver/ChipAppServerException.java",
     "src/chip/appserver/ChipFabricProvider.java",
     "src/chip/appserver/Fabric.java",
@@ -68,9 +74,9 @@ android_library("java") {
   javac_flags = [ "-Xlint:deprecation" ]
 
   # TODO: add classpath support (we likely need to add something like
-  #  ..../platforms/android-21/android.jar to access BLE items)
+  #  ..../platforms/android-30/android.jar to access BLE items)
 }
 
 java_prebuilt("android") {
-  jar_path = "${android_sdk_root}/platforms/android-21/android.jar"
+  jar_path = "${android_sdk_root}/platforms/android-30/android.jar"
 }

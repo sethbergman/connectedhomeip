@@ -1,6 +1,5 @@
 /**
- *
- *    Copyright (c) 2020 Project CHIP Authors
+ *    Copyright (c) 2020-2024 Project CHIP Authors
  *
  *    Licensed under the Apache License, Version 2.0 (the "License");
  *    you may not use this file except in compliance with the License.
@@ -16,8 +15,19 @@
  */
 
 #import "MTRDeviceControllerDelegateBridge.h"
+
+#import "MTRCommissioneeInfo_Internal.h"
 #import "MTRDeviceController.h"
+#import "MTRDeviceController_Internal.h"
+#import "MTREndpointInfo_Internal.h"
 #import "MTRError_Internal.h"
+#import "MTRLogging_Internal.h"
+#import "MTRMetricKeys.h"
+#import "MTRMetricsCollector.h"
+#import "MTRProductIdentity.h"
+#import "MTRUtilities.h"
+
+using namespace chip::Tracing::DarwinFramework;
 
 MTRDeviceControllerDelegateBridge::MTRDeviceControllerDelegateBridge(void)
     : mDelegate(nil)
@@ -50,38 +60,59 @@ MTRCommissioningStatus MTRDeviceControllerDelegateBridge::MapStatus(chip::Contro
     case chip::Controller::DevicePairingDelegate::Status::SecurePairingFailed:
         rv = MTRCommissioningStatusFailed;
         break;
-    case chip::Controller::DevicePairingDelegate::Status::SecurePairingDiscoveringMoreDevices:
-        rv = MTRCommissioningStatusDiscoveringMoreDevices;
-        break;
     }
     return rv;
 }
 
 void MTRDeviceControllerDelegateBridge::OnStatusUpdate(chip::Controller::DevicePairingDelegate::Status status)
 {
-    NSLog(@"DeviceControllerDelegate status updated: %d", status);
+    MTRDeviceController * strongController = mController;
+
+    MTR_LOG("%@ DeviceControllerDelegate status updated: %d", strongController, status);
+
+    // If pairing failed, PASE failed. However, since OnPairingComplete(failure_code) might not be invoked in all cases, mark
+    // end of PASE with timeout as assumed failure. If OnPairingComplete is invoked, the right error code will be updated in
+    // the end event
+    if (status == chip::Controller::DevicePairingDelegate::Status::SecurePairingFailed) {
+        MATTER_LOG_METRIC_END(kMetricSetupPASESession, CHIP_ERROR_TIMEOUT);
+    }
 
     id<MTRDeviceControllerDelegate> strongDelegate = mDelegate;
-    if ([strongDelegate respondsToSelector:@selector(controller:statusUpdate:)]) {
-        if (strongDelegate && mQueue) {
+    if (strongDelegate && mQueue && strongController) {
+        if ([strongDelegate respondsToSelector:@selector(controller:statusUpdate:)]) {
             MTRCommissioningStatus commissioningStatus = MapStatus(status);
             dispatch_async(mQueue, ^{
-                [strongDelegate controller:mController statusUpdate:commissioningStatus];
+                [strongDelegate controller:strongController statusUpdate:commissioningStatus];
             });
+        }
+
+        // If PASE session setup fails and the client implements the delegate that accepts metrics, invoke the delegate
+        // to mark end of commissioning request.
+        // Since OnPairingComplete(failure_code) might not be invoked in all cases, use this opportunity to inform of failed commissioning
+        // and default the error to timeout since that is best guess in this layer.
+        if (status == chip::Controller::DevicePairingDelegate::Status::SecurePairingFailed && [strongDelegate respondsToSelector:@selector(controller:commissioningComplete:nodeID:metrics:)]) {
+            OnCommissioningComplete(mDeviceNodeId, CHIP_ERROR_TIMEOUT);
         }
     }
 }
 
 void MTRDeviceControllerDelegateBridge::OnPairingComplete(CHIP_ERROR error)
 {
-    NSLog(@"DeviceControllerDelegate Pairing complete. Status %s", chip::ErrorStr(error));
+    MTRDeviceController * strongController = mController;
+
+    if (error == CHIP_NO_ERROR) {
+        MTR_LOG("%@ MTRDeviceControllerDelegate PASE session establishment succeeded.", strongController);
+    } else {
+        MTR_LOG_ERROR("%@ MTRDeviceControllerDelegate PASE session establishment failed: %" CHIP_ERROR_FORMAT, strongController, error.Format());
+    }
+    MATTER_LOG_METRIC_END(kMetricSetupPASESession, error);
 
     id<MTRDeviceControllerDelegate> strongDelegate = mDelegate;
-    if ([strongDelegate respondsToSelector:@selector(controller:commissioningSessionEstablishmentDone:)]) {
-        if (strongDelegate && mQueue) {
+    if (strongDelegate && mQueue && strongController) {
+        if ([strongDelegate respondsToSelector:@selector(controller:commissioningSessionEstablishmentDone:)]) {
             dispatch_async(mQueue, ^{
                 NSError * nsError = [MTRError errorForCHIPErrorCode:error];
-                [strongDelegate controller:mController commissioningSessionEstablishmentDone:nsError];
+                [strongDelegate controller:strongController commissioningSessionEstablishmentDone:nsError];
             });
         }
     }
@@ -89,22 +120,75 @@ void MTRDeviceControllerDelegateBridge::OnPairingComplete(CHIP_ERROR error)
 
 void MTRDeviceControllerDelegateBridge::OnPairingDeleted(CHIP_ERROR error)
 {
-    NSLog(@"DeviceControllerDelegate Pairing deleted. Status %s", chip::ErrorStr(error));
+    MTR_LOG("DeviceControllerDelegate Pairing deleted. Status %s", chip::ErrorStr(error));
 
     // This is never actually called; just do nothing.
 }
 
+void MTRDeviceControllerDelegateBridge::OnReadCommissioningInfo(const chip::Controller::ReadCommissioningInfo & info)
+{
+    MTRDeviceController * strongController = mController;
+    id<MTRDeviceControllerDelegate> strongDelegate = mDelegate;
+    VerifyOrReturn(strongDelegate && mQueue && strongController);
+
+    // TODO: These checks are pointless since currently mController == mDelegate
+    BOOL wantCommissioneeInfo = [strongDelegate respondsToSelector:@selector(controller:readCommissioneeInfo:)];
+    BOOL wantProductIdentity = [strongDelegate respondsToSelector:@selector(controller:readCommissioningInfo:)];
+    if (wantCommissioneeInfo || wantProductIdentity) {
+        auto * commissioneeInfo = [[MTRCommissioneeInfo alloc] initWithCommissioningInfo:info];
+        dispatch_async(mQueue, ^{
+            if (wantCommissioneeInfo) { // prefer the newer delegate method over the deprecated one
+                [strongDelegate controller:strongController readCommissioneeInfo:commissioneeInfo];
+            } else if (wantProductIdentity) {
+                [strongDelegate controller:strongController readCommissioningInfo:commissioneeInfo.productIdentity];
+            }
+        });
+    }
+}
+
 void MTRDeviceControllerDelegateBridge::OnCommissioningComplete(chip::NodeId nodeId, CHIP_ERROR error)
 {
-    NSLog(@"DeviceControllerDelegate Commissioning complete. NodeId %llu Status %s", nodeId, chip::ErrorStr(error));
+    MTRDeviceController * strongController = mController;
+
+    MTR_LOG("%@ DeviceControllerDelegate Commissioning complete. NodeId 0x%016llx Status %s", strongController, nodeId, chip::ErrorStr(error));
+    MATTER_LOG_METRIC_END(kMetricDeviceCommissioning, error);
 
     id<MTRDeviceControllerDelegate> strongDelegate = mDelegate;
-    if ([strongDelegate respondsToSelector:@selector(controller:commissioningComplete:)]) {
-        if (strongDelegate && mQueue) {
+    if (strongDelegate && mQueue && strongController) {
+
+        // Always collect the metrics to avoid unbounded growth of the stats in the collector
+        MTRMetrics * metrics = [[MTRMetricsCollector sharedInstance] metricSnapshot:TRUE];
+        MTR_LOG("%@ Device commissioning complete with metrics %@", strongController, metrics);
+
+        if ([strongDelegate respondsToSelector:@selector(controller:commissioningComplete:nodeID:)] ||
+            [strongDelegate respondsToSelector:@selector(controller:commissioningComplete:nodeID:metrics:)]) {
             dispatch_async(mQueue, ^{
                 NSError * nsError = [MTRError errorForCHIPErrorCode:error];
-                [strongDelegate controller:mController commissioningComplete:nsError];
+                NSNumber * nodeID = nil;
+                if (error == CHIP_NO_ERROR) {
+                    nodeID = @(nodeId);
+                }
+
+                // If the client implements the metrics delegate, prefer that over others
+                if ([strongDelegate respondsToSelector:@selector(controller:commissioningComplete:nodeID:metrics:)]) {
+                    [strongDelegate controller:strongController commissioningComplete:nsError nodeID:nodeID metrics:metrics];
+                } else {
+                    [strongDelegate controller:strongController commissioningComplete:nsError nodeID:nodeID];
+                }
+            });
+            return;
+        }
+        // If only the DEPRECATED function is defined
+        if ([strongDelegate respondsToSelector:@selector(controller:commissioningComplete:)]) {
+            dispatch_async(mQueue, ^{
+                NSError * nsError = [MTRError errorForCHIPErrorCode:error];
+                [strongDelegate controller:strongController commissioningComplete:nsError];
             });
         }
     }
+}
+
+void MTRDeviceControllerDelegateBridge::SetDeviceNodeID(chip::NodeId deviceNodeId)
+{
+    mDeviceNodeId = deviceNodeId;
 }

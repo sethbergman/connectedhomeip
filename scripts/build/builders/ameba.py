@@ -15,7 +15,7 @@
 import os
 from enum import Enum, auto
 
-from .builder import Builder
+from .builder import Builder, BuilderOutput
 
 
 class AmebaBoard(Enum):
@@ -27,6 +27,7 @@ class AmebaApp(Enum):
     ALL_CLUSTERS_MINIMAL = auto()
     LIGHT = auto()
     PIGWEED = auto()
+    LIGHT_SWITCH = auto()
 
     @property
     def ExampleName(self):
@@ -36,6 +37,8 @@ class AmebaApp(Enum):
             return 'all-clusters-minimal-app'
         elif self == AmebaApp.LIGHT:
             return 'lighting-app'
+        elif self == AmebaApp.LIGHT_SWITCH:
+            return 'light-switch-app'
         elif self == AmebaApp.PIGWEED:
             return 'pigweed-app'
         else:
@@ -49,6 +52,8 @@ class AmebaApp(Enum):
             return 'chip-ameba-all-clusters-minimal-app'
         elif self == AmebaApp.LIGHT:
             return 'chip-ameba-lighting-app'
+        elif self == AmebaApp.LIGHT_SWITCH:
+            return 'chip-ameba-light-switch-app'
         elif self == AmebaApp.PIGWEED:
             return 'chip-ameba-pigweed-app'
         else:
@@ -80,22 +85,27 @@ class AmebaBuilder(Builder):
                       title='Generating ' + self.identifier)
 
     def _build(self):
-        self._Execute(['ninja', '-C', self.output_dir],
-                      title='Building ' + self.identifier)
+        cmd = ['ninja', '-C', self.output_dir]
+
+        if self.ninja_jobs is not None:
+            cmd.append('-j' + str(self.ninja_jobs))
+
+        self._Execute(cmd, title='Building ' + self.identifier)
 
     def build_outputs(self):
-        return {
-            self.app.AppNamePrefix + '.axf':
-                os.path.join(self.output_dir, 'asdk', 'target_image2.axf'),
-            self.app.AppNamePrefix + '.map':
+        yield BuilderOutput(
+            os.path.join(self.output_dir, 'asdk', 'target_image2.axf'),
+            self.app.AppNamePrefix + '.axf')
+        if self.options.enable_link_map_file:
+            yield BuilderOutput(
                 os.path.join(self.output_dir, 'asdk', 'target_image2.map'),
-            'km0_boot_all.bin':
-                os.path.join(self.output_dir, 'asdk',
-                             'bootloader', 'km0_boot_all.bin'),
-            'km4_boot_all.bin':
-                os.path.join(self.output_dir, 'asdk',
-                             'bootloader', 'km4_boot_all.bin'),
-            'km0_km4_image2.bin':
-                os.path.join(self.output_dir, 'asdk',
-                             'image', 'km0_km4_image2.bin'),
-        }
+                self.app.AppNamePrefix + '.map')
+        yield BuilderOutput(
+            os.path.join(self.output_dir, 'asdk', 'bootloader', 'km0_boot_all.bin'),
+            'km0_boot_all.bin')
+        yield BuilderOutput(
+            os.path.join(self.output_dir, 'asdk', 'bootloader', 'km4_boot_all.bin'),
+            'km4_boot_all.bin')
+        yield BuilderOutput(
+            os.path.join(self.output_dir, 'asdk', 'image', 'km0_km4_image2.bin'),
+            'km0_km4_image2.bin')

@@ -15,13 +15,14 @@
 #    limitations under the License.
 #
 
-from dataclasses import dataclass, asdict, field, make_dataclass
-from typing import ClassVar, List, Dict, Any, Mapping, Type, Union, ClassVar
 import enum
 import typing
-from chip import tlv, ChipUtility
+from dataclasses import asdict, dataclass, field, make_dataclass
+from typing import Any, ClassVar, Dict, List, Mapping, Union
+
+from chip import ChipUtility, tlv
 from chip.clusters.Types import Nullable, NullValue
-from dacite import from_dict
+from dacite import from_dict  # type: ignore
 
 
 def GetUnionUnderlyingType(typeToCheck, matchingType=None):
@@ -31,12 +32,15 @@ def GetUnionUnderlyingType(typeToCheck, matchingType=None):
         If that is 'None' (not to be confused with NoneType), then it will retrieve
         the 'real' type behind the union, i.e not Nullable && not None
     '''
-    if (not(typing.get_origin(typeToCheck) == typing.Union)):
+    if (not (typing.get_origin(typeToCheck) == typing.Union)):
         return None
 
     for t in typing.get_args(typeToCheck):
         if (matchingType is None):
-            if (t != type(None) and t != Nullable):
+            # Comparison below explicitly not using 'isinstance' as that doesn't do what we want.
+            # type_none is simple hack for Flake8 E721
+            type_none = type(None)
+            if (t != type_none and t != Nullable):
                 return t
         else:
             if (t == matchingType):
@@ -48,8 +52,8 @@ def GetUnionUnderlyingType(typeToCheck, matchingType=None):
 @dataclass
 class ClusterObjectFieldDescriptor:
     Label: str = ''
-    Tag: int = None
-    Type: Type = None
+    Tag: typing.Optional[int] = None
+    Type: type = type(None)
 
     def _PutSingleElementToTLV(self, tag, val, elementType, writer: tlv.TLVWriter, debugPath: str = '?'):
         if issubclass(elementType, ClusterObject):
@@ -109,16 +113,16 @@ class ClusterObjectFieldDescriptor:
 class ClusterObjectDescriptor:
     Fields: List[ClusterObjectFieldDescriptor]
 
-    def GetFieldByTag(self, tag: int) -> ClusterObjectFieldDescriptor:
-        for field in self.Fields:
-            if field.Tag == tag:
-                return field
+    def GetFieldByTag(self, tag: int) -> typing.Optional[ClusterObjectFieldDescriptor]:
+        for _field in self.Fields:
+            if _field.Tag == tag:
+                return _field
         return None
 
-    def GetFieldByLabel(self, label: str) -> ClusterObjectFieldDescriptor:
-        for field in self.Fields:
-            if field.Label == label:
-                return field
+    def GetFieldByLabel(self, label: str) -> typing.Optional[ClusterObjectFieldDescriptor]:
+        for _field in self.Fields:
+            if _field.Label == label:
+                return _field
         return None
 
     def _ConvertNonArray(self, debugPath: str, elementType, value: Any) -> Any:
@@ -136,7 +140,7 @@ class ClusterObjectDescriptor:
         return elementType.descriptor.TagDictToLabelDict(debugPath, value)
 
     def TagDictToLabelDict(self, debugPath: str, tlvData: Dict[int, Any]) -> Dict[str, Any]:
-        ret = {}
+        ret: typing.Dict[Any, Any] = {}
         for tag, value in tlvData.items():
             descriptor = self.GetFieldByTag(tag)
             if not descriptor:
@@ -152,7 +156,7 @@ class ClusterObjectDescriptor:
                 realType = GetUnionUnderlyingType(descriptor.Type)
                 if (realType is None):
                     raise ValueError(
-                        f"Field {debugPath}.{self.Label} has no valid underlying data model type")
+                        f"Field {debugPath}.{descriptor.Label} has no valid underlying data model type")
 
                 valueType = realType
             else:
@@ -171,14 +175,13 @@ class ClusterObjectDescriptor:
 
     def TLVToDict(self, tlvBuf: bytes) -> Dict[str, Any]:
         tlvData = tlv.TLVReader(tlvBuf).get().get('Any', {})
-        return self.TagDictToLabelDict([], tlvData)
+        return self.TagDictToLabelDict('', tlvData)
 
     def DictToTLVWithWriter(self, debugPath: str, tag, data: Mapping, writer: tlv.TLVWriter):
         writer.startStructure(tag)
-        for field in self.Fields:
-            val = data.get(field.Label, None)
-            field.PutFieldToTLV(field.Tag, val, writer,
-                                debugPath + f'.{field.Label}')
+        for _field in self.Fields:
+            val = data.get(_field.Label, None)
+            _field.PutFieldToTLV(_field.Tag, val, writer, debugPath + f'.{_field.Label}')
         writer.endContainer()
 
     def DictToTLV(self, data: dict) -> bytes:
@@ -204,7 +207,34 @@ class ClusterObject:
         raise NotImplementedError()
 
 
+# The below dictionaries will be filled dynamically
+# and are used for quick lookup/mapping from cluster/attribute id to the correct class
+ALL_CLUSTERS: typing.Dict = {}
+ALL_ATTRIBUTES: typing.Dict = {}
+# These need to be separate because there can be overlap in command ids for commands and responses.
+ALL_ACCEPTED_COMMANDS: typing.Dict = {}
+ALL_GENERATED_COMMANDS: typing.Dict = {}
+ALL_EVENTS: typing.Dict = {}
+
+
 class ClusterCommand(ClusterObject):
+    def __init_subclass__(cls, *args, **kwargs) -> None:
+        """Register a subclass."""
+        super().__init_subclass__(*args, **kwargs)
+        try:
+            if cls.is_client:
+                if cls.cluster_id not in ALL_ACCEPTED_COMMANDS:
+                    ALL_ACCEPTED_COMMANDS[cls.cluster_id] = {}
+                ALL_ACCEPTED_COMMANDS[cls.cluster_id][cls.command_id] = cls
+            else:
+                if cls.cluster_id not in ALL_GENERATED_COMMANDS:
+                    ALL_GENERATED_COMMANDS[cls.cluster_id] = {}
+                ALL_GENERATED_COMMANDS[cls.cluster_id][cls.command_id] = cls
+        except NotImplementedError:
+            # handle case where the ClusterAttribute class is not (fully) subclassed
+            # and accessing the id property throws a NotImplementedError.
+            pass
+
     @ChipUtility.classproperty
     def cluster_id(self) -> int:
         raise NotImplementedError()
@@ -227,6 +257,14 @@ class Cluster(ClusterObject):
     especially the TLV decoding logic. Also ThreadNetworkDiagnostics has an attribute with the same name so we
     picked data_version as its name.
     '''
+    id: Any
+
+    def __init_subclass__(cls, *args, **kwargs) -> None:
+        """Register a subclass."""
+        super().__init_subclass__(*args, **kwargs)
+        # register this cluster in the ALL_CLUSTERS dict for quick lookups
+        ALL_CLUSTERS[cls.id] = cls
+
     @property
     def data_version(self) -> int:
         return self._data_version
@@ -249,10 +287,22 @@ class ClusterAttributeDescriptor:
     '''
     The ClusterAttributeDescriptor is used for holding an attribute's metadata like its cluster id, attribute id and its type.
 
-    Users should not initialize an object based on this class. Instead, users should pass the subclass objects to tell some methods what they want.
+    Users should not initialize an object based on this class. Instead, users should pass
+    the subclass objects to tell some methods what they want.
 
-    The implementation of this functions is quite tricky, it will create a cluster object on-the-fly, and use it for actual encode / decode routine to save lines of code.
+    The implementation of this functions is quite tricky, it will create a cluster object on-the-fly,
+    and use it for actual encode / decode routine to save lines of code.
     '''
+
+    def __init_subclass__(cls, *args, **kwargs) -> None:
+        """Register a subclass."""
+        super().__init_subclass__(*args, **kwargs)
+        if cls.standard_attribute:
+            if cls.cluster_id not in ALL_ATTRIBUTES:
+                ALL_ATTRIBUTES[cls.cluster_id] = {}
+            # register this clusterattribute in the ALL_ATTRIBUTES dict for quick lookups
+            ALL_ATTRIBUTES[cls.cluster_id][cls.attribute_id] = cls
+
     @classmethod
     def ToTLV(cls, tag: Union[int, None], value):
         writer = tlv.TLVWriter()
@@ -264,7 +314,8 @@ class ClusterAttributeDescriptor:
     @classmethod
     def FromTLV(cls, tlvBuffer: bytes):
         obj_class = cls._cluster_object
-        return obj_class.FromDict(obj_class.descriptor.TagDictToLabelDict('', {0: tlv.TLVReader(tlvBuffer).get().get('Any', {})})).Value
+        return obj_class.FromDict(
+            obj_class.descriptor.TagDictToLabelDict('', {0: tlv.TLVReader(tlvBuffer).get().get('Any', {})})).Value
 
     @classmethod
     def FromTagDictOrRawValue(cls, val: Any):
@@ -288,6 +339,10 @@ class ClusterAttributeDescriptor:
         return False
 
     @ChipUtility.classproperty
+    def standard_attribute(cls) -> bool:
+        return True
+
+    @ChipUtility.classproperty
     def _cluster_object(cls) -> ClusterObject:
         return make_dataclass('InternalClass',
                               [
@@ -306,6 +361,15 @@ class ClusterAttributeDescriptor:
 
 
 class ClusterEvent(ClusterObject):
+    def __init_subclass__(cls, *args, **kwargs) -> None:
+        """Register a subclass."""
+        super().__init_subclass__(*args, **kwargs)
+
+        if cls.cluster_id not in ALL_EVENTS:
+            ALL_EVENTS[cls.cluster_id] = {}
+        # register this clusterattribute in the ALL_ATTRIBUTES dict for quick lookups
+        ALL_EVENTS[cls.cluster_id][cls.event_id] = cls
+
     @ChipUtility.classproperty
     def cluster_id(self) -> int:
         raise NotImplementedError()

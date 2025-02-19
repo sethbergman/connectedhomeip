@@ -35,22 +35,36 @@ struct CASEClientInitParams
     FabricTable * fabricTable                                          = nullptr;
     Credentials::GroupDataProvider * groupDataProvider                 = nullptr;
 
-    Optional<ReliableMessageProtocolConfig> mrpLocalConfig = Optional<ReliableMessageProtocolConfig>::Missing();
+    // mrpLocalConfig should not generally be set to anything other than
+    // NullOptional.  Doing that can lead to different parts of the system
+    // claiming different MRP parameters for the same node.
+    Optional<ReliableMessageProtocolConfig> mrpLocalConfig = NullOptional;
+
+    CHIP_ERROR Validate() const
+    {
+        // sessionResumptionStorage can be nullptr when resumption is disabled.
+        // certificateValidityPolicy is optional, too.
+        VerifyOrReturnError(sessionManager != nullptr, CHIP_ERROR_INCORRECT_STATE);
+        VerifyOrReturnError(exchangeMgr != nullptr, CHIP_ERROR_INCORRECT_STATE);
+        VerifyOrReturnError(fabricTable != nullptr, CHIP_ERROR_INCORRECT_STATE);
+        VerifyOrReturnError(groupDataProvider != nullptr, CHIP_ERROR_INCORRECT_STATE);
+
+        return CHIP_NO_ERROR;
+    }
 };
 
 class DLL_EXPORT CASEClient
 {
 public:
-    CASEClient(const CASEClientInitParams & params);
-
     void SetRemoteMRPIntervals(const ReliableMessageProtocolConfig & remoteMRPConfig);
 
-    CHIP_ERROR EstablishSession(const ScopedNodeId & peer, const Transport::PeerAddress & peerAddress,
-                                const ReliableMessageProtocolConfig & remoteMRPConfig, SessionEstablishmentDelegate * delegate);
+    const ReliableMessageProtocolConfig & GetRemoteMRPIntervals();
+
+    CHIP_ERROR EstablishSession(const CASEClientInitParams & params, const ScopedNodeId & peer,
+                                const Transport::PeerAddress & peerAddress, const ReliableMessageProtocolConfig & remoteMRPConfig,
+                                SessionEstablishmentDelegate * delegate);
 
 private:
-    CASEClientInitParams mInitParams;
-
     CASESession mCASESession;
 };
 

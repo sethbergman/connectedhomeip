@@ -22,8 +22,11 @@
  *          platforms based on the MediaTek SDK.
  */
 /* this file behaves like a config.h, comes first */
+#include <functional>
+
 #include <platform/internal/CHIPDeviceLayerInternal.h>
 
+#include <platform/PlatformManager.h>
 #include <platform/mt793x/MT793XConfig.h>
 
 #include <lib/core/CHIPEncoding.h>
@@ -41,16 +44,16 @@ const MT793XConfig::Key MT793XConfig::kConfigKey_SerialNum   = { .Namespace = kC
 const MT793XConfig::Key MT793XConfig::kConfigKey_UniqueId    = { .Namespace = kConfigNamespace_ChipFactory, .Name = "unique-id" };
 const MT793XConfig::Key MT793XConfig::kConfigKey_MfrDeviceId = { .Namespace = kConfigNamespace_ChipFactory, .Name = "device-id" };
 const MT793XConfig::Key MT793XConfig::kConfigKey_MfrDeviceCert       = { .Namespace = kConfigNamespace_ChipFactory,
-                                                                   .Name      = "device-cert" };
+                                                                         .Name      = "device-cert" };
 const MT793XConfig::Key MT793XConfig::kConfigKey_MfrDevicePrivateKey = { .Namespace = kConfigNamespace_ChipFactory,
                                                                          .Name      = "device-key" };
 const MT793XConfig::Key MT793XConfig::kConfigKey_ManufacturingDate   = { .Namespace = kConfigNamespace_ChipFactory,
-                                                                       .Name      = "mfg-date" };
+                                                                         .Name      = "mfg-date" };
 const MT793XConfig::Key MT793XConfig::kConfigKey_SetupPinCode = { .Namespace = kConfigNamespace_ChipFactory, .Name = "pin-code" };
 const MT793XConfig::Key MT793XConfig::kConfigKey_MfrDeviceICACerts     = { .Namespace = kConfigNamespace_ChipFactory,
-                                                                       .Name      = "device-ca-certs" };
+                                                                           .Name      = "device-ca-certs" };
 const MT793XConfig::Key MT793XConfig::kConfigKey_SetupDiscriminator    = { .Namespace = kConfigNamespace_ChipFactory,
-                                                                        .Name      = "discriminator" };
+                                                                           .Name      = "discriminator" };
 const MT793XConfig::Key MT793XConfig::kConfigKey_Spake2pIterationCount = { .Namespace = kConfigNamespace_ChipFactory,
                                                                            .Name      = "iteration-count" };
 const MT793XConfig::Key MT793XConfig::kConfigKey_Spake2pSalt     = { .Namespace = kConfigNamespace_ChipFactory, .Name = "salt" };
@@ -68,10 +71,10 @@ const MT793XConfig::Key MT793XConfig::kConfigKey_FabricSecret = { .Namespace = k
 const MT793XConfig::Key MT793XConfig::kConfigKey_LastUsedEpochKeyId = { .Namespace = kConfigNamespace_ChipConfig,
                                                                         .Name      = "last-ek-id" };
 const MT793XConfig::Key MT793XConfig::kConfigKey_FailSafeArmed      = { .Namespace = kConfigNamespace_ChipConfig,
-                                                                   .Name      = "fail-safe-armed" };
+                                                                        .Name      = "fail-safe-armed" };
 const MT793XConfig::Key MT793XConfig::kConfigKey_GroupKey = { .Namespace = kConfigNamespace_ChipConfig, .Name = "group-key" };
 const MT793XConfig::Key MT793XConfig::kConfigKey_HardwareVersion    = { .Namespace = kConfigNamespace_ChipConfig,
-                                                                     .Name      = "hardware-ver" };
+                                                                        .Name      = "hardware-ver" };
 const MT793XConfig::Key MT793XConfig::kConfigKey_RegulatoryLocation = { .Namespace = kConfigNamespace_ChipConfig,
                                                                         .Name      = "reg-location" };
 const MT793XConfig::Key MT793XConfig::kConfigKey_CountryCode = { .Namespace = kConfigNamespace_ChipConfig, .Name = "country-code" };
@@ -82,7 +85,21 @@ const MT793XConfig::Key MT793XConfig::kConfigKey_WiFiSEC     = { .Namespace = kC
 const MT793XConfig::Key MT793XConfig::kConfigKey_GroupKeyBase = { .Namespace = kConfigNamespace_ChipConfig,
                                                                   .Name      = "group-key-base" };
 const MT793XConfig::Key MT793XConfig::kConfigKey_GroupKeyMax  = { .Namespace = kConfigNamespace_ChipConfig,
-                                                                 .Name      = "group-key-max" };
+                                                                  .Name      = "group-key-max" };
+const MT793XConfig::Key MT793XConfig::kConfigKey_LockUser     = { .Namespace = kConfigNamespace_ChipConfig, .Name = "lock-user" };
+const MT793XConfig::Key MT793XConfig::kConfigKey_Credential   = { .Namespace = kConfigNamespace_ChipConfig, .Name = "credential" };
+const MT793XConfig::Key MT793XConfig::kConfigKey_LockUserName = { .Namespace = kConfigNamespace_ChipConfig,
+                                                                  .Name      = "lock-user-name" };
+const MT793XConfig::Key MT793XConfig::kConfigKey_CredentialData   = { .Namespace = kConfigNamespace_ChipConfig,
+                                                                      .Name      = "credential-data" };
+const MT793XConfig::Key MT793XConfig::kConfigKey_UserCredentials  = { .Namespace = kConfigNamespace_ChipConfig,
+                                                                      .Name      = "user-credential" };
+const MT793XConfig::Key MT793XConfig::kConfigKey_WeekDaySchedules = { .Namespace = kConfigNamespace_ChipConfig,
+                                                                      .Name      = "weekday-sched" };
+const MT793XConfig::Key MT793XConfig::kConfigKey_YearDaySchedules = { .Namespace = kConfigNamespace_ChipConfig,
+                                                                      .Name      = "yearday-sched" };
+const MT793XConfig::Key MT793XConfig::kConfigKey_HolidaySchedules = { .Namespace = kConfigNamespace_ChipConfig,
+                                                                      .Name      = "holiday-sched" };
 // CHIP Counter Keys
 const MT793XConfig::Key MT793XConfig::kConfigKey_BootCount = { .Namespace = kConfigNamespace_ChipCounters, .Name = "boot-count" };
 const MT793XConfig::Key MT793XConfig::kConfigKey_TotalOperationalHours = { .Namespace = kConfigNamespace_ChipCounters,
@@ -147,9 +164,24 @@ CHIP_ERROR MT793XConfig::ReadConfigValue(Key key, uint32_t & val)
         err = CHIP_ERROR_TIMEOUT;
         SuccessOrExit(err);
     }
-    // Get NVDM item
-    err = MapNvdmStatus(nvdm_read_data_item(key.Namespace, key.Name, (uint8_t *) &val, &len));
-    SuccessOrExit(err);
+
+    if (key.Namespace == MT793XConfig::kConfigKey_SetupDiscriminator.Namespace &&
+        key.Name == MT793XConfig::kConfigKey_SetupDiscriminator.Name)
+    {
+        uint8_t mac_addr[WIFI_MAC_ADDRESS_LENGTH] = { 0 };
+        auto mFilogicCtx                          = PlatformMgrImpl().mFilogicCtx;
+
+        filogic_wifi_mac_addr_get_sync(mFilogicCtx, FILOGIC_WIFI_OPMODE_STA, mac_addr);
+
+        val = (*(reinterpret_cast<uint32_t *>(mac_addr))) & 0xFFF;
+        err = CHIP_NO_ERROR;
+    }
+    else
+    {
+        // Get NVDM item
+        err = MapNvdmStatus(nvdm_read_data_item(key.Namespace, key.Name, (uint8_t *) &val, &len));
+        SuccessOrExit(err);
+    }
 exit:
     OnExit();
     return err;

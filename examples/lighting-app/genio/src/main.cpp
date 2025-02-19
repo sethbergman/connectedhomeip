@@ -51,8 +51,6 @@ using namespace ::chip;
 using namespace ::chip::Inet;
 using namespace ::chip::DeviceLayer;
 
-#define UNUSED_PARAMETER(a) (a = a)
-
 volatile int apperror_cnt;
 
 /***************************************************************************
@@ -63,7 +61,7 @@ void appError(int err)
 {
     printf("!!!!!!!!!!!! Application Critical Error: %d !!!!!!!!!!!", err);
     portDISABLE_INTERRUPTS();
-    while (1)
+    while (true)
         ;
 }
 
@@ -253,7 +251,7 @@ void vStartTask(void * pvParameters)
  * Main Function
  ****************************************************************************/
 
-extern "C" int main(void)
+int main(void)
 {
     mbedtls_platform_set_calloc_free(CHIPPlatformMemoryCalloc, CHIPPlatformMemoryFree);
 
@@ -270,7 +268,7 @@ extern "C" int main(void)
     chip::Platform::MemoryShutdown();
 
     // Should never get here.
-    while (1)
+    while (true)
         ;
 
     return 0;

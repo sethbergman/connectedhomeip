@@ -29,6 +29,22 @@
 
 static uint16_t kTestVendorId = 0xFFF1u;
 
+static void CheckStoredOpcertCats(id<MTRStorage> storage, uint8_t fabricIndex, NSSet<NSNumber *> * cats)
+{
+    __auto_type * certData = [storage storageDataForKey:[NSString stringWithFormat:@"f/%x/n", fabricIndex]];
+    XCTAssertNotNil(certData);
+
+    __auto_type * info = [[MTRCertificateInfo alloc] initWithTLVBytes:certData];
+    XCTAssertNotNil(info);
+
+    __auto_type * storedCATs = info.subject.caseAuthenticatedTags;
+    if (cats == nil) {
+        XCTAssertTrue(storedCATs.count == 0);
+    } else {
+        XCTAssertEqualObjects(storedCATs, cats);
+    }
+}
+
 @interface MTRControllerTests : XCTestCase
 
 @end
@@ -45,6 +61,10 @@ static uint16_t kTestVendorId = 0xFFF1u;
     __auto_type * factoryParams = [[MTRDeviceControllerFactoryParams alloc] initWithStorage:storage];
     XCTAssertTrue([factory startControllerFactory:factoryParams error:nil]);
     XCTAssertTrue([factory isRunning]);
+
+    // Starting again with identical params is a no-op
+    __auto_type * factoryParams2 = [[MTRDeviceControllerFactoryParams alloc] initWithStorage:storage];
+    XCTAssertTrue([factory startControllerFactory:factoryParams2 error:nil]);
 
     [factory stopControllerFactory];
     XCTAssertFalse([factory isRunning]);
@@ -100,6 +120,52 @@ static uint16_t kTestVendorId = 0xFFF1u;
     XCTAssertFalse([controller isRunning]);
 
     [factory stopControllerFactory];
+    XCTAssertFalse([factory isRunning]);
+}
+
+- (void)testDeprecatedControllerLifecycle
+{
+    __auto_type * factory = [MTRControllerFactory sharedInstance];
+    XCTAssertNotNil(factory);
+
+    __auto_type * storage = [[MTRTestStorage alloc] init];
+    __auto_type * factoryParams = [[MTRControllerFactoryParams alloc] initWithStorage:storage];
+    XCTAssertTrue([factory startup:factoryParams]);
+    XCTAssertTrue([factory isRunning]);
+
+    __auto_type * testKeys = [[MTRTestKeys alloc] init];
+    XCTAssertNotNil(testKeys);
+
+    __auto_type * params = [[MTRDeviceControllerStartupParams alloc] initWithIPK:testKeys.ipk fabricID:@(1) nocSigner:testKeys];
+    XCTAssertNotNil(params);
+
+    params.vendorID = @(kTestVendorId);
+
+    MTRDeviceController * controller = [factory startControllerOnNewFabric:params];
+    XCTAssertNotNil(controller);
+    XCTAssertTrue([controller isRunning]);
+
+    [controller shutdown];
+    XCTAssertFalse([controller isRunning]);
+
+    // now try to restart the controller
+    controller = [factory startControllerOnExistingFabric:params];
+    XCTAssertNotNil(controller);
+    XCTAssertTrue([controller isRunning]);
+
+    [controller shutdown];
+    XCTAssertFalse([controller isRunning]);
+
+    // now try to restart the controller without providing a vendor id.
+    params.vendorID = nil;
+    controller = [factory startControllerOnExistingFabric:params];
+    XCTAssertNotNil(controller);
+    XCTAssertTrue([controller isRunning]);
+
+    [controller shutdown];
+    XCTAssertFalse([controller isRunning]);
+
+    [factory shutdown];
     XCTAssertFalse([factory isRunning]);
 }
 
@@ -345,8 +411,29 @@ static uint16_t kTestVendorId = 0xFFF1u;
     XCTAssertNotNil(controller2);
     XCTAssertTrue([controller2 isRunning]);
 
+    // Verify that we can't start on an existing fabric while we have a
+    // controller on that fabric already.
     XCTAssertNil([factory createControllerOnExistingFabric:params2 error:nil]);
 
+    // Now test restarting the controller on the first fabric while the
+    // controller on the second fabric is still running.
+    [controller1 shutdown];
+    XCTAssertFalse([controller1 isRunning]);
+
+    controller1 = [factory createControllerOnExistingFabric:params1 error:nil];
+    XCTAssertNotNil(controller1);
+    XCTAssertTrue([controller1 isRunning]);
+
+    // Now test restarting the controller on the second fabric while the
+    // controller on the first fabric is still running.
+    [controller2 shutdown];
+    XCTAssertFalse([controller2 isRunning]);
+
+    controller2 = [factory createControllerOnExistingFabric:params2 error:nil];
+    XCTAssertNotNil(controller2);
+    XCTAssertTrue([controller2 isRunning]);
+
+    // Shut down everything.
     [controller1 shutdown];
     XCTAssertFalse([controller1 isRunning]);
 
@@ -533,10 +620,13 @@ static uint16_t kTestVendorId = 0xFFF1u;
 
     __auto_type * intermediateKeys = [[MTRTestKeys alloc] init];
     XCTAssertNotNil(intermediateKeys);
+    __auto_type * intermediatePublicKey = [intermediateKeys copyPublicKey];
+    XCTAssert(intermediatePublicKey != NULL);
+    CFAutorelease(intermediatePublicKey);
 
     __auto_type * intermediate = [MTRCertificates createIntermediateCertificate:rootKeys
                                                                 rootCertificate:root
-                                                          intermediatePublicKey:intermediateKeys.publicKey
+                                                          intermediatePublicKey:intermediatePublicKey
                                                                        issuerID:nil
                                                                        fabricID:nil
                                                                           error:nil];
@@ -773,10 +863,12 @@ static uint16_t kTestVendorId = 0xFFF1u;
 
     __auto_type * intermediateKeys = [[MTRTestKeys alloc] init];
     XCTAssertNotNil(intermediateKeys);
+    __auto_type * intermediatePublicKey = intermediateKeys.copyPublicKey;
+    CFAutorelease(intermediatePublicKey);
 
     __auto_type * intermediate = [MTRCertificates createIntermediateCertificate:rootKeys
                                                                 rootCertificate:root
-                                                          intermediatePublicKey:intermediateKeys.publicKey
+                                                          intermediatePublicKey:intermediatePublicKey
                                                                        issuerID:nil
                                                                        fabricID:nil
                                                                           error:nil];
@@ -835,10 +927,13 @@ static uint16_t kTestVendorId = 0xFFF1u;
 
     __auto_type * intermediateKeys = [[MTRTestKeys alloc] init];
     XCTAssertNotNil(intermediateKeys);
+    __auto_type * intermediatePublicKey = [intermediateKeys copyPublicKey];
+    XCTAssert(intermediatePublicKey != NULL);
+    CFAutorelease(intermediatePublicKey);
 
     __auto_type * intermediate = [MTRCertificates createIntermediateCertificate:rootKeys
                                                                 rootCertificate:root
-                                                          intermediatePublicKey:intermediateKeys.publicKey
+                                                          intermediatePublicKey:intermediatePublicKey
                                                                        issuerID:nil
                                                                        fabricID:nil
                                                                           error:nil];
@@ -899,10 +994,13 @@ static uint16_t kTestVendorId = 0xFFF1u;
 
     __auto_type * intermediateKeys1 = [[MTRTestKeys alloc] init];
     XCTAssertNotNil(intermediateKeys1);
+    __auto_type * intermediate1PublicKey = [intermediateKeys1 copyPublicKey];
+    XCTAssert(intermediate1PublicKey != NULL);
+    CFAutorelease(intermediate1PublicKey);
 
     __auto_type * intermediate1 = [MTRCertificates createIntermediateCertificate:rootKeys
                                                                  rootCertificate:root
-                                                           intermediatePublicKey:intermediateKeys1.publicKey
+                                                           intermediatePublicKey:intermediate1PublicKey
                                                                         issuerID:nil
                                                                         fabricID:nil
                                                                            error:nil];
@@ -910,10 +1008,13 @@ static uint16_t kTestVendorId = 0xFFF1u;
 
     __auto_type * intermediateKeys2 = [[MTRTestKeys alloc] init];
     XCTAssertNotNil(intermediateKeys2);
+    __auto_type * intermediate2PublicKey = [intermediateKeys2 copyPublicKey];
+    XCTAssert(intermediate2PublicKey != NULL);
+    CFAutorelease(intermediate2PublicKey);
 
     __auto_type * intermediate2 = [MTRCertificates createIntermediateCertificate:rootKeys
                                                                  rootCertificate:root
-                                                           intermediatePublicKey:intermediateKeys2.publicKey
+                                                           intermediatePublicKey:intermediate2PublicKey
                                                                         issuerID:nil
                                                                         fabricID:nil
                                                                            error:nil];
@@ -974,10 +1075,13 @@ static uint16_t kTestVendorId = 0xFFF1u;
 
     __auto_type * intermediateKeys = [[MTRTestKeys alloc] init];
     XCTAssertNotNil(intermediateKeys);
+    __auto_type * intermediatePublicKey = [intermediateKeys copyPublicKey];
+    XCTAssert(intermediatePublicKey != NULL);
+    CFAutorelease(intermediatePublicKey);
 
     __auto_type * intermediate = [MTRCertificates createIntermediateCertificate:rootKeys
                                                                 rootCertificate:root
-                                                          intermediatePublicKey:intermediateKeys.publicKey
+                                                          intermediatePublicKey:intermediatePublicKey
                                                                        issuerID:nil
                                                                        fabricID:nil
                                                                           error:nil];
@@ -1017,10 +1121,13 @@ static uint16_t kTestVendorId = 0xFFF1u;
 
     __auto_type * intermediateKeys = [[MTRTestKeys alloc] init];
     XCTAssertNotNil(intermediateKeys);
+    __auto_type * intermediatePublicKey = [intermediateKeys copyPublicKey];
+    XCTAssert(intermediatePublicKey != NULL);
+    CFAutorelease(intermediatePublicKey);
 
     __auto_type * intermediate = [MTRCertificates createIntermediateCertificate:rootKeys
                                                                 rootCertificate:root
-                                                          intermediatePublicKey:intermediateKeys.publicKey
+                                                          intermediatePublicKey:intermediatePublicKey
                                                                        issuerID:nil
                                                                        fabricID:nil
                                                                           error:nil];
@@ -1028,10 +1135,13 @@ static uint16_t kTestVendorId = 0xFFF1u;
 
     __auto_type * operationalKeys = [[MTRTestKeys alloc] init];
     XCTAssertNotNil(operationalKeys);
+    __auto_type * operationalPublicKey = [operationalKeys copyPublicKey];
+    XCTAssert(operationalPublicKey != NULL);
+    CFAutorelease(operationalPublicKey);
 
     __auto_type * operational = [MTRCertificates createOperationalCertificate:intermediateKeys
                                                            signingCertificate:intermediate
-                                                         operationalPublicKey:operationalKeys.publicKey
+                                                         operationalPublicKey:operationalPublicKey
                                                                      fabricID:@123
                                                                        nodeID:@456
                                                         caseAuthenticatedTags:nil
@@ -1092,10 +1202,13 @@ static uint16_t kTestVendorId = 0xFFF1u;
 
     __auto_type * operationalKeys = [[MTRTestKeys alloc] init];
     XCTAssertNotNil(operationalKeys);
+    __auto_type * operationalPublicKey = [operationalKeys copyPublicKey];
+    XCTAssert(operationalPublicKey != NULL);
+    CFAutorelease(operationalPublicKey);
 
     __auto_type * operational = [MTRCertificates createOperationalCertificate:rootKeys
                                                            signingCertificate:root
-                                                         operationalPublicKey:operationalKeys.publicKey
+                                                         operationalPublicKey:operationalPublicKey
                                                                      fabricID:@123
                                                                        nodeID:@456
                                                         caseAuthenticatedTags:nil
@@ -1142,10 +1255,13 @@ static uint16_t kTestVendorId = 0xFFF1u;
 
     __auto_type * operationalKeys = [[MTRTestKeys alloc] init];
     XCTAssertNotNil(operationalKeys);
+    __auto_type * operationalPublicKey = [operationalKeys copyPublicKey];
+    XCTAssert(operationalPublicKey != NULL);
+    CFAutorelease(operationalPublicKey);
 
     __auto_type * operational = [MTRCertificates createOperationalCertificate:rootKeys
                                                            signingCertificate:root
-                                                         operationalPublicKey:operationalKeys.publicKey
+                                                         operationalPublicKey:operationalPublicKey
                                                                      fabricID:@123
                                                                        nodeID:@456
                                                         caseAuthenticatedTags:nil
@@ -1186,10 +1302,13 @@ static uint16_t kTestVendorId = 0xFFF1u;
 
     __auto_type * intermediateKeys = [[MTRTestKeys alloc] init];
     XCTAssertNotNil(intermediateKeys);
+    __auto_type * intermediatePublicKey = [intermediateKeys copyPublicKey];
+    XCTAssert(intermediatePublicKey != NULL);
+    CFAutorelease(intermediatePublicKey);
 
     __auto_type * intermediate = [MTRCertificates createIntermediateCertificate:rootKeys
                                                                 rootCertificate:root
-                                                          intermediatePublicKey:intermediateKeys.publicKey
+                                                          intermediatePublicKey:intermediatePublicKey
                                                                        issuerID:nil
                                                                        fabricID:@111
                                                                           error:nil];
@@ -1197,10 +1316,13 @@ static uint16_t kTestVendorId = 0xFFF1u;
 
     __auto_type * operationalKeys = [[MTRTestKeys alloc] init];
     XCTAssertNotNil(operationalKeys);
+    __auto_type * operationalPublicKey = [operationalKeys copyPublicKey];
+    XCTAssert(operationalPublicKey != NULL);
+    CFAutorelease(operationalPublicKey);
 
     __auto_type * operational = [MTRCertificates createOperationalCertificate:intermediateKeys
                                                            signingCertificate:intermediate
-                                                         operationalPublicKey:operationalKeys.publicKey
+                                                         operationalPublicKey:operationalPublicKey
                                                                      fabricID:@123
                                                                        nodeID:@456
                                                         caseAuthenticatedTags:nil
@@ -1290,6 +1412,190 @@ static uint16_t kTestVendorId = 0xFFF1u;
 
     [factory stopControllerFactory];
     XCTAssertFalse([factory isRunning]);
+}
+
+- (void)testControllerCATs
+{
+    __auto_type * factory = [MTRDeviceControllerFactory sharedInstance];
+    XCTAssertNotNil(factory);
+
+    __auto_type * storage = [[MTRTestStorage alloc] init];
+    __auto_type * factoryParams = [[MTRDeviceControllerFactoryParams alloc] initWithStorage:storage];
+    XCTAssertTrue([factory startControllerFactory:factoryParams error:nil]);
+    XCTAssertTrue([factory isRunning]);
+
+    __auto_type * rootKeys = [[MTRTestKeys alloc] init];
+    XCTAssertNotNil(rootKeys);
+
+    __auto_type * params = [[MTRDeviceControllerStartupParams alloc] initWithIPK:rootKeys.ipk fabricID:@(1) nocSigner:rootKeys];
+    XCTAssertNotNil(params);
+
+    params.vendorID = @(kTestVendorId);
+
+    //
+    // Trying to bring up a controller with too-long CATs should fail.
+    //
+    __auto_type * tooLongCATs = [NSSet setWithObjects:@(0x10001), @(0x20001), @(0x30001), @(0x40001), nil];
+    params.caseAuthenticatedTags = tooLongCATs;
+    MTRDeviceController * controller = [factory createControllerOnExistingFabric:params error:nil];
+    XCTAssertNil(controller);
+
+    //
+    // Trying to bring up a controller that has an invalid CAT value should
+    // fail.
+    //
+    __auto_type * invalidCATs = [NSSet setWithObjects:@(0x10001), @(0x20001), @(0x0), nil];
+    params.caseAuthenticatedTags = invalidCATs;
+    controller = [factory createControllerOnExistingFabric:params error:nil];
+    XCTAssertNil(controller);
+
+    //
+    // Bring up a controller with valid CATs
+    //
+    __auto_type * validCATs = [NSSet setWithObjects:@(0x10001), @(0x20007), @(0x30005), nil];
+    params.nodeID = @(17);
+    params.caseAuthenticatedTags = validCATs;
+    controller = [factory createControllerOnNewFabric:params error:nil];
+    XCTAssertNotNil(controller);
+    XCTAssertTrue([controller isRunning]);
+
+    // Check that the resulting certificate has the right CATs and node ID
+    CheckStoredOpcertCats(storage, 1, validCATs);
+    XCTAssertEqualObjects([controller controllerNodeID], @(17));
+
+    [controller shutdown];
+    XCTAssertFalse([controller isRunning]);
+
+    //
+    // Trying to bring up the same fabric without specifying any node id
+    // should not allow trying to specify the same CATs.
+    //
+    params.nodeID = nil;
+    params.caseAuthenticatedTags = validCATs;
+    controller = [factory createControllerOnExistingFabric:params error:nil];
+    XCTAssertNil(controller);
+
+    //
+    // Trying to bring up the same fabric without specifying any node id
+    // should not allow trying to specify different CATs.
+    //
+    __auto_type * newCATs = [NSSet setWithObjects:@(0x20005), @(0x70009), @(0x80004), nil];
+    XCTAssertNotEqualObjects(validCATs, newCATs);
+    params.nodeID = nil;
+    params.caseAuthenticatedTags = newCATs;
+    controller = [factory createControllerOnExistingFabric:params error:nil];
+    XCTAssertNil(controller);
+
+    //
+    // Trying to bring up the same fabric without specifying any node id
+    // should end up using the existing CATs.
+    //
+    params.nodeID = nil;
+    params.caseAuthenticatedTags = nil;
+    controller = [factory createControllerOnExistingFabric:params error:nil];
+    XCTAssertNotNil(controller);
+    XCTAssertTrue([controller isRunning]);
+
+    // Check that the resulting certificate has the right CATs and node ID
+    CheckStoredOpcertCats(storage, 1, validCATs);
+    XCTAssertEqualObjects([controller controllerNodeID], @(17));
+
+    [controller shutdown];
+    XCTAssertFalse([controller isRunning]);
+
+    //
+    // Trying to bring up the same fabric without specifying any node id
+    // should end up using the existing CATs, even if a new
+    // operational key is specified.
+    //
+    __auto_type * operationalKeys = [[MTRTestKeys alloc] init];
+    XCTAssertNotNil(operationalKeys);
+    params.nodeID = nil;
+    params.operationalKeypair = operationalKeys;
+    params.caseAuthenticatedTags = nil;
+
+    controller = [factory createControllerOnExistingFabric:params error:nil];
+    XCTAssertNotNil(controller);
+    XCTAssertTrue([controller isRunning]);
+
+    // Check that the resulting certificate has the right CATs and node ID
+    CheckStoredOpcertCats(storage, 1, validCATs);
+    XCTAssertEqualObjects([controller controllerNodeID], @(17));
+
+    [controller shutdown];
+    XCTAssertFalse([controller isRunning]);
+
+    //
+    // Trying to bring up the same fabric while specifying the node ID, even if
+    // it's the same one, should pick up the new CATs.
+    //
+    params.nodeID = @(17);
+    params.operationalKeypair = operationalKeys;
+    params.caseAuthenticatedTags = newCATs;
+
+    controller = [factory createControllerOnExistingFabric:params error:nil];
+    XCTAssertNotNil(controller);
+    XCTAssertTrue([controller isRunning]);
+
+    // Check that the resulting certificate has the right CATs and node ID
+    CheckStoredOpcertCats(storage, 1, newCATs);
+    XCTAssertEqualObjects([controller controllerNodeID], @(17));
+
+    [controller shutdown];
+    XCTAssertFalse([controller isRunning]);
+
+    //
+    // Trying to bring up the same fabric while specifying the node ID should
+    // let us remove CATs altogether.
+    //
+    params.nodeID = @(17);
+    params.operationalKeypair = operationalKeys;
+    params.caseAuthenticatedTags = nil;
+
+    controller = [factory createControllerOnExistingFabric:params error:nil];
+    XCTAssertNotNil(controller);
+    XCTAssertTrue([controller isRunning]);
+
+    // Check that the resulting certificate has the right CATs and node ID
+    CheckStoredOpcertCats(storage, 1, nil);
+    XCTAssertEqualObjects([controller controllerNodeID], @(17));
+
+    [controller shutdown];
+    XCTAssertFalse([controller isRunning]);
+
+    //
+    // Trying to bring up the same fabric with too-long CATs should fail, if we
+    // are taking the provided CATs into account.
+    //
+    params.nodeID = @(17);
+    params.operationalKeypair = operationalKeys;
+    params.caseAuthenticatedTags = tooLongCATs;
+    controller = [factory createControllerOnExistingFabric:params error:nil];
+    XCTAssertNil(controller);
+
+    //
+    // Trying to bring up the same fabric with invalid CATs should fail, if we
+    // are taking the provided CATs into account.
+    //
+    params.nodeID = @(17);
+    params.operationalKeypair = operationalKeys;
+    params.caseAuthenticatedTags = invalidCATs;
+    controller = [factory createControllerOnExistingFabric:params error:nil];
+    XCTAssertNil(controller);
+
+    [factory stopControllerFactory];
+    XCTAssertFalse([factory isRunning]);
+}
+
+- (void)testSetMRPParameters
+{
+    // Can be called before starting the factory
+    XCTAssertFalse(MTRDeviceControllerFactory.sharedInstance.running);
+    MTRSetMessageReliabilityParameters(@2000, @2000, @2000, @2000);
+
+    // Now reset back to the default state, so timings in other tests are not
+    // affected.
+    MTRSetMessageReliabilityParameters(nil, nil, nil, nil);
 }
 
 @end

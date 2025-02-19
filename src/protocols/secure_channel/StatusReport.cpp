@@ -50,7 +50,7 @@ CHIP_ERROR StatusReport::Parse(System::PacketBufferHandle buf)
 {
     uint16_t tempGeneralCode = 0;
 
-    ReturnErrorCodeIf(buf.IsNull(), CHIP_ERROR_INVALID_ARGUMENT);
+    VerifyOrReturnError(!buf.IsNull(), CHIP_ERROR_INVALID_ARGUMENT);
 
     uint8_t * bufStart = buf->Start();
     LittleEndian::Reader bufReader(bufStart, buf->DataLength());
@@ -93,6 +93,34 @@ size_t StatusReport::Size() const
 {
     LittleEndian::BufferWriter emptyBuf(nullptr, 0);
     return WriteToBuffer(emptyBuf).Needed();
+}
+
+System::PacketBufferHandle StatusReport::MakeBusyStatusReportMessage(System::Clock::Milliseconds16 minimumWaitTime)
+{
+    using namespace Protocols::SecureChannel;
+    constexpr uint8_t kBusyStatusReportProtocolDataSize = sizeof(minimumWaitTime.count()); // 16-bits
+
+    auto handle = System::PacketBufferHandle::New(kBusyStatusReportProtocolDataSize, 0);
+    VerifyOrReturnValue(!handle.IsNull(), handle,
+                        ChipLogError(SecureChannel, "Failed to allocate protocol data for busy status report"));
+
+    // Build the protocol data with minimum wait time
+    Encoding::LittleEndian::PacketBufferWriter protocolDataBufferWriter(std::move(handle));
+    protocolDataBufferWriter.Put16(minimumWaitTime.count());
+    handle = protocolDataBufferWriter.Finalize();
+    VerifyOrReturnValue(!handle.IsNull(), handle,
+                        ChipLogError(SecureChannel, "Failed to finalize protocol data for busy status report"));
+
+    // Build a busy status report
+    StatusReport statusReport(GeneralStatusCode::kBusy, Protocols::SecureChannel::Id, kProtocolCodeBusy, std::move(handle));
+
+    // Build the status report message
+    handle = System::PacketBufferHandle::New(statusReport.Size());
+    VerifyOrReturnValue(!handle.IsNull(), handle, ChipLogError(SecureChannel, "Failed to allocate status report message"));
+    Encoding::LittleEndian::PacketBufferWriter bbuf(std::move(handle));
+
+    statusReport.WriteToBuffer(bbuf);
+    return bbuf.Finalize();
 }
 
 } // namespace SecureChannel

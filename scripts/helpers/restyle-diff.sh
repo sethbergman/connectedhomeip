@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 
 #
-# Copyright (c) 2020 Project CHIP Authors
+# Copyright (c) 2020-2024 Project CHIP Authors
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -21,24 +21,70 @@
 #  you've written is kosher to CI
 #
 # Usage:
-#  restyle-diff.sh [ref]
+#  restyle-diff.sh [-d] [-p] [ref]
 #
-# if unspecified, ref defaults to "master"
+# if unspecified, ref defaults to upstream/master (or master)
+# -d sets container's log level to DEBUG, if unspecified the default log level will remain (info level)
+# -p pulls the Docker image before running the restyle paths
 #
 
 here=${0%/*}
 
 set -e
 
+MAX_ARGS=256
+pull_image=0
+
 CHIP_ROOT=$(cd "$here/../.." && pwd)
+cd "$CHIP_ROOT"
 
 restyle-paths() {
-    url=https://github.com/restyled-io/restyler/raw/main/bin/restyle-path
+    image=restyled/restyler:edge
 
-    sh <(curl --location --proto "=https" --tlsv1.2 "$url" -sSf) "$@"
+    docker run \
+        --env LOG_LEVEL \
+        --env LOG_DESTINATION \
+        --env LOG_FORMAT \
+        --env LOG_COLOR \
+        --env HOST_DIRECTORY="$PWD" \
+        --env UNRESTRICTED=1 \
+        --volume "$PWD":/code \
+        --volume /tmp:/tmp \
+        --volume /var/run/docker.sock:/var/run/docker.sock \
+        --entrypoint restyle-path \
+        "$image" "$@"
+
 }
 
-cd "$CHIP_ROOT"
-declare -a paths="($(git diff --ignore-submodules --name-only "${1:-master}"))"
+#This was added to be able to use xargs to call the function restyle-paths
+export -f restyle-paths
 
-restyle-paths "${paths[@]}"
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        -d)
+            export LOG_LEVEL="DEBUG"
+            shift
+            ;;
+        -p)
+            pull_image=1
+            shift
+            ;;
+        *)
+            ref="$1"
+            shift
+            ;;
+    esac
+done
+
+if [[ -z "$ref" ]]; then
+    ref="master"
+    git remote | grep -qxF upstream && ref="upstream/master"
+fi
+
+if [[ $pull_image -eq 1 ]]; then
+    docker pull restyled/restyler:edge
+fi
+
+paths=$(git diff --ignore-submodules --name-only --merge-base "$ref")
+
+echo "$paths" | xargs -n "$MAX_ARGS" bash -c 'restyle-paths "$@"'

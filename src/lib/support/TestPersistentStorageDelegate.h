@@ -1,6 +1,6 @@
 /*
  *
- *    Copyright (c) 2021 Project CHIP Authors
+ *    Copyright (c) 2021-2022 Project CHIP Authors
  *    All rights reserved.
  *
  *    Licensed under the Apache License, Version 2.0 (the "License");
@@ -57,7 +57,7 @@ public:
     {
         if (mLoggingLevel >= LoggingLevel::kLogMutationAndReads)
         {
-            ChipLogDetail(Test, "TestPersistentStorageDelegate::SyncGetKeyValue: Get key '%s'", key);
+            ChipLogDetail(Test, "TestPersistentStorageDelegate::SyncGetKeyValue: Get key '%s'", StringOrNullMarker(key));
         }
 
         CHIP_ERROR err = SyncGetKeyValueInternal(key, buffer, size);
@@ -66,11 +66,13 @@ public:
         {
             if (err == CHIP_ERROR_PERSISTED_STORAGE_VALUE_NOT_FOUND)
             {
-                ChipLogDetail(Test, "--> TestPersistentStorageDelegate::SyncGetKeyValue: Key '%s' not found", key);
+                ChipLogDetail(Test, "--> TestPersistentStorageDelegate::SyncGetKeyValue: Key '%s' not found",
+                              StringOrNullMarker(key));
             }
             else if (err == CHIP_ERROR_PERSISTED_STORAGE_FAILED)
             {
-                ChipLogDetail(Test, "--> TestPersistentStorageDelegate::SyncGetKeyValue: Key '%s' is a poison key", key);
+                ChipLogDetail(Test, "--> TestPersistentStorageDelegate::SyncGetKeyValue: Key '%s' is a poison key",
+                              StringOrNullMarker(key));
             }
         }
 
@@ -91,7 +93,8 @@ public:
         {
             if (err == CHIP_ERROR_PERSISTED_STORAGE_FAILED)
             {
-                ChipLogDetail(Test, "--> TestPersistentStorageDelegate::SyncSetKeyValue: Key '%s' is a poison key", key);
+                ChipLogDetail(Test, "--> TestPersistentStorageDelegate::SyncSetKeyValue: Key '%s' is a poison key",
+                              StringOrNullMarker(key));
             }
         }
 
@@ -102,7 +105,7 @@ public:
     {
         if (mLoggingLevel >= LoggingLevel::kLogMutation)
         {
-            ChipLogDetail(Test, "TestPersistentStorageDelegate::SyncDeleteKeyValue, Delete key '%s'", key);
+            ChipLogDetail(Test, "TestPersistentStorageDelegate::SyncDeleteKeyValue, Delete key '%s'", StringOrNullMarker(key));
         }
         CHIP_ERROR err = SyncDeleteKeyValueInternal(key);
 
@@ -110,11 +113,13 @@ public:
         {
             if (err == CHIP_ERROR_PERSISTED_STORAGE_VALUE_NOT_FOUND)
             {
-                ChipLogDetail(Test, "--> TestPersistentStorageDelegate::SyncDeleteKeyValue: Key '%s' not found", key);
+                ChipLogDetail(Test, "--> TestPersistentStorageDelegate::SyncDeleteKeyValue: Key '%s' not found",
+                              StringOrNullMarker(key));
             }
             else if (err == CHIP_ERROR_PERSISTED_STORAGE_FAILED)
             {
-                ChipLogDetail(Test, "--> TestPersistentStorageDelegate::SyncDeleteKeyValue: Key '%s' is a poison key", key);
+                ChipLogDetail(Test, "--> TestPersistentStorageDelegate::SyncDeleteKeyValue: Key '%s' is a poison key",
+                              StringOrNullMarker(key));
             }
         }
 
@@ -128,6 +133,11 @@ public:
      * @param key - Poison key to add to the set.
      */
     virtual void AddPoisonKey(const std::string & key) { mPoisonKeys.insert(key); }
+
+    /**
+     * Allows subsequent writes to be rejected for unit testing purposes.
+     */
+    virtual void SetRejectWrites(bool rejectWrites) { mRejectWrites = rejectWrites; }
 
     /**
      * @brief Clear all "poison keys"
@@ -197,7 +207,7 @@ public:
 protected:
     virtual CHIP_ERROR SyncGetKeyValueInternal(const char * key, void * buffer, uint16_t & size)
     {
-        ReturnErrorCodeIf(((buffer == nullptr) && (size != 0)), CHIP_ERROR_INVALID_ARGUMENT);
+        VerifyOrReturnError((buffer != nullptr) || (size == 0), CHIP_ERROR_INVALID_ARGUMENT);
 
         // Making sure poison keys are not accessed
         if (mPoisonKeys.find(std::string(key)) != mPoisonKeys.end())
@@ -216,8 +226,8 @@ protected:
         }
 
         uint16_t valueSizeUint16 = static_cast<uint16_t>(valueSize);
-        ReturnErrorCodeIf(size == 0 && valueSizeUint16 == 0, CHIP_NO_ERROR);
-        ReturnErrorCodeIf(buffer == nullptr, CHIP_ERROR_BUFFER_TOO_SMALL);
+        VerifyOrReturnError(size != 0 || valueSizeUint16 != 0, CHIP_NO_ERROR);
+        VerifyOrReturnError(buffer != nullptr, CHIP_ERROR_BUFFER_TOO_SMALL);
 
         uint16_t sizeToCopy = std::min(size, valueSizeUint16);
 
@@ -228,8 +238,8 @@ protected:
 
     virtual CHIP_ERROR SyncSetKeyValueInternal(const char * key, const void * value, uint16_t size)
     {
-        // Make sure poison keys are not accessed
-        if (mPoisonKeys.find(std::string(key)) != mPoisonKeys.end())
+        // Make sure writes are allowed and poison keys are not accessed
+        if (mRejectWrites || mPoisonKeys.find(std::string(key)) != mPoisonKeys.end())
         {
             return CHIP_ERROR_PERSISTED_STORAGE_FAILED;
         }
@@ -254,8 +264,8 @@ protected:
 
     virtual CHIP_ERROR SyncDeleteKeyValueInternal(const char * key)
     {
-        // Make sure poison keys are not accessed
-        if (mPoisonKeys.find(std::string(key)) != mPoisonKeys.end())
+        // Make sure writes are allowed and poison keys are not accessed
+        if (mRejectWrites || mPoisonKeys.find(std::string(key)) != mPoisonKeys.end())
         {
             return CHIP_ERROR_PERSISTED_STORAGE_FAILED;
         }
@@ -268,6 +278,7 @@ protected:
 
     std::map<std::string, std::vector<uint8_t>> mStorage;
     std::set<std::string> mPoisonKeys;
+    bool mRejectWrites         = false;
     LoggingLevel mLoggingLevel = LoggingLevel::kDisabled;
 };
 

@@ -23,7 +23,12 @@
 
 #pragma once
 
-#include <platform/internal/GenericPlatformManagerImpl_POSIX.h>
+#include <glib.h>
+
+#include <lib/core/CHIPError.h>
+#include <platform/ConnectivityManager.h>
+
+#include "platform/internal/GenericPlatformManagerImpl_POSIX.h"
 
 namespace chip {
 namespace DeviceLayer {
@@ -46,18 +51,66 @@ class PlatformManagerImpl final : public PlatformManager, public Internal::Gener
 public:
     // ===== Platform-specific members that may be accessed directly by the application.
 
+    /**
+     * @brief Invoke a function on the Matter GLib context.
+     *
+     * If execution of the function will have to be scheduled on other thread,
+     * this call will block the current thread until the function is executed.
+     *
+     * @param[in] function The function to call.
+     * @param[in] userData User data to pass to the function.
+     * @returns The result of the function.
+     */
+    template <typename T>
+    CHIP_ERROR GLibMatterContextInvokeSync(CHIP_ERROR (*func)(T *), T * userData)
+    {
+        struct
+        {
+            CHIP_ERROR returnValue = CHIP_NO_ERROR;
+            CHIP_ERROR (*functionToCall)(T *);
+            T * userData;
+        } context;
+
+        context.functionToCall = func;
+        context.userData       = userData;
+
+        LambdaBridge bridge;
+        bridge.Initialize([&context]() { context.returnValue = context.functionToCall(context.userData); });
+
+        _GLibMatterContextInvokeSync(std::move(bridge));
+        return context.returnValue;
+    }
+    System::Clock::Timestamp GetStartTime() { return mStartTime; }
+
 private:
     // ===== Methods that implement the PlatformManager abstract interface.
 
-    CHIP_ERROR _InitChipStack(void);
+    CHIP_ERROR _InitChipStack();
+    void _Shutdown();
 
     // ===== Members for internal use by the following friends.
 
-    friend PlatformManager & PlatformMgr(void);
-    friend PlatformManagerImpl & PlatformMgrImpl(void);
+    friend PlatformManager & PlatformMgr();
+    friend PlatformManagerImpl & PlatformMgrImpl();
     friend class Internal::BLEManagerImpl;
 
+    System::Clock::Timestamp mStartTime = System::Clock::kZero;
+
     static PlatformManagerImpl sInstance;
+
+    /**
+     * @brief Invoke a function on the Matter GLib context.
+     *
+     * @param[in] bridge a LambdaBridge object that holds the lambda to be invoked within the GLib context.
+     *
+     * @note This function moves the LambdaBridge into the GLib context for invocation.
+     *       The LambdaBridge is created and initialised in GLibMatterContextInvokeSync().
+     *       use the GLibMatterContextInvokeSync() template function instead of this one.
+     */
+    void _GLibMatterContextInvokeSync(LambdaBridge && bridge);
+
+    GMainLoop * mGLibMainLoop;
+    GThread * mGLibMainLoopThread;
 };
 
 /**
@@ -66,7 +119,7 @@ private:
  * Chip applications should use this to access features of the PlatformManager object
  * that are common to all platforms.
  */
-inline PlatformManager & PlatformMgr(void)
+inline PlatformManager & PlatformMgr()
 {
     return PlatformManagerImpl::sInstance;
 }
@@ -77,7 +130,7 @@ inline PlatformManager & PlatformMgr(void)
  * Chip applications can use this to gain access to features of the PlatformManager
  * that are specific to Tizen platform.
  */
-inline PlatformManagerImpl & PlatformMgrImpl(void)
+inline PlatformManagerImpl & PlatformMgrImpl()
 {
     return PlatformManagerImpl::sInstance;
 }

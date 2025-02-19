@@ -24,7 +24,7 @@ PICS:
 
 config:
     nodeId: 0x12344321
-    cluster: "Basic"
+    cluster: "Basic Information"
     endpoint: 0
 
 tests:
@@ -37,7 +37,7 @@ tests:
       verification: |
           1 - DUT is on an operational network and has accurate date, time, timezone, regulatory, and fabric information available.
 
-          2 - 5.1.3 - QR code is printed on the device or in additional provided materials (ex: manual).
+          2 - QR Code is printed on the Commissionee device or in additional provided materials (ex: manual, companion app, web service).
 
           An example onboarding QR code could be "MT:-24J029Q00KA0648G00" (following 5.1.3 "QR Code", Table 34 "Packed Binary Data Structure for Onboarding Payload") which includes:
 
@@ -61,14 +61,15 @@ tests:
       disabled: true
 
     - label:
-          "Custom Commissioning Flow: Use a Commissionee with a QR code that has
-          the Custom Flow field set to 2 and supports BLE for its Discovery
-          Capability. Commissionee is NOT in commissioning mode. Ensure the
-          Version bit string follows the current Matter spec. documentation."
+          "Step 1a: Custom Commissioning Flow: Use a Commissionee with a QR code
+          that has the Custom Flow field set to 2 and supports BLE for its
+          Discovery Capability. Commissionee is NOT in commissioning mode.
+          Ensure the Version bit string follows the current Matter spec.
+          documentation."
       PICS: MCORE.DD.DISCOVERY_BLE
       verification: |
-          Verify on the TH Commissionee side:
-          $ ./out/ble/all-clusters-app/chip-all-clusters-app --custom-flow 2 --capabilities 2
+          Verify on the TH (All-cluster-app)
+           ./chip-all-clusters-app --custom-flow 2 --capabilities 2
 
           [1657235055.253604][370941:370941] CHIP:-: ==== Onboarding payload for Custom Commissioning Flows ====
           [1657235055.253688][370941:370941] CHIP:SVR: SetupQRCode: [MT:-24J0YXE00KA0648G00]
@@ -76,20 +77,20 @@ tests:
           [1657235055.253774][370941:370941] CHIP:SVR: https://dhrishi.github.io/connectedhomeip/qrcode.html?data=MT%3A-24J0YXE00KA0648G00
       disabled: true
 
-    - label: "Scan the QR code from the previous step using the DUT."
+    - label: "Step 1b: Scan the QR code from the previous step using the DUT."
       PICS: MCORE.DD.SCAN_QR_CODE
       verification: |
           1. Verify the QR code is scanned by DUT
           Note: chip-tool does not support physically scanning QR codes
       disabled: true
 
-    - label: "DUT parses QR code."
+    - label: "Step 1c: DUT parses QR code."
       PICS: MCORE.DD.DISCOVERY_BLE
       verification: |
           1. Parse the payload of the TH commissionee
 
-          Verify on the DUT Commissioner side:
-          $ ./chip-tool payload parse-setup-payload MT:-24J0YXE00KA0648G00
+          Verify on the DUT (Chip-tool)
+           ./chip-tool payload parse-setup-payload MT:-24J0YXE00KA0648G00
           [1660352364702] [20244:11810896] CHIP: [SPL] Parsing base38Representation: MT:-24J0YXE00KA0648G00
           [1660352364702] [20244:11810896] CHIP: [SPL] Version:       0
           [1660352364702] [20244:11810896] CHIP: [SPL] VendorID:      65521
@@ -103,33 +104,33 @@ tests:
       disabled: true
 
     - label:
-          "User should follow any TH-specific steps, unless the DUT has
+          "Step 1d: User should follow any TH-specific steps, unless the DUT has
           alternative means to guide the user to successful commissioning, for
           putting the TH Commissionee into commissioning mode, for triggering
           the DUT Commissioner for commissioning, and for completing the
           commissioning process using BLE."
       PICS: MCORE.DD.DISCOVERY_BLE
       verification: |
-          Verify on the TH Commissionee side:
+          Verify on the TH (All-cluster-app)
           [1657235088.040328][370941:370941] CHIP:SVR: Commissioning completed successfully
           [1657235088.040371][370941:370941] CHIP:DIS: Updating services using commissioning mode 0
 
-          Verify on the DUT Commissioner side:
-          $ ./chip-tool pairing code 1  MT:-24J0YXE00KA0648G00
-          [1657235087918] [31502:16832693] CHIP: [CTL] Successfully finished commissioning step "Cleanup"
+          Verify on the DUT (Chip-tool):
+           ./chip-tool pairing code 1  MT:-24J0YXE00KA0648G00
+          [1657235087918] [31502:16832693] CHIP: [CTL] Successfully finished commissioning step 'Cleanup'
           [1657235087918] [31502:16832693] CHIP: [TOO] Device commissioning completed with success
       disabled: true
 
     - label:
-          "Custom Commissioning Flow: Use a Commissionee with a QR code that has
-          the Custom Flow field set to 2 and supports IP Network for its
-          Discovery Capability. Commissionee is NOT in commissioning mode.
+          "Step 2a: Custom Commissioning Flow: Use a Commissionee with a QR code
+          that has the Custom Flow field set to 2 and supports IP Network for
+          its Discovery Capability. Commissionee is NOT in commissioning mode.
           Ensure the Version bit string follows the current Matter spec.
           documentation."
       PICS: MCORE.DD.DISCOVERY_IP
       verification: |
-          Verify on the TH Commissionee side:
-          $ ./out/all-clusters-app/chip-all-clusters-app --custom-flow 2 --capabilities 4
+          Verify on the TH (All-cluster-app)
+          ./chip-all-clusters-app --custom-flow 2 --capabilities 4
 
           [1657235141.663008][370963:370963] CHIP:-: ==== Onboarding payload for Custom Commissioning Flows ====
           [1657235141.663082][370963:370963] CHIP:SVR: SetupQRCode: [MT:-24J029Q00KA0648G00]
@@ -137,20 +138,20 @@ tests:
           [1657235141.663189][370963:370963] CHIP:SVR: https://dhrishi.github.io/connectedhomeip/qrcode.html?data=MT%3A-24J029Q00KA0648G00
       disabled: true
 
-    - label: "Scan the QR code from the previous step using the DUT."
+    - label: "Step 2b: Scan the QR code from the previous step using the DUT."
       PICS: MCORE.DD.SCAN_QR_CODE
       verification: |
           1. Verify the QR code is scanned by DUT
           Note: chip-tool does not support physically scanning QR codes
       disabled: true
 
-    - label: "DUT parses QR code."
+    - label: "Step 2c: DUT parses QR code."
       PICS: MCORE.DD.DISCOVERY_IP
       verification: |
           1. Parse the payload of the TH commissionee
 
-          Verify on the DUT Commissioner side:
-          $ ./chip-tool payload parse-setup-payload MT:-24J029Q00KA0648G00
+          Verify on the DUT (Chip-tool):
+           ./chip-tool payload parse-setup-payload MT:-24J029Q00KA0648G00
           [1660352541112] [20246:11812333] CHIP: [SPL] Parsing base38Representation: MT:-24J029Q00KA0648G00
           [1660352541113] [20246:11812333] CHIP: [SPL] Version:       0
           [1660352541113] [20246:11812333] CHIP: [SPL] VendorID:      65521
@@ -164,56 +165,110 @@ tests:
       disabled: true
 
     - label:
-          "User should follow any TH-specific steps, unless the DUT has
+          "Step 2d: User should follow any TH-specific steps, unless the DUT has
           alternative means to guide the user to successful commissioning, for
           putting the TH Commissionee into commissioning mode, for triggering
           the DUT Commissioner for commissioning, and for completing the
           commissioning process using IP Network."
       PICS: MCORE.DD.DISCOVERY_IP
       verification: |
-          Verify on the TH Commissionee side:
+          Verify on the TH (All-cluster-app)
           [1657235198.977848][370963:370963] CHIP:SVR: Commissioning completed successfully
           [1657235198.977943][370963:370963] CHIP:DIS: Updating services using commissioning mode 0
 
-          Verify on the DUT Commissioner side:
-          $ ./chip-tool pairing code 1  MT:-24J029Q00KA0648G00
-          [1657235198856] [31506:16834043] CHIP: [CTL] Successfully finished commissioning step "Cleanup"
+          Verify on the DUT (Chip-tool):
+           ./chip-tool pairing code 1  MT:-24J029Q00KA0648G00
+          [1657235198856] [31506:16834043] CHIP: [CTL] Successfully finished commissioning step 'Cleanup'
           [1657235198856] [31506:16834043] CHIP: [TOO] Device commissioning completed with success
       disabled: true
 
     - label:
-          "Custom Commissioning Flow: Use a Commissionee with a QR code that has
-          the Custom Flow field set to 2 and supports SoftAP for its Discovery
-          Capability. Commissionee is NOT in commissioning mode. Ensure the
-          Version bit string follows the current Matter spec. documentation."
-      PICS: MCORE.DD.DISCOVERY_SOFTAP
+          "Step 2e: Custom Commissioning Flow: Use a Commissionee with a QR code
+          that has the Custom Flow field set to 2 and supports Wi-Fi PAF for its
+          Discovery Capability. Commissionee is NOT in commissioning mode.
+          Ensure the Version bit string follows the current Matter spec.
+          documentation."
+      PICS: MCORE.DD.DISCOVERY_PAF
       verification: |
-          Out of Scope for V1.0
-          SoftAP commissioning not currently supported
+          1. User has a QR code to pass into DUT.
+          # ./chip-all-clusters-app --wifi --wifipaf --custom-flow 2 --capabilities 8
+          [1719393349.405047][1623:1623] CHIP:SVR: SetupQRCode: [MT:-24J0EZA10KA0648G00]
+          [1719393349.405062][1623:1623] CHIP:SVR: Copy/paste the below URL in a browser to see the QR Code:
+          [1719393349.405071][1623:1623] CHIP:SVR: https://project-chip.github.io/connectedhomeip/qrcode.html?data=MT%3A-24J0EZA10KA0648G00
+          [1719393349.405095][1623:1623] CHIP:SVR: Manual pairing code: [749701123365521327694]
       disabled: true
 
-    - label: "Scan the QR code from the previous step using the DUT."
+    - label: "Step 2f: Scan the QR code from the previous step using the DUT."
       PICS: MCORE.DD.SCAN_QR_CODE
       verification: |
-          Out of Scope for V1.0
+          1. Verify the QR code has been scanned successfully.
+      disabled: true
+
+    - label: "Step 2g: DUT parses QR code."
+      PICS: MCORE.DD.DISCOVERY_PAF
+      verification: |
+          1. Verify DUT has parsed the QR code. Verify TH has not been commissioned to the Matter network.
+          $ sudo ./chip-tool payload parse-setup-payload MT:-24J0EZA10KA0648G00
+          CHIP:DL: ChipLinuxStorage::Init: Using KVS config file: /tmp/chip_tool_kvs
+          CHIP:DL: writing settings to file (/tmp/chip_tool_kvs-UQIGvf)
+          CHIP:DL: renamed tmp file to file (/tmp/chip_tool_kvs)
+          CHIP:SPL: Parsing base38Representation: MT:-24J0EZA10KA0648G00
+          CHIP:SPL: Version: 0
+          CHIP:SPL: VendorID: 65521
+          CHIP:SPL: ProductID: 32769
+          CHIP:SPL: Custom flow: 2 (CUSTOM)
+          CHIP:SPL: Discovery Bitmask: 0x08 (Wi-Fi PAF)
+          CHIP:SPL: Long discriminator: 3840 (0xf00)
+          CHIP:SPL: Passcode: 20202021
+
+      disabled: true
+
+    - label:
+          "Step 2h: User should follow any TH-specific steps, unless the DUT has
+          alternative means to guide the user to successful commissioning, for
+          putting the TH Commissionee into commissioning mode, for triggering
+          the DUT Commissioner for commissioning, and for completing the
+          commissioning process using BLE."
+      PICS: MCORE.DD.DISCOVERY_PAF
+      verification: |
+          1. DUT commissions TH to the Matter network.
+          $ sudo ./chip-tool pairing code-wifi 1 n_m_2g nxp12345 MT:-24J0EZA10KA0648G00
+      disabled: true
+
+    - label:
+          "Step 3a: Custom Commissioning Flow: Use a Commissionee with a QR code
+          that has the Custom Flow field set to 2 and supports SoftAP for its
+          Discovery Capability. Commissionee is NOT in commissioning mode.
+          Ensure the Version bit string follows the current Matter spec.
+          documentation."
+      PICS: MCORE.DD.DISCOVERY_SOFTAP
+      verification: |
+          Out of Scope
           SoftAP commissioning not currently supported
       disabled: true
 
-    - label: "DUT parses QR code."
+    - label: "Step 3b: Scan the QR code from the previous step using the DUT."
+      PICS: MCORE.DD.SCAN_QR_CODE
+      verification: |
+          Out of Scope
+          SoftAP commissioning not currently supported
+      disabled: true
+
+    - label: "Step 3c: DUT parses QR code."
       PICS: MCORE.DD.DISCOVERY_SOFTAP
       verification: |
-          Out of Scope for V1.0
+          Out of Scope
           SoftAP commissioning not currently supported
       disabled: true
 
     - label:
-          "User should follow any TH-specific steps, unless the DUT has
+          "Step 3d: User should follow any TH-specific steps, unless the DUT has
           alternative means to guide the user to successful commissioning, for
           putting the TH Commissionee into commissioning mode, for triggering
           the DUT Commissioner for commissioning, and for completing the
           commissioning process using SoftAP."
       PICS: MCORE.DD.DISCOVERY_SOFTAP
       verification: |
-          Out of Scope for V1.0
+          Out of Scope
           SoftAP commissioning not currently supported
       disabled: true

@@ -27,6 +27,9 @@
 
 #pragma once
 
-// Use a default pairing code if one hasn't been provisioned in flash.
-#define CHIP_DEVICE_CONFIG_USE_TEST_SETUP_PIN_CODE 20202021
-#define CHIP_DEVICE_CONFIG_USE_TEST_SETUP_DISCRIMINATOR 0xF00
+#define CHIP_CONFIG_LOG_MODULE_Zcl_PROGRESS 0
+#define CHIP_CONFIG_LOG_MODULE_InteractionModel_PROGRESS 0
+#define CHIP_CONFIG_LOG_MODULE_InteractionModel_DETAIL 0
+#define CHIP_CONFIG_LOG_MODULE_DataManagement_PROGRESS 0
+#define CHIP_CONFIG_LOG_MODULE_FabricProvisioning_PROGRESS 0
+#define CHIP_CONFIG_LOG_MODULE_SecureChannel_PROGRESS 0

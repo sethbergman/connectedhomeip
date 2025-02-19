@@ -26,12 +26,13 @@
 
 #include <cstdint>
 
+#include <platform/CHIPDeviceConfig.h>
+
 #if CHIP_HAVE_CONFIG_H
-#include <platform/CHIPDeviceBuildConfig.h>
 #include <setup_payload/CHIPAdditionalDataPayloadBuildConfig.h>
 #endif
 
-#include <app-common/zap-generated/cluster-objects.h>
+#include <lib/core/ClusterEnums.h>
 #include <lib/support/Span.h>
 #include <platform/PersistedStorage.h>
 #include <platform/internal/CHIPDeviceLayerInternal.h>
@@ -79,17 +80,26 @@ public:
         kMinRotatingDeviceIDUniqueIDLength = 16,
         kRotatingDeviceIDUniqueIDLength    = CHIP_DEVICE_CONFIG_ROTATING_DEVICE_ID_UNIQUE_ID_LENGTH,
 #endif
+        kEthernetMACAddressLength = 6,
+        kThreadMACAddressLength   = 8,
 #if CHIP_DEVICE_CONFIG_ENABLE_THREAD
-        kPrimaryMACAddressLength = 8,
+        kPrimaryMACAddressLength = kThreadMACAddressLength,
 #else
-        kPrimaryMACAddressLength = 6,
+        kPrimaryMACAddressLength = kEthernetMACAddressLength,
 #endif
         kMaxMACAddressLength  = 8,
         kMaxLanguageTagLength = 5 // ISO 639-1 standard language codes
     };
 
-    virtual CHIP_ERROR GetPrimaryMACAddress(MutableByteSpan buf)                           = 0;
-    virtual CHIP_ERROR GetPrimaryWiFiMACAddress(uint8_t * buf)                             = 0;
+    // Copies the primary MAC into a mutable span, which must be of size kPrimaryMACAddressLength.
+    // Upon success, the span will be reduced to the size of the MAC address being returned, which
+    // can be less than kPrimaryMACAddressLength on a device that supports Thread.
+    virtual CHIP_ERROR GetPrimaryMACAddress(MutableByteSpan & buf) = 0;
+
+    // Copies the primary WiFi MAC into a buffer of size kEthernetMACAddressLength
+    virtual CHIP_ERROR GetPrimaryWiFiMACAddress(uint8_t * buf) = 0;
+
+    // Copies the primary Thread (802.15.4) MAC into a buffer of size kThreadMACAddressLength
     virtual CHIP_ERROR GetPrimary802154MACAddress(uint8_t * buf)                           = 0;
     virtual CHIP_ERROR GetSoftwareVersionString(char * buf, size_t bufSize)                = 0;
     virtual CHIP_ERROR GetSoftwareVersion(uint32_t & softwareVer)                          = 0;
@@ -97,9 +107,10 @@ public:
     virtual CHIP_ERROR SetFirmwareBuildChipEpochTime(System::Clock::Seconds32 buildTime) { return CHIP_ERROR_NOT_IMPLEMENTED; }
 #if CHIP_ENABLE_ROTATING_DEVICE_ID && defined(CHIP_DEVICE_CONFIG_ROTATING_DEVICE_ID_UNIQUE_ID)
     // Lifetime counter is monotonic counter that is incremented upon each commencement of advertising
-    virtual CHIP_ERROR GetLifetimeCounter(uint16_t & lifetimeCounter)             = 0;
-    virtual CHIP_ERROR IncrementLifetimeCounter()                                 = 0;
-    virtual CHIP_ERROR SetRotatingDeviceIdUniqueId(const ByteSpan & uniqueIdSpan) = 0;
+    virtual CHIP_ERROR GetLifetimeCounter(uint16_t & lifetimeCounter)              = 0;
+    virtual CHIP_ERROR IncrementLifetimeCounter()                                  = 0;
+    virtual CHIP_ERROR SetRotatingDeviceIdUniqueId(const ByteSpan & uniqueIdSpan)  = 0;
+    virtual CHIP_ERROR GetRotatingDeviceIdUniqueId(MutableByteSpan & uniqueIdSpan) = 0;
 #endif
     virtual CHIP_ERROR GetRegulatoryLocation(uint8_t & location)                       = 0;
     virtual CHIP_ERROR GetCountryCode(char * buf, size_t bufSize, size_t & codeLen)    = 0;
@@ -115,9 +126,6 @@ public:
     virtual CHIP_ERROR StoreTotalOperationalHours(uint32_t totalOperationalHours)      = 0;
     virtual CHIP_ERROR GetBootReason(uint32_t & bootReason)                            = 0;
     virtual CHIP_ERROR StoreBootReason(uint32_t bootReason)                            = 0;
-    virtual CHIP_ERROR GetPartNumber(char * buf, size_t bufSize)                       = 0;
-    virtual CHIP_ERROR GetProductURL(char * buf, size_t bufSize)                       = 0;
-    virtual CHIP_ERROR GetProductLabel(char * buf, size_t bufSize)                     = 0;
     virtual CHIP_ERROR GetUniqueId(char * buf, size_t bufSize)                         = 0;
     virtual CHIP_ERROR StoreUniqueId(const char * uniqueId, size_t uniqueIdLen)        = 0;
     virtual CHIP_ERROR GenerateUniqueId(char * buf, size_t bufSize)                    = 0;
@@ -126,7 +134,9 @@ public:
 
     virtual CHIP_ERROR GetBLEDeviceIdentificationInfo(Ble::ChipBLEDeviceIdentificationInfo & deviceIdInfo) = 0;
 
-    virtual CHIP_ERROR RunUnitTests() = 0;
+#if CHIP_CONFIG_TEST
+    virtual void RunUnitTests() = 0;
+#endif
 
     virtual bool IsFullyProvisioned()   = 0;
     virtual void InitiateFactoryReset() = 0;
@@ -173,8 +183,8 @@ protected:
     virtual ~ConfigurationManager() = default;
 
     // No copy, move or assignment.
-    ConfigurationManager(const ConfigurationManager &)  = delete;
-    ConfigurationManager(const ConfigurationManager &&) = delete;
+    ConfigurationManager(const ConfigurationManager &)             = delete;
+    ConfigurationManager(const ConfigurationManager &&)            = delete;
     ConfigurationManager & operator=(const ConfigurationManager &) = delete;
 };
 
@@ -204,7 +214,7 @@ void SetConfigurationMgr(ConfigurationManager * configurationManager);
 
 inline CHIP_ERROR ConfigurationManager::GetLocationCapability(uint8_t & location)
 {
-    location = to_underlying(chip::app::Clusters::GeneralCommissioning::RegulatoryLocationType::kIndoor);
+    location = to_underlying(chip::app::Clusters::GeneralCommissioning::RegulatoryLocationTypeEnum::kIndoor);
     return CHIP_NO_ERROR;
 }
 

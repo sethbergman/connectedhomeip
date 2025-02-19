@@ -21,6 +21,9 @@
  */
 
 #include "CHIPCryptoPAL.h"
+
+#include "SessionKeystore.h"
+
 #include <lib/asn1/ASN1.h>
 #include <lib/asn1/ASN1Macros.h>
 #include <lib/core/CHIPEncoding.h>
@@ -29,6 +32,7 @@
 #include <lib/support/BytesToHex.h>
 #include <lib/support/CodeUtils.h>
 #include <lib/support/Span.h>
+#include <stdint.h>
 #include <string.h>
 
 using chip::ByteSpan;
@@ -38,44 +42,13 @@ using chip::Encoding::LittleEndian::Reader;
 
 using namespace chip::ASN1;
 
+namespace chip {
+namespace Crypto {
 namespace {
 
 constexpr uint8_t kIntegerTag         = 0x02u;
 constexpr uint8_t kSeqTag             = 0x30u;
 constexpr size_t kMinSequenceOverhead = 1 /* tag */ + 1 /* length */ + 1 /* actual data or second length byte*/;
-
-/**
- * @brief Utility to read a length field after a tag in a DER-encoded stream.
- * @param[in] reader Reader instance from which the input will be read
- * @param[out] length Length of the following element read from the stream
- * @return CHIP_ERROR_INVALID_ARGUMENT or CHIP_ERROR_BUFFER_TOO_SMALL on error, CHIP_NO_ERROR otherwise
- */
-CHIP_ERROR ReadDerLength(Reader & reader, uint8_t & length)
-{
-    length = 0;
-
-    uint8_t cur_byte = 0;
-    ReturnErrorOnFailure(reader.Read8(&cur_byte).StatusCode());
-
-    if ((cur_byte & (1u << 7)) == 0)
-    {
-        // 7 bit length, the rest of the byte is the length.
-        length = cur_byte & 0x7Fu;
-        return CHIP_NO_ERROR;
-    }
-
-    // Did not early return: > 7 bit length, the number of bytes of the length is provided next.
-    uint8_t length_bytes = cur_byte & 0x7Fu;
-
-    if ((length_bytes > 1) || !reader.HasAtLeast(length_bytes))
-    {
-        // We only support lengths of 0..255 over 2 bytes
-        return CHIP_ERROR_INVALID_ARGUMENT;
-    }
-
-    // Next byte has length 0..255.
-    return reader.Read8(&length).StatusCode();
-}
 
 /**
  * @brief Utility to convert DER-encoded INTEGER into a raw integer buffer in big-endian order
@@ -94,15 +67,15 @@ CHIP_ERROR ReadDerUnsignedIntegerIntoRaw(Reader & reader, MutableByteSpan raw_in
     VerifyOrReturnError(cur_byte == kIntegerTag, CHIP_ERROR_INVALID_ARGUMENT);
 
     // Read the length
-    uint8_t integer_len = 0;
-    ReturnErrorOnFailure(ReadDerLength(reader, integer_len));
+    size_t integer_len = 0;
+    ReturnErrorOnFailure(chip::Crypto::ReadDerLength(reader, integer_len));
 
     // Clear the destination buffer, so we can blit the unsigned value into place
     memset(raw_integer_out.data(), 0, raw_integer_out.size());
 
     // Check for pseudo-zero to mark unsigned value
     // This means we have too large an integer (should be at most 1 byte too large), it's invalid
-    ReturnErrorCodeIf(integer_len > (raw_integer_out.size() + 1), CHIP_ERROR_INVALID_ARGUMENT);
+    VerifyOrReturnError(integer_len <= (raw_integer_out.size() + 1), CHIP_ERROR_INVALID_ARGUMENT);
 
     if (integer_len == (raw_integer_out.size() + 1u))
     {
@@ -124,7 +97,7 @@ CHIP_ERROR ReadDerUnsignedIntegerIntoRaw(Reader & reader, MutableByteSpan raw_in
 CHIP_ERROR ConvertIntegerRawToDerInternal(const ByteSpan & raw_integer, MutableByteSpan & out_der_integer,
                                           bool include_tag_and_length)
 {
-    if (!IsSpanUsable(raw_integer) || !IsSpanUsable(out_der_integer))
+    if (raw_integer.empty() || out_der_integer.empty())
     {
         return CHIP_ERROR_INVALID_ARGUMENT;
     }
@@ -192,16 +165,78 @@ CHIP_ERROR ConvertIntegerRawToDerInternal(const ByteSpan & raw_integer, MutableB
     return CHIP_NO_ERROR;
 }
 
+/**
+ * @brief Find a 4 uppercase hex digit hex value after a prefix string. Used to implement
+ *        fallback CN VID/PID encoding for PAA/PAI/DAC.
+ *
+ * @param[in] buffer - buffer in which to find the substring.
+ * @param[in] prefix - prefix to match, which must be followed by 4 uppercase hex characters
+ * @param[out] out_hex_value - on CHIP_NO_ERROR return, this will be the 16-bit hex value decoded.
+ * @return CHIP_NO_ERROR on success, CHIP_ERROR_NOT_FOUND if not detected and
+ *         CHIP_ERROR_WRONG_CERT_DN if we saw the prefix but no valid hex string.
+ */
+CHIP_ERROR Find16BitUpperCaseHexAfterPrefix(const ByteSpan & buffer, const char * prefix, uint16_t & out_hex_value)
+{
+    chip::CharSpan prefix_span = chip::CharSpan::fromCharString(prefix);
+
+    bool found_prefix_at_least_once = false;
+
+    // Scan string from left to right, to find the desired full matching substring.
+    //
+    // IMPORTANT NOTE: We are trying to find the equivalent of prefix + [0-9A-F]{4}.
+    // The appearance of the full prefix, but not followed by the hex value, must
+    // be detected, as it is illegal if there isn't a valid prefix within the string.
+    // This is why we first check for the prefix and then maybe check for the hex
+    // value, rather than doing a single check of making sure there is enough space
+    // for both.
+    for (size_t start_idx = 0; start_idx < buffer.size(); start_idx++)
+    {
+        const uint8_t * cursor = buffer.data() + start_idx;
+        size_t remaining       = buffer.size() - start_idx;
+
+        if (remaining < prefix_span.size())
+        {
+            // We can't possibly match prefix if not enough bytes left.
+            break;
+        }
+
+        // Try to match the prefix at current position.
+        if (memcmp(cursor, prefix_span.data(), prefix_span.size()) != 0)
+        {
+            // Did not find prefix, move to next position.
+            continue;
+        }
+
+        // Otherwise, found prefix, skip to possible hex value.
+        found_prefix_at_least_once = true;
+        cursor += prefix_span.size();
+        remaining -= prefix_span.size();
+
+        constexpr size_t expected_hex_len = HEX_ENCODED_LENGTH(sizeof(uint16_t));
+        if (remaining < expected_hex_len)
+        {
+            // We can't possibly match the hex values if not enough bytes left.
+            break;
+        }
+
+        char hex_buf[expected_hex_len];
+        memcpy(&hex_buf[0], cursor, sizeof(hex_buf));
+
+        if (Encoding::UppercaseHexToUint16(&hex_buf[0], sizeof(hex_buf), out_hex_value) != 0)
+        {
+            // Found first full valid match, return success, out_hex_value already updated.
+            return CHIP_NO_ERROR;
+        }
+
+        // Otherwise, did not find what we were looking for, try next position until exhausted.
+    }
+
+    return found_prefix_at_least_once ? CHIP_ERROR_WRONG_CERT_DN : CHIP_ERROR_NOT_FOUND;
+}
+
 } // namespace
 
-namespace chip {
-namespace Crypto {
-
-#ifdef ENABLE_HSM_HKDF
-using HKDF_sha_crypto = HKDF_shaHSM;
-#else
 using HKDF_sha_crypto = HKDF_sha;
-#endif
 
 CHIP_ERROR Spake2p::InternalHash(const uint8_t * in, size_t in_len)
 {
@@ -295,16 +330,16 @@ CHIP_ERROR Spake2p::BeginVerifier(const uint8_t * my_identity, size_t my_identit
 }
 
 CHIP_ERROR Spake2p::BeginProver(const uint8_t * my_identity, size_t my_identity_len, const uint8_t * peer_identity,
-                                size_t peer_identity_len, const uint8_t * w0in, size_t w0in_len, const uint8_t * w1in,
-                                size_t w1in_len)
+                                size_t peer_identity_len, const uint8_t * w0sin, size_t w0sin_len, const uint8_t * w1sin,
+                                size_t w1sin_len)
 {
     VerifyOrReturnError(state == CHIP_SPAKE2P_STATE::INIT, CHIP_ERROR_INTERNAL);
 
     ReturnErrorOnFailure(InternalHash(my_identity, my_identity_len));
     ReturnErrorOnFailure(InternalHash(peer_identity, peer_identity_len));
     ReturnErrorOnFailure(WriteMN());
-    ReturnErrorOnFailure(FELoad(w0in, w0in_len, w0));
-    ReturnErrorOnFailure(FELoad(w1in, w1in_len, w1));
+    ReturnErrorOnFailure(FELoad(w0sin, w0sin_len, w0));
+    ReturnErrorOnFailure(FELoad(w1sin, w1sin_len, w1));
 
     state = CHIP_SPAKE2P_STATE::STARTED;
     role  = CHIP_SPAKE2P_ROLE::PROVER;
@@ -466,18 +501,11 @@ CHIP_ERROR Spake2p::KeyConfirm(const uint8_t * in, size_t in_len)
     return CHIP_NO_ERROR;
 }
 
-CHIP_ERROR Spake2p::GetKeys(uint8_t * out, size_t * out_len)
+CHIP_ERROR Spake2p::GetKeys(SessionKeystore & keystore, HkdfKeyHandle & key)
 {
-    CHIP_ERROR error = CHIP_ERROR_INTERNAL;
+    VerifyOrReturnError(state == CHIP_SPAKE2P_STATE::KC, CHIP_ERROR_INTERNAL);
 
-    VerifyOrExit(state == CHIP_SPAKE2P_STATE::KC, error = CHIP_ERROR_INTERNAL);
-    VerifyOrExit(*out_len >= hash_size / 2, error = CHIP_ERROR_INVALID_ARGUMENT);
-
-    memcpy(out, Ke, hash_size / 2);
-    error = CHIP_NO_ERROR;
-exit:
-    *out_len = hash_size / 2;
-    return error;
+    return keystore.CreateKey(ByteSpan(Ke, hash_size / 2), key);
 }
 
 CHIP_ERROR Spake2p_P256_SHA256_HKDF_HMAC::InitImpl()
@@ -540,7 +568,7 @@ CHIP_ERROR Spake2pVerifier::Deserialize(const ByteSpan & inSerialized)
     return CHIP_NO_ERROR;
 }
 
-CHIP_ERROR Spake2pVerifier::Generate(uint32_t pbkdf2IterCount, const ByteSpan & salt, uint32_t & setupPin)
+CHIP_ERROR Spake2pVerifier::Generate(uint32_t pbkdf2IterCount, const ByteSpan & salt, uint32_t setupPin)
 {
     uint8_t serializedWS[kSpake2p_WS_Length * 2] = { 0 };
     ReturnErrorOnFailure(ComputeWS(pbkdf2IterCount, salt, setupPin, serializedWS, sizeof(serializedWS)));
@@ -549,11 +577,7 @@ CHIP_ERROR Spake2pVerifier::Generate(uint32_t pbkdf2IterCount, const ByteSpan & 
     size_t len;
 
     // Create local Spake2+ object for w0 and L computations.
-#ifdef ENABLE_HSM_SPAKE
-    Spake2pHSM_P256_SHA256_HKDF_HMAC spake2p;
-#else
     Spake2p_P256_SHA256_HKDF_HMAC spake2p;
-#endif
     uint8_t context[kSHA256_Hash_Length] = { 0 };
     SuccessOrExit(err = spake2p.Init(context, sizeof(context)));
 
@@ -572,24 +596,69 @@ exit:
     return err;
 }
 
-CHIP_ERROR Spake2pVerifier::ComputeWS(uint32_t pbkdf2IterCount, const ByteSpan & salt, uint32_t & setupPin, uint8_t * ws,
+CHIP_ERROR Spake2pVerifier::ComputeWS(uint32_t pbkdf2IterCount, const ByteSpan & salt, uint32_t setupPin, uint8_t * ws,
                                       uint32_t ws_len)
 {
-#ifdef ENABLE_HSM_PBKDF2
-    PBKDF2_sha256HSM pbkdf2;
-#else
     PBKDF2_sha256 pbkdf2;
-#endif
     uint8_t littleEndianSetupPINCode[sizeof(uint32_t)];
     Encoding::LittleEndian::Put32(littleEndianSetupPINCode, setupPin);
 
-    ReturnErrorCodeIf(salt.size() < kSpake2p_Min_PBKDF_Salt_Length || salt.size() > kSpake2p_Max_PBKDF_Salt_Length,
-                      CHIP_ERROR_INVALID_ARGUMENT);
-    ReturnErrorCodeIf(pbkdf2IterCount < kSpake2p_Min_PBKDF_Iterations || pbkdf2IterCount > kSpake2p_Max_PBKDF_Iterations,
-                      CHIP_ERROR_INVALID_ARGUMENT);
+    VerifyOrReturnError(salt.size() >= kSpake2p_Min_PBKDF_Salt_Length && salt.size() <= kSpake2p_Max_PBKDF_Salt_Length,
+                        CHIP_ERROR_INVALID_ARGUMENT);
+    VerifyOrReturnError(pbkdf2IterCount >= kSpake2p_Min_PBKDF_Iterations && pbkdf2IterCount <= kSpake2p_Max_PBKDF_Iterations,
+                        CHIP_ERROR_INVALID_ARGUMENT);
 
     return pbkdf2.pbkdf2_sha256(littleEndianSetupPINCode, sizeof(littleEndianSetupPINCode), salt.data(), salt.size(),
                                 pbkdf2IterCount, ws_len, ws);
+}
+
+CHIP_ERROR ReadDerLength(Reader & reader, size_t & length)
+{
+    length = 0;
+
+    uint8_t cur_byte = 0;
+    ReturnErrorOnFailure(reader.Read8(&cur_byte).StatusCode());
+
+    if ((cur_byte & (1u << 7)) == 0)
+    {
+        // 7 bit length, the rest of the byte is the length.
+        length = cur_byte & 0x7Fu;
+        return CHIP_NO_ERROR;
+    }
+
+    CHIP_ERROR err = CHIP_ERROR_INVALID_ARGUMENT;
+
+    // Did not early return: > 7 bit length, the number of bytes of the length is provided next.
+    uint8_t length_bytes = cur_byte & 0x7Fu;
+    VerifyOrReturnError((length_bytes >= 1) && (length_bytes <= sizeof(size_t)), CHIP_ERROR_INVALID_ARGUMENT);
+    VerifyOrReturnError(reader.HasAtLeast(length_bytes), CHIP_ERROR_BUFFER_TOO_SMALL);
+
+    for (uint8_t i = 0; i < length_bytes; i++)
+    {
+        uint8_t cur_length_byte = 0;
+        err                     = reader.Read8(&cur_length_byte).StatusCode();
+        if (err != CHIP_NO_ERROR)
+            break;
+
+        // Cannot have zero padding on multi-byte lengths in DER, so first
+        // byte must always be > 0.
+        if ((i == 0) && (cur_length_byte == 0))
+        {
+            return CHIP_ERROR_INVALID_ARGUMENT;
+        }
+
+        length <<= 8;
+        length |= cur_length_byte;
+    }
+
+    // Single-byte long length cannot be < 128: DER always encodes on smallest size
+    // possible, so length zero should have been a single byte short length.
+    if ((length_bytes == 1) && (length < 128))
+    {
+        return CHIP_ERROR_INVALID_ARGUMENT;
+    }
+
+    return CHIP_NO_ERROR;
 }
 
 CHIP_ERROR ConvertIntegerRawToDerWithoutTag(const ByteSpan & raw_integer, MutableByteSpan & out_der_integer)
@@ -684,7 +753,7 @@ CHIP_ERROR EcdsaAsn1SignatureToRaw(size_t fe_length_bytes, const ByteSpan & asn1
     VerifyOrReturnError(tag == kSeqTag, CHIP_ERROR_INVALID_ARGUMENT);
 
     // Read length of sequence
-    uint8_t tag_len = 0;
+    size_t tag_len = 0;
     ReturnErrorOnFailure(ReadDerLength(reader, tag_len));
 
     // Length of sequence must match what is left of signature
@@ -706,14 +775,14 @@ CHIP_ERROR EcdsaAsn1SignatureToRaw(size_t fe_length_bytes, const ByteSpan & asn1
     return CHIP_NO_ERROR;
 }
 
-CHIP_ERROR AES_CTR_crypt(const uint8_t * input, size_t input_length, const uint8_t * key, size_t key_length, const uint8_t * nonce,
+CHIP_ERROR AES_CTR_crypt(const uint8_t * input, size_t input_length, const Aes128KeyHandle & key, const uint8_t * nonce,
                          size_t nonce_length, uint8_t * output)
 {
     // Discard tag portion of CCM to apply only CTR mode encryption/decryption.
     constexpr size_t kTagLen = Crypto::kAES_CCM128_Tag_Length;
     uint8_t tag[kTagLen];
 
-    return AES_CCM_encrypt(input, input_length, nullptr, 0, key, key_length, nonce, nonce_length, output, tag, kTagLen);
+    return AES_CCM_encrypt(input, input_length, nullptr, 0, key, nonce, nonce_length, output, tag, kTagLen);
 }
 
 CHIP_ERROR GenerateCompressedFabricId(const Crypto::P256PublicKey & root_public_key, uint64_t fabric_id,
@@ -833,7 +902,7 @@ CHIP_ERROR DeriveGroupPrivacyKey(const ByteSpan & encryption_key, MutableByteSpa
     VerifyOrReturnError(Crypto::CHIP_CRYPTO_SYMMETRIC_KEY_LENGTH_BYTES == encryption_key.size(), CHIP_ERROR_INVALID_ARGUMENT);
     VerifyOrReturnError(Crypto::CHIP_CRYPTO_SYMMETRIC_KEY_LENGTH_BYTES <= out_key.size(), CHIP_ERROR_INVALID_ARGUMENT);
 
-    const ByteSpan null_span = ByteSpan(nullptr, 0);
+    constexpr ByteSpan null_span = ByteSpan();
 
     Crypto::HKDF_sha crypto;
     return crypto.HKDF_SHA256(encryption_key.data(), encryption_key.size(), null_span.data(), null_span.size(), kGroupPrivacyInfo,
@@ -856,8 +925,8 @@ CHIP_ERROR DeriveGroupOperationalCredentials(const ByteSpan & epoch_key, const B
 CHIP_ERROR ExtractVIDPIDFromAttributeString(DNAttrType attrType, const ByteSpan & attr,
                                             AttestationCertVidPid & vidpidFromMatterAttr, AttestationCertVidPid & vidpidFromCNAttr)
 {
-    ReturnErrorCodeIf(attrType == DNAttrType::kUnspecified, CHIP_NO_ERROR);
-    ReturnErrorCodeIf(attr.empty(), CHIP_ERROR_INVALID_ARGUMENT);
+    VerifyOrReturnError(attrType != DNAttrType::kUnspecified, CHIP_NO_ERROR);
+    VerifyOrReturnError(!attr.empty(), CHIP_ERROR_INVALID_ARGUMENT);
 
     if (attrType == DNAttrType::kMatterVID || attrType == DNAttrType::kMatterPID)
     {
@@ -870,54 +939,52 @@ CHIP_ERROR ExtractVIDPIDFromAttributeString(DNAttrType attrType, const ByteSpan 
         if (attrType == DNAttrType::kMatterVID)
         {
             // Not more than one VID attribute can be present.
-            ReturnErrorCodeIf(vidpidFromMatterAttr.mVendorId.HasValue(), CHIP_ERROR_WRONG_CERT_DN);
+            VerifyOrReturnError(!vidpidFromMatterAttr.mVendorId.HasValue(), CHIP_ERROR_WRONG_CERT_DN);
             vidpidFromMatterAttr.mVendorId.SetValue(static_cast<VendorId>(matterAttr));
         }
         else
         {
             // Not more than one PID attribute can be present.
-            ReturnErrorCodeIf(vidpidFromMatterAttr.mProductId.HasValue(), CHIP_ERROR_WRONG_CERT_DN);
+            VerifyOrReturnError(!vidpidFromMatterAttr.mProductId.HasValue(), CHIP_ERROR_WRONG_CERT_DN);
             vidpidFromMatterAttr.mProductId.SetValue(matterAttr);
         }
     }
     // Otherwise, it is a CommonName attribute.
     else if (!vidpidFromCNAttr.Initialized())
     {
-        char cnAttr[kMax_CommonNameAttr_Length + 1];
-        if (attr.size() <= chip::Crypto::kMax_CommonNameAttr_Length)
+        ByteSpan attr_source_span{ attr };
+        if (attr_source_span.size() > chip::Crypto::kMax_CommonNameAttr_Length)
         {
-            memcpy(cnAttr, attr.data(), attr.size());
-            cnAttr[attr.size()] = 0;
+            attr_source_span.reduce_size(chip::Crypto::kMax_CommonNameAttr_Length);
+        }
 
-            char * vid = strstr(cnAttr, kVIDPrefixForCNEncoding);
-            if (vid != nullptr)
-            {
-                vid += strlen(kVIDPrefixForCNEncoding);
-                if (cnAttr + attr.size() >= vid + kVIDandPIDHexLength)
-                {
-                    uint16_t matterAttr;
-                    if (Encoding::UppercaseHexToUint16(vid, kVIDandPIDHexLength, matterAttr) == sizeof(matterAttr))
-                    {
-                        vidpidFromCNAttr.mVendorId.SetValue(static_cast<VendorId>(matterAttr));
-                    }
-                }
-            }
+        // Try to find a valid Vendor ID encoded in fallback method.
+        uint16_t vid   = 0;
+        CHIP_ERROR err = Find16BitUpperCaseHexAfterPrefix(attr_source_span, kVIDPrefixForCNEncoding, vid);
+        if (err == CHIP_NO_ERROR)
+        {
+            vidpidFromCNAttr.mVendorId.SetValue(static_cast<VendorId>(vid));
+        }
+        else if (err != CHIP_ERROR_NOT_FOUND)
+        {
+            // This indicates a bad/ambiguous format.
+            return err;
+        }
 
-            char * pid = strstr(cnAttr, kPIDPrefixForCNEncoding);
-            if (pid != nullptr)
-            {
-                pid += strlen(kPIDPrefixForCNEncoding);
-                if (cnAttr + attr.size() >= pid + kVIDandPIDHexLength)
-                {
-                    uint16_t matterAttr;
-                    if (Encoding::UppercaseHexToUint16(pid, kVIDandPIDHexLength, matterAttr) == sizeof(matterAttr))
-                    {
-                        vidpidFromCNAttr.mProductId.SetValue(matterAttr);
-                    }
-                }
-            }
+        // Try to find a valid Product ID encoded in fallback method.
+        uint16_t pid = 0;
+        err          = Find16BitUpperCaseHexAfterPrefix(attr_source_span, kPIDPrefixForCNEncoding, pid);
+        if (err == CHIP_NO_ERROR)
+        {
+            vidpidFromCNAttr.mProductId.SetValue(pid);
+        }
+        else if (err != CHIP_ERROR_NOT_FOUND)
+        {
+            // This indicates a bad/ambiguous format.
+            return err;
         }
     }
+
     return CHIP_NO_ERROR;
 }
 
@@ -997,7 +1064,7 @@ exit:
 CHIP_ERROR GenerateCertificateSigningRequest(const P256Keypair * keypair, MutableByteSpan & csr_span)
 {
     VerifyOrReturnError(keypair != nullptr, CHIP_ERROR_INVALID_ARGUMENT);
-    VerifyOrReturnError(csr_span.size() >= kMAX_CSR_Length, CHIP_ERROR_BUFFER_TOO_SMALL);
+    VerifyOrReturnError(csr_span.size() >= kMIN_CSR_Buffer_Size, CHIP_ERROR_BUFFER_TOO_SMALL);
 
     // First pass: Generate the CertificatioRequestInformation inner
     // encoding one time, to sign it, before re-generating it within the
@@ -1104,8 +1171,10 @@ exit:
 
 CHIP_ERROR VerifyCertificateSigningRequestFormat(const uint8_t * csr, size_t csr_length)
 {
-    // Ensure we have enough size to validate header
-    VerifyOrReturnError((csr_length >= 16) && (csr_length <= kMAX_CSR_Length), CHIP_ERROR_UNSUPPORTED_CERT_FORMAT);
+    // Ensure we have enough size to validate header, and that our assumptions are met
+    // for some tag computations below. A csr_length > 65535 would never be seen in
+    // practice.
+    VerifyOrReturnError((csr_length >= 16) && (csr_length <= 65535), CHIP_ERROR_UNSUPPORTED_CERT_FORMAT);
 
     Reader reader(csr, csr_length);
 
@@ -1114,12 +1183,11 @@ CHIP_ERROR VerifyCertificateSigningRequestFormat(const uint8_t * csr, size_t csr
     ReturnErrorOnFailure(reader.Read8(&seq_header).StatusCode());
     VerifyOrReturnError(seq_header == kSeqTag, CHIP_ERROR_UNSUPPORTED_CERT_FORMAT);
 
-    uint8_t seq_length = 0;
+    size_t seq_length = 0;
     VerifyOrReturnError(ReadDerLength(reader, seq_length) == CHIP_NO_ERROR, CHIP_ERROR_UNSUPPORTED_CERT_FORMAT);
-
     // Ensure that outer length matches sequence length + tag overhead, otherwise
     // we have trailing garbage
-    size_t header_overhead = (seq_length <= 127) ? 2 : 3;
+    size_t header_overhead = (seq_length <= 127) ? 2 : ((seq_length <= 255) ? 3 : 4);
     VerifyOrReturnError(csr_length == (seq_length + header_overhead), CHIP_ERROR_UNSUPPORTED_CERT_FORMAT);
 
     return CHIP_NO_ERROR;

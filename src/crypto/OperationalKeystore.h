@@ -67,7 +67,7 @@ public:
      *  Only one pending operational keypair is supported at a time.
      *
      * @param fabricIndex - FabricIndex for which a new keypair must be made available
-     * @param outCertificateSigningRequest - Buffer to contain the CSR. Must be at least `kMAX_CSR_Length` large.
+     * @param outCertificateSigningRequest - Buffer to contain the CSR. Must have size at least `kMIN_CSR_Buffer_Size`.
      *
      * @retval CHIP_NO_ERROR on success
      * @retval CHIP_ERROR_BUFFER_TOO_SMALL if `outCertificateSigningRequest` buffer is too small
@@ -120,6 +120,46 @@ public:
     virtual CHIP_ERROR CommitOpKeypairForFabric(FabricIndex fabricIndex) = 0;
 
     /**
+     * @brief Try to read out the permanently committed operational keypair and save it to the buffer.
+     *
+     * @param fabricIndex - FabricIndex from which the keypair will be exported
+     * @param outKeypair - a reference to P256SerializedKeypair object to store the exported key.
+     * @retval CHIP_ERROR on success.
+     * @retval CHIP_ERROR_UNSUPPORTED_CHIP_FEATURE if the key cannot be exported due to security restrictions.
+     * @retval CHIP_ERROR_NOT_IMPLEMENTED if the exporting is not implemented for the cryptography backend.
+     * @retval CHIP_ERROR_INVALID_FABRIC_INDEX if provided wrong value of `fabricIndex`.
+     * @retval CHIP_ERROR_PERSISTED_STORAGE_VALUE_NOT_FOUND if there is no keypair found for `fabricIndex`.
+     * @retval CHIP_ERROR_BUFFER_TOO_SMALL if `outKeyPair` buffer is too small to store the read out keypair.
+     * @retval other CHIP_ERROR value on internal storage or cryptography backend errors.
+     */
+    virtual CHIP_ERROR ExportOpKeypairForFabric(FabricIndex fabricIndex, Crypto::P256SerializedKeypair & outKeypair)
+    {
+        return CHIP_ERROR_NOT_IMPLEMENTED;
+    };
+
+    /**
+     * @brief Migrate the operational keypair from another Operational keystore (`operationalKeystore`) implementation to this one.
+     *
+     * This method assumes that the operational key for given `fabricIndex` exists in the `operationalKeystore` storage or it has
+     * been already migrated to the new Operational Storage. If a key for the given `fabricIndex` does not exist in any of those
+     * keystores, then the method retuns CHIP_ERROR_PERSISTED_STORAGE_VALUE_NOT_FOUND.
+     *
+     * @param fabricIndex - FabricIndex for which to migrate the operational key
+     * @param operationalKeystore - a reference to the operationalKeystore implementation that may contain saved operational key
+     * for Fabric
+     * @retval CHIP_ERROR on success
+     * @retval CHIP_ERROR_UNSUPPORTED_CHIP_FEATURE if the key cannot be exported due to security restrictions.
+     * @retval CHIP_ERROR_NOT_IMPLEMENTED if the exporting is not implemented for the cryptography backend.
+     * @retval CHIP_ERROR_INVALID_FABRIC_INDEX if there is no keypair found for `fabricIndex`.
+     * @retval CHIP_ERROR_PERSISTED_STORAGE_VALUE_NOT_FOUND if there is no keypair found for `fabricIndex`.
+     * @retval other CHIP_ERROR value on internal storage or crypto engine errors.
+     */
+    virtual CHIP_ERROR MigrateOpKeypairForFabric(FabricIndex fabricIndex, OperationalKeystore & operationalKeystore) const
+    {
+        return CHIP_ERROR_NOT_IMPLEMENTED;
+    };
+
+    /**
      * @brief Permanently remove the keypair associated with a fabric
      *
      * This is to be used for fail-safe handling and RemoveFabric.  Removes both the
@@ -149,6 +189,19 @@ public:
 
     // ==== Primary operation required: signature
     /**
+     * @brief Whether `SignWithOpKeypair` may be performed in the background.
+     *
+     * If true, `CASESession` may attempt to perform `SignWithOpKeypair` in the
+     * background. In this case, `OperationalKeystore` should protect itself,
+     * e.g. with a mutex, as the signing could occur at any time during session
+     * establishment.
+     *
+     * @retval true if `SignWithOpKeypair` may be performed in the background
+     * @retval false if `SignWithOpKeypair` may NOT be performed in the background
+     */
+    virtual bool SupportsSignWithOpKeypairInBackground() const { return false; }
+
+    /**
      * @brief Sign a message with a fabric's currently-active operational keypair.
      *
      * If a Keypair was successfully made temporarily active for the given `fabricIndex` with `ActivateOpKeypairForFabric`,
@@ -164,7 +217,6 @@ public:
      * @retval CHIP_ERROR_INVALID_FABRIC_INDEX if no active key is found for the given `fabricIndex` or if
      *                                         `fabricIndex` is invalid.
      * @retval other CHIP_ERROR value on internal crypto engine errors
-     *
      */
     virtual CHIP_ERROR SignWithOpKeypair(FabricIndex fabricIndex, const ByteSpan & message,
                                          Crypto::P256ECDSASignature & outSignature) const = 0;

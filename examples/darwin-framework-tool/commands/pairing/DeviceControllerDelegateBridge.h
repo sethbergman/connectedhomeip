@@ -28,7 +28,9 @@
 @property MTRDeviceController * commissioner;
 @property MTRCommissioningParameters * params;
 
+- (void)controller:(MTRDeviceController *)controller statusUpdate:(MTRCommissioningStatus)status;
 - (void)controller:(MTRDeviceController *)controller commissioningSessionEstablishmentDone:(NSError *)error;
 - (void)controller:(MTRDeviceController *)controller commissioningComplete:(NSError *)error;
+- (void)controller:(MTRDeviceController *)controller commissioningComplete:(NSError *)error nodeID:(NSNumber *)nodeID metrics:(MTRMetrics *)metrics;
 
 @end

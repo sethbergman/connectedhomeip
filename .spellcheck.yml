@@ -20,7 +20,7 @@
 #
 #   Actual run:
 #
-#      pyspelling pyspelling --config .spellcheck.yml
+#      pyspelling --config .spellcheck.yml
 
 matrix:
   - name: markdown
@@ -46,7 +46,11 @@ matrix:
           # ```python
           # content
           # ```
-          - open: '(?s)^(?P<open> *`{3,})[a-z]*$'
+          #
+          # Allow MyST extended syntax like:
+          # ```{include} my/file.md
+          # ```
+          - open: '(?s)^(?P<open> *`{3,})([a-z]*$|{[a-z]*?}\s*[^\n]*?$)'
             close: '^(?P=open)$'
           # Ignore text between inline back ticks
           - open: '(?P<open>`+)'
@@ -61,6 +65,7 @@ matrix:
       # converts markdown to HTML
       - pyspelling.filters.markdown:
     sources:
-      - '**/*.md|!third_party/**|!examples/common/**/repo/**'
+      - '**/*.md|!third_party/**|!examples/common/**/repo/**|!docs/ids_and_codes/ERROR_CODES.md|!docs/clusters.md|!docs/testing/yaml_schema.md|!docs/testing/yaml_pseudocluster.md|!docs/testing/python.md|!docs/testing/ChipDeviceCtrlAPI.md|!docs/issue_triage.md'
     aspell:
       ignore-case: true
+      camel-case: true

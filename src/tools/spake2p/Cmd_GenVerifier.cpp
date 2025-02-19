@@ -23,13 +23,12 @@
  *
  */
 
-#ifndef __STDC_LIMIT_MACROS
-#define __STDC_LIMIT_MACROS
-#endif
-
 #include "spake2p.h"
 
-#include <errno.h>
+#include <cstring>
+#include <fstream>
+#include <iomanip>
+#include <iostream>
 
 #include <CHIPVersion.h>
 #include <crypto/CHIPCryptoPAL.h>
@@ -38,6 +37,8 @@
 #include <lib/support/CHIPMem.h>
 #include <protocols/secure_channel/PASESession.h>
 #include <setup_payload/SetupPayload.h>
+
+using namespace chip::Crypto;
 
 namespace {
 
@@ -52,6 +53,7 @@ OptionDef gCmdOptionDefs[] =
 {
     { "count",           kArgumentRequired, 'c' },
     { "pin-code",        kArgumentRequired, 'p' },
+    { "pin-code-file",   kArgumentRequired, 'f' },
     { "iteration-count", kArgumentRequired, 'i' },
     { "salt-len",        kArgumentRequired, 'l' },
     { "salt",            kArgumentRequired, 's' },
@@ -84,6 +86,20 @@ const char * const gCmdOptionHelp =
     "          * 99999999\n"
     "          * 12345678\n"
     "          * 87654321\n"
+    "\n"
+    "   -f, --pin-code-file <file>\n"
+    "\n"
+    "       A file which contains all the PIN codes to generate verifiers.\n"
+    "       Each line in this file should be a valid PIN code in the decimal number format. If the row count\n"
+    "       of this file is less than the number of pin-code/verifier parameter sets to be generated, the\n"
+    "       first few verifier sets will be generated using the PIN codes in this file, and the next will\n"
+    "       use the random PIN codes.\n"
+    "       The following file is a example with 5 PIN codes:\n"
+    "       1234\n"
+    "       2345\n"
+    "       3456\n"
+    "       4567\n"
+    "       5678\n"
     "\n"
     "   -i, --iteration-count <int>\n"
     "\n"
@@ -139,10 +155,36 @@ OptionSet *gCmdOptionSets[] =
 uint32_t gCount          = 1;
 uint32_t gPinCode        = chip::kSetupPINCodeUndefinedValue;
 uint32_t gIterationCount = 0;
-uint8_t gSalt[BASE64_MAX_DECODED_LEN(BASE64_ENCODED_LEN(chip::kSpake2p_Max_PBKDF_Salt_Length))];
+uint8_t gSalt[BASE64_MAX_DECODED_LEN(BASE64_ENCODED_LEN(kSpake2p_Max_PBKDF_Salt_Length))];
 uint8_t gSaltDecodedLen   = 0;
 uint8_t gSaltLen          = 0;
 const char * gOutFileName = nullptr;
+std::ifstream gPinCodeFile;
+
+static uint32_t GetNextPinCode()
+{
+    if (!gPinCodeFile.is_open())
+    {
+        return chip::kSetupPINCodeUndefinedValue;
+    }
+    std::string pinCodeStr;
+    uint32_t pinCode = chip::kSetupPINCodeUndefinedValue;
+    std::getline(gPinCodeFile, pinCodeStr);
+    if (!gPinCodeFile.fail())
+    {
+        if (pinCodeStr.length() > 8)
+        {
+            pinCodeStr = pinCodeStr.substr(0, 8);
+        }
+        pinCode = static_cast<uint32_t>(atoi(pinCodeStr.c_str()));
+        if (!chip::SetupPayload::IsValidSetupPIN(pinCode))
+        {
+            std::cerr << "The line " << pinCodeStr << " in PIN codes file is invalid, using a random PIN code.\n";
+            pinCode = chip::kSetupPINCodeUndefinedValue;
+        }
+    }
+    return pinCode;
+}
 
 bool HandleOption(const char * progName, OptionSet * optSet, int id, const char * name, const char * arg)
 {
@@ -157,20 +199,26 @@ bool HandleOption(const char * progName, OptionSet * optSet, int id, const char 
         break;
     case 'p':
         // Specifications sections 5.1.1.6 and 5.1.6.1
-        if (!ParseInt(arg, gPinCode) || (gPinCode > chip::kSetupPINCodeMaximumValue) ||
-            (gPinCode == chip::kSetupPINCodeUndefinedValue) || (gPinCode == 11111111) || (gPinCode == 22222222) ||
-            (gPinCode == 33333333) || (gPinCode == 44444444) || (gPinCode == 55555555) || (gPinCode == 66666666) ||
-            (gPinCode == 77777777) || (gPinCode == 88888888) || (gPinCode == 99999999) || (gPinCode == 12345678) ||
-            (gPinCode == 87654321))
+        if (!ParseInt(arg, gPinCode) || (!chip::SetupPayload::IsValidSetupPIN(gPinCode)))
         {
             PrintArgError("%s: Invalid value specified for pin-code parameter: %s\n", progName, arg);
             return false;
         }
         break;
 
+    case 'f':
+        gPinCodeFile.open(arg, std::ios::in);
+        if (gPinCodeFile.fail())
+        {
+            PrintArgError("%s: Failed to open the PIN code file: %s\n", progName, arg);
+            return false;
+        }
+        gPinCode = GetNextPinCode();
+        break;
+
     case 'i':
         if (!ParseInt(arg, gIterationCount) ||
-            !(gIterationCount >= chip::kSpake2p_Min_PBKDF_Iterations && gIterationCount <= chip::kSpake2p_Max_PBKDF_Iterations))
+            !(gIterationCount >= kSpake2p_Min_PBKDF_Iterations && gIterationCount <= kSpake2p_Max_PBKDF_Iterations))
         {
             PrintArgError("%s: Invalid value specified for the iteration-count parameter: %s\n", progName, arg);
             return false;
@@ -178,8 +226,7 @@ bool HandleOption(const char * progName, OptionSet * optSet, int id, const char 
         break;
 
     case 'l':
-        if (!ParseInt(arg, gSaltLen) ||
-            !(gSaltLen >= chip::kSpake2p_Min_PBKDF_Salt_Length && gSaltLen <= chip::kSpake2p_Max_PBKDF_Salt_Length))
+        if (!ParseInt(arg, gSaltLen) || !(gSaltLen >= kSpake2p_Min_PBKDF_Salt_Length && gSaltLen <= kSpake2p_Max_PBKDF_Salt_Length))
         {
             PrintArgError("%s: Invalid value specified for salt length parameter: %s\n", progName, arg);
             return false;
@@ -187,9 +234,9 @@ bool HandleOption(const char * progName, OptionSet * optSet, int id, const char 
         break;
 
     case 's':
-        if (strlen(arg) > BASE64_ENCODED_LEN(chip::kSpake2p_Max_PBKDF_Salt_Length))
+        if (strlen(arg) > BASE64_ENCODED_LEN(kSpake2p_Max_PBKDF_Salt_Length))
         {
-            fprintf(stderr, "%s: Salt parameter too long: %s\n", progName, arg);
+            std::cerr << progName << ": Salt parameter too long: " << arg << "\n";
             return false;
         }
 
@@ -197,15 +244,15 @@ bool HandleOption(const char * progName, OptionSet * optSet, int id, const char 
 
         // The first check was just to make sure Base64Decode32 would not write beyond the buffer.
         // Now double-check if the length is correct.
-        if (gSaltDecodedLen > chip::kSpake2p_Max_PBKDF_Salt_Length)
+        if (gSaltDecodedLen > kSpake2p_Max_PBKDF_Salt_Length)
         {
-            fprintf(stderr, "%s: Salt parameter too long: %s\n", progName, arg);
+            std::cerr << progName << ": Salt parameter too long: " << arg << "\n";
             return false;
         }
 
-        if (gSaltDecodedLen < chip::kSpake2p_Min_PBKDF_Salt_Length)
+        if (gSaltDecodedLen < kSpake2p_Min_PBKDF_Salt_Length)
         {
-            fprintf(stderr, "%s: Salt parameter too short: %s\n", progName, arg);
+            std::cerr << progName << ": Salt parameter too short: " << arg << "\n";
             return false;
         }
 
@@ -227,8 +274,8 @@ bool HandleOption(const char * progName, OptionSet * optSet, int id, const char 
 
 bool Cmd_GenVerifier(int argc, char * argv[])
 {
-    FILE * outFile = nullptr;
-
+    std::ofstream outFile;
+    std::ostream * outStream = &outFile;
     if (argc == 1)
     {
         gHelpOptions.PrintBriefUsage(stderr);
@@ -236,22 +283,22 @@ bool Cmd_GenVerifier(int argc, char * argv[])
     }
 
     bool res = ParseArgs(CMD_NAME, argc, argv, gCmdOptionSets);
-    VerifyOrReturnError(res, false);
+    VerifyOrReturnValue(res, false);
 
     if (gIterationCount == 0)
     {
-        fprintf(stderr, "Please specify the iteration-count parameter.\n");
+        std::cerr << "Please specify the iteration-count parameter.\n";
         return false;
     }
 
     if (gSaltDecodedLen == 0 && gSaltLen == 0)
     {
-        fprintf(stderr, "Please specify at least one of the 'salt' or 'salt-len' parameters.\n");
+        std::cerr << "Please specify at least one of the 'salt' or 'salt-len' parameters.\n";
         return false;
     }
     if (gSaltDecodedLen != 0 && gSaltLen != 0 && gSaltDecodedLen != gSaltLen)
     {
-        fprintf(stderr, "The specified 'salt-len' doesn't match the length of 'salt' parameter.\n");
+        std::cerr << "The specified 'salt-len' doesn't match the length of 'salt' parameter.\n";
         return false;
     }
     if (gSaltLen == 0)
@@ -261,39 +308,38 @@ bool Cmd_GenVerifier(int argc, char * argv[])
 
     if (gOutFileName == nullptr)
     {
-        fprintf(stderr, "Please specify the output file name, or - for stdout.\n");
+        std::cerr << "Please specify the output file name, or - for stdout.\n";
         return false;
     }
 
     if (strcmp(gOutFileName, "-") != 0)
     {
-        outFile = fopen(gOutFileName, "w+b");
-        if (outFile == nullptr)
+        outFile.open(gOutFileName, std::ios::binary | std::ios::trunc);
+        if (!outFile.is_open())
         {
-            fprintf(stderr, "Unable to create file %s\n%s\n", gOutFileName, strerror(errno));
+            std::cerr << "Unable to create file " << gOutFileName << "\n" << strerror(errno) << "\n";
             return false;
         }
     }
     else
     {
-        outFile = stdout;
+        outStream = &std::cout;
     }
-
-    if (fprintf(outFile, "Index,PIN Code,Iteration Count,Salt,Verifier\n") < 0 || ferror(outFile))
+    (*outStream) << "Index,PIN Code,Iteration Count,Salt,Verifier\n";
+    if (outStream->fail())
     {
-        fprintf(stderr, "Error writing to output file: %s\n", strerror(errno));
-        return false;
+        std::cerr << "Error writing to output file: " << strerror(errno) << "\n";
     }
 
     for (uint32_t i = 0; i < gCount; i++)
     {
-        uint8_t salt[chip::kSpake2p_Max_PBKDF_Salt_Length];
+        uint8_t salt[kSpake2p_Max_PBKDF_Salt_Length];
         if (gSaltDecodedLen == 0)
         {
             CHIP_ERROR err = chip::Crypto::DRBG_get_bytes(salt, gSaltLen);
             if (err != CHIP_NO_ERROR)
             {
-                fprintf(stderr, "DRBG_get_bytes() failed.\n");
+                std::cerr << "DRBG_get_bytes() failed.\n";
                 return false;
             }
         }
@@ -302,42 +348,46 @@ bool Cmd_GenVerifier(int argc, char * argv[])
             memcpy(salt, gSalt, gSaltLen);
         }
 
-        chip::Spake2pVerifier verifier;
+        Spake2pVerifier verifier;
         CHIP_ERROR err = chip::PASESession::GeneratePASEVerifier(verifier, gIterationCount, chip::ByteSpan(salt, gSaltLen),
                                                                  (gPinCode == chip::kSetupPINCodeUndefinedValue), gPinCode);
         if (err != CHIP_NO_ERROR)
         {
-            fprintf(stderr, "GeneratePASEVerifier() failed.\n");
+            std::cerr << "GeneratePASEVerifier() failed.\n";
             return false;
         }
 
-        chip::Spake2pVerifierSerialized serializedVerifier;
+        Spake2pVerifierSerialized serializedVerifier;
         chip::MutableByteSpan serializedVerifierSpan(serializedVerifier);
         err = verifier.Serialize(serializedVerifierSpan);
         if (err != CHIP_NO_ERROR)
         {
-            fprintf(stderr, "Spake2pVerifier::Serialize() failed.\n");
+            std::cerr << "Spake2pVerifier::Serialize() failed.\n";
             return false;
         }
 
-        char saltB64[BASE64_ENCODED_LEN(chip::kSpake2p_Max_PBKDF_Salt_Length) + 1];
+        char saltB64[BASE64_ENCODED_LEN(kSpake2p_Max_PBKDF_Salt_Length) + 1];
         uint32_t saltB64Len = chip::Base64Encode32(salt, gSaltLen, saltB64);
         saltB64[saltB64Len] = '\0';
 
-        char verifierB64[BASE64_ENCODED_LEN(chip::kSpake2p_VerifierSerialized_Length) + 1];
-        uint32_t verifierB64Len = chip::Base64Encode32(serializedVerifier, chip::kSpake2p_VerifierSerialized_Length, verifierB64);
+        char verifierB64[BASE64_ENCODED_LEN(kSpake2p_VerifierSerialized_Length) + 1];
+        uint32_t verifierB64Len     = chip::Base64Encode32(serializedVerifier, kSpake2p_VerifierSerialized_Length, verifierB64);
         verifierB64[verifierB64Len] = '\0';
 
-        if (fprintf(outFile, "%d,%08d,%d,%s,%s\n", i, gPinCode, gIterationCount, saltB64, verifierB64) < 0 || ferror(outFile))
+        (*outStream) << i << "," << std::setfill('0') << std::setw(8) << gPinCode << "," << gIterationCount << "," << saltB64 << ","
+                     << verifierB64 << "\n";
+        if (outStream->fail())
         {
-            fprintf(stderr, "Error writing to output file: %s\n", strerror(errno));
+            std::cerr << "Error writing to output file: " << strerror(errno) << "\n";
             return false;
         }
 
-        // On the next iteration the PIN Code and Salt will be randomly generated.
-        gPinCode        = chip::kSetupPINCodeUndefinedValue;
+        // If the file with PIN codes is not provided, the PIN code on next iteration will be randomly generated.
+        gPinCode = GetNextPinCode();
+        // On the next iteration the Salt will be randomly generated.
         gSaltDecodedLen = 0;
     }
 
+    gPinCodeFile.close();
     return true;
 }

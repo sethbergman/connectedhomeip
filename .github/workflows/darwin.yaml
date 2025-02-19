@@ -16,106 +16,128 @@ name: Darwin
 
 on:
     push:
+        branches:
+            - master
+            - 'v*-branch'
     pull_request:
+    merge_group:
     workflow_dispatch:
 
 concurrency:
-    group: ${{ github.ref }}-${{ github.workflow }}-${{ (github.event_name == 'pull_request' && github.event.number) || (github.event_name == 'workflow_dispatch' && github.run_number) || github.sha }}
+    group:
+        ${{ github.ref }}-${{ github.workflow }}-${{ (github.event_name ==
+        'pull_request' && github.event.number) || (github.event_name ==
+        'workflow_dispatch' && github.run_number) || github.sha }}
     cancel-in-progress: true
 
+env:
+    CHIP_NO_LOG_TIMESTAMPS: true
+
 jobs:
-    darwin:
-        name: Build Darwin
-        timeout-minutes: 120
-
+    framework:
+        name: Build framework
         if: github.actor != 'restyled-io[bot]'
-        runs-on: macos-latest
-
+        runs-on: macos-13
+        strategy:
+            matrix:
+                options: # We don't need a full matrix
+                    - flavor: macos-release
+                      arguments: -sdk macosx -configuration Release
+                    - flavor: ios-release
+                      arguments: -sdk iphoneos -configuration Release
+                    - flavor: tvos-debug
+                      arguments: -sdk appletvos -configuration Debug
+                    - flavor: watchos-debug
+                      arguments: -sdk watchos -configuration Debug
         steps:
-            - uses: Wandalen/wretry.action@v1.0.15
-              name: Checkout
+            - name: Checkout
+              uses: actions/checkout@v4
+            - name: Checkout submodules & Bootstrap
+              uses: ./.github/actions/checkout-submodules-and-bootstrap
               with:
-                  action: actions/checkout@v3
-                  with: |
-                      token: ${{ github.token }}
-                  attempt_limit: 3
-                  attempt_delay: 2000
-            - name: Checkout submodules
-              run: scripts/checkout_submodules.py --shallow --platform darwin
-            - name: Setup Environment
-              run: brew install openssl pkg-config python@3.9
-            - name: Fix pkgconfig link
-              working-directory: /usr/local/lib/pkgconfig
+                  platform: darwin
+                  bootstrap-log-name:
+                      bootstrap-logs-framework-${{ matrix.options.flavor }}
+            - name: Block zap-cli from being used
+              env:
+                  PW_ENVSETUP_NO_BANNER: 1
               run: |
-                  pwd
-                  ls -la /usr/local/Cellar/
-                  ls -la /usr/local/Cellar/openssl@1.1
-                  OPEN_SSL_VERSION=`ls -la /usr/local/Cellar/openssl@1.1 | cat | tail -n1 | awk '{print $NF}'`
-                  ln -s /usr/local/Cellar/openssl@1.1/$OPEN_SSL_VERSION/lib/pkgconfig/* .
-            - name: Bootstrap
-              timeout-minutes: 25
-              run: scripts/build/gn_bootstrap.sh
-            - name: Uploading bootstrap logs
-              uses: actions/upload-artifact@v2
-              if: ${{ always() && !env.ACT }}
+                  # Framework builds are NOT expected to require zap-cli
+                  scripts/run_in_build_env.sh 'rm -- "$(which zap-cli)"'
+                  # run_in_build_env.sh is used to ensure PATH is set to something that would otherwise find zap-cli
+                  scripts/run_in_build_env.sh '(zap-cli --version && exit 1) || exit 0'
+            - name: Build
+              working-directory: src/darwin/Framework
+              run: xcodebuild -target "Matter" ${{ matrix.options.arguments }}
+
+    tests:
+        name: Run framework tests
+        if: github.actor != 'restyled-io[bot]'
+        needs: [framework] # serialize to avoid running to many parallel macos runners
+        runs-on: macos-13
+        strategy:
+            matrix:
+                options: # We don't need a full matrix
+                    - flavor: asan
+                      arguments:
+                          -enableAddressSanitizer YES
+                          -enableUndefinedBehaviorSanitizer YES
+                    - flavor: tsan
+                      arguments: -enableThreadSanitizer YES
+                    # "leaks" does not seem to be very compatible with asan or tsan
+                    - flavor: leaks
+                      defines: ENABLE_LEAK_DETECTION=1
+        steps:
+            - name: Checkout
+              uses: actions/checkout@v4
+            - name: Checkout submodules & Bootstrap
+              uses: ./.github/actions/checkout-submodules-and-bootstrap
               with:
-                  name: bootstrap-logs
-                  path: |
-                      .environment/gn_out/.ninja_log
-                      .environment/pigweed-venv/*.log
-            - name: Run iOS Build Debug
-              timeout-minutes: 30
-              working-directory: src/darwin/Framework
-              run: xcodebuild -target "Matter" -sdk iphoneos
-            - name: Run iOS Build Release
-              timeout-minutes: 30
-              working-directory: src/darwin/Framework
-              run: xcodebuild -target "Matter" -sdk iphoneos -configuration Release
-            - name: Clean Build
-              run: xcodebuild clean
-              working-directory: src/darwin/Framework
-            - name: Delete Defaults
-              run: defaults delete com.apple.dt.xctest.tool
-              continue-on-error: true
-            - name: Run macOS Build
-              timeout-minutes: 40
-              # Enable -Werror by hand here, because the Xcode config can't
-              # enable it for various reasons.  Keep whatever Xcode settings
-              # for OTHER_CFLAGS exist by using ${inherited}.
-              #
-              # Enable -Wconversion by hand as well, because it seems to not be
-              # enabled by default in the Xcode config.
-              run: xcodebuild -target "Matter" -sdk macosx OTHER_CFLAGS='${inherited} -Werror -Wconversion'
-              working-directory: src/darwin/Framework
-            - name: Clean Build
-              run: xcodebuild clean
-              working-directory: src/darwin/Framework
+                  platform: darwin
+                  bootstrap-log-name:
+                      bootstrap-logs-framework-${{ matrix.options.flavor }}
             - name: Build example All Clusters Server
-              timeout-minutes: 15
               run: |
-                  scripts/examples/gn_build_example.sh examples/all-clusters-app/linux out/debug chip_config_network_layer_ble=false
+                  scripts/examples/gn_build_example.sh examples/all-clusters-app/linux out/debug/all-clusters-app chip_config_network_layer_ble=false
             - name: Build example OTA Provider
-              timeout-minutes: 5
               run: |
-                  scripts/examples/gn_build_example.sh examples/ota-provider-app/linux out/debug chip_config_network_layer_ble=false
+                  scripts/examples/gn_build_example.sh examples/ota-provider-app/linux out/debug/ota-provider-app chip_config_network_layer_ble=false
             - name: Build example OTA Requestor
-              timeout-minutes: 5
               run: |
-                  scripts/examples/gn_build_example.sh examples/ota-requestor-app/linux out/debug chip_config_network_layer_ble=false
-            - name: Delete Defaults
-              run: defaults delete com.apple.dt.xctest.tool
-              continue-on-error: true
+                  scripts/examples/gn_build_example.sh examples/ota-requestor-app/linux out/debug/ota-requestor-app chip_config_network_layer_ble=false non_spec_compliant_ota_action_delay_floor=0
             - name: Run Framework Tests
-              timeout-minutes: 15
+              # We want to ensure that our log upload runs on timeout, so use a timeout here shorter
+              # than the 6-hour overall job timeout.  4.5 hours should be plenty.
+              timeout-minutes: 270
+              working-directory: src/darwin/Framework
               run: |
                   mkdir -p /tmp/darwin/framework-tests
-                  ../../../out/debug/chip-all-clusters-app --interface-id -1 > >(tee /tmp/darwin/framework-tests/all-cluster-app.log) 2> >(tee /tmp/darwin/framework-tests/all-cluster-app-err.log >&2) &
-                  xcodebuild test -target "Matter" -scheme "Matter Framework Tests" -sdk macosx OTHER_CFLAGS='${inherited} -Werror -Wconversion -Wno-incomplete-umbrella' > >(tee /tmp/darwin/framework-tests/darwin-tests.log) 2> >(tee /tmp/darwin/framework-tests/darwin-tests-err.log >&2)
-              working-directory: src/darwin/Framework
+                  ../../../out/debug/all-clusters-app/chip-all-clusters-app --interface-id -1 > >(tee /tmp/darwin/framework-tests/all-cluster-app.log) 2> >(tee /tmp/darwin/framework-tests/all-cluster-app-err.log >&2) &
+
+                  export TEST_RUNNER_ASAN_OPTIONS=__CURRENT_VALUE__:detect_stack_use_after_return=1
+
+                  # Disable BLE (CHIP_IS_BLE=NO) because the app does not have the permission to use it and that may crash the CI.
+                  xcodebuild test -target "Matter" -scheme "Matter Framework Tests" \
+                    -resultBundlePath /tmp/darwin/framework-tests/TestResults.xcresult \
+                    -sdk macosx ${{ matrix.options.arguments }} \
+                    CHIP_IS_BLE=NO GCC_PREPROCESSOR_DEFINITIONS='${inherited} ${{ matrix.options.defines }}' \
+                    > >(tee /tmp/darwin/framework-tests/darwin-tests.log) 2> >(tee /tmp/darwin/framework-tests/darwin-tests-err.log >&2)
+            - name: Generate Summary
+              if: always()
+              working-directory: /tmp
+              run: |
+                  wget https://github.com/a7ex/xcresultparser/releases/download/1.8.4/xcresultparser.zip
+                  unzip -j xcresultparser.zip
+                  ./xcresultparser --output-format md --failed-tests-only /tmp/darwin/framework-tests/TestResults.xcresult >>"$GITHUB_STEP_SUMMARY"
+            - name: Collect crash logs
+              if: failure() && !env.ACT
+              run: |
+                  mkdir -p /tmp/darwin/framework-tests
+                  find ~/Library/Developer/Xcode/DerivedData /Library/Logs/DiagnosticReports -name '*.ips' -print0 | xargs -0 -J % cp % /tmp/darwin/framework-tests
             - name: Uploading log files
-              uses: actions/upload-artifact@v2
-              if: ${{ failure() && !env.ACT }}
+              uses: actions/upload-artifact@v4
+              if: failure() && !env.ACT
               with:
-                  name: darwin-framework-test-logs
+                  name: darwin-framework-test-logs-${{ matrix.options.flavor }}
                   path: /tmp/darwin/framework-tests
                   retention-days: 5
