@@ -53,7 +53,7 @@ FileAttestationTrustStore::FileAttestationTrustStore(const char * paaTrustStoreP
     mIsInitialized = true;
 }
 
-std::vector<std::vector<uint8_t>> LoadAllX509DerCerts(const char * trustStorePath)
+std::vector<std::vector<uint8_t>> LoadAllX509DerCerts(const char * trustStorePath, CertificateValidationMode validationMode)
 {
     std::vector<std::vector<uint8_t>> certs;
     if (trustStorePath == nullptr)
@@ -89,16 +89,39 @@ std::vector<std::vector<uint8_t>> LoadAllX509DerCerts(const char * trustStorePat
                 if ((certificateLength > 0) && (certificateLength <= kMaxDERCertLength))
                 {
                     certificate.resize(certificateLength);
-                    // Only accumulate certificate if it has a subject key ID extension
+                    ByteSpan certSpan{ certificate.data(), certificate.size() };
+
+                    // Only accumulate certificate if it passes validation.
+                    bool isValid = false;
+                    switch (validationMode)
                     {
+                    case CertificateValidationMode::kPAA: {
+                        if (CHIP_NO_ERROR != VerifyAttestationCertificateFormat(certSpan, Crypto::AttestationCertType::kPAA))
+                        {
+                            break;
+                        }
+
                         uint8_t kidBuf[Crypto::kSubjectKeyIdentifierLength] = { 0 };
                         MutableByteSpan kidSpan{ kidBuf };
-                        ByteSpan certSpan{ certificate.data(), certificate.size() };
-
                         if (CHIP_NO_ERROR == Crypto::ExtractSKIDFromX509Cert(certSpan, kidSpan))
                         {
-                            certs.push_back(certificate);
+                            isValid = true;
                         }
+                        break;
+                    }
+                    case CertificateValidationMode::kPublicKeyOnly: {
+                        Crypto::P256PublicKey publicKey;
+                        if (CHIP_NO_ERROR == Crypto::ExtractPubkeyFromX509Cert(certSpan, publicKey))
+                        {
+                            isValid = true;
+                        }
+                        break;
+                    }
+                    }
+
+                    if (isValid)
+                    {
+                        certs.push_back(certificate);
                     }
                 }
                 fclose(file);

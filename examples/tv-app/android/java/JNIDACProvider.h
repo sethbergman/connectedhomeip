@@ -19,6 +19,7 @@
 #include "lib/support/logging/CHIPLogging.h"
 #include <credentials/DeviceAttestationCredsProvider.h>
 #include <jni.h>
+#include <lib/support/JniReferences.h>
 
 class JNIDACProvider : public chip::Credentials::DeviceAttestationCredentialsProvider
 {
@@ -33,11 +34,11 @@ public:
 
 private:
     CHIP_ERROR GetJavaByteByMethod(jmethodID method, chip::MutableByteSpan & out_buffer);
-    jobject mJNIDACProviderObject                          = nullptr;
+    CHIP_ERROR GetJavaByteByMethod(jmethodID method, const chip::ByteSpan & in_buffer, chip::MutableByteSpan & out_buffer);
+    chip::JniGlobalReference mJNIDACProviderObject;
     jmethodID mGetCertificationDeclarationMethod           = nullptr;
     jmethodID mGetFirmwareInformationMethod                = nullptr;
     jmethodID mGetDeviceAttestationCertMethod              = nullptr;
     jmethodID mGetProductAttestationIntermediateCertMethod = nullptr;
-    jmethodID mGetDeviceAttestationCertPrivateKeyMethod    = nullptr;
-    jmethodID mGetDeviceAttestationCertPublicKeyKeyMethod  = nullptr;
+    jmethodID mSignWithDeviceAttestationKeyMethod          = nullptr;
 };

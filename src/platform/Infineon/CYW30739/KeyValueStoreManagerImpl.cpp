@@ -46,6 +46,7 @@ CHIP_ERROR KeyValueStoreManagerImpl::Init(void)
     {
         KeyStorage keyStorage;
         size_t keyStorageLength;
+        memset(keyStorage.mKey, 0, sizeof(keyStorage.mKey));
         err = CYW30739Config::ReadConfigValueBin(CYW30739ConfigKey(Config::kChipKvsKey_KeyBase, configID), &keyStorage,
                                                  sizeof(keyStorage), keyStorageLength);
         if (err != CHIP_NO_ERROR)
@@ -120,8 +121,7 @@ CHIP_ERROR KeyValueStoreManagerImpl::_Put(const char * key, const void * value, 
                  err = CHIP_ERROR_INVALID_ARGUMENT);
 
     entry = AllocateEntry(key);
-    VerifyOrExit(entry != nullptr, ChipLogError(DeviceLayer, "%s AllocateEntry %s", __func__, ErrorStr(err));
-                 err = CHIP_ERROR_NO_MEMORY);
+    VerifyOrExit(entry != nullptr, ChipLogError(DeviceLayer, "%s AllocateEntry failed", __func__); err = CHIP_ERROR_NO_MEMORY);
 
     if (value_size != 0)
     {
@@ -188,18 +188,18 @@ KeyValueStoreManagerImpl::KeyStorage::KeyStorage(const char * key) : mValueSize(
 
 bool KeyValueStoreManagerImpl::KeyStorage::IsMatchKey(const char * key) const
 {
-    return strncmp(mKey, key, sizeof(mKey)) == 0;
+    return strcmp(mKey, key) == 0;
 }
 
 KeyValueStoreManagerImpl::KeyConfigIdEntry * KeyValueStoreManagerImpl::AllocateEntry(const char * key)
 {
     Optional<uint8_t> freeConfigID;
     KeyConfigIdEntry * newEntry = FindEntry(key, &freeConfigID);
-    ReturnErrorCodeIf(newEntry != nullptr, newEntry);
-    ReturnErrorCodeIf(!freeConfigID.HasValue(), nullptr);
+    VerifyOrReturnError(newEntry == nullptr, newEntry);
+    VerifyOrReturnError(freeConfigID.HasValue(), nullptr);
 
     newEntry = Platform::New<KeyConfigIdEntry>(freeConfigID.Value(), KeyStorage(key));
-    ReturnErrorCodeIf(newEntry == nullptr, nullptr);
+    VerifyOrReturnError(newEntry != nullptr, nullptr);
 
     KeyConfigIdEntry * entry = static_cast<KeyConfigIdEntry *>(slist_tail(&mKeyConfigIdList));
     if (entry == nullptr)

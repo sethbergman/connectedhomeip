@@ -61,6 +61,10 @@ declare_args() {
   # Defaults configs for pie.
   default_configs_pie = [ "${build_root}/config/compiler:pie_default" ]
 
+  # Default configs for GNU ld --as-needed
+  default_configs_link_as_needed =
+      [ "${build_root}/config/compiler:link_as_needed" ]
+
   # Defaults configs for warnings.
   default_configs_warnings =
       [ "${build_root}/config/compiler:warnings_default" ]
@@ -90,6 +94,10 @@ declare_args() {
   default_configs_dead_code =
       [ "${build_root}/config/compiler:dead_code_elimination_default" ]
 
+  # Default configs for prefix mappings.
+  default_configs_prefix_mappings =
+      [ "${build_root}/config/compiler:prefix_mappings_default" ]
+
   # Extra default configs.
   default_configs_extra = []
 }
@@ -115,7 +123,9 @@ default_configs += default_configs_fuzzing
 default_configs += default_configs_coverage
 default_configs += default_configs_target
 default_configs += default_configs_dead_code
+default_configs += default_configs_prefix_mappings
 default_configs += default_configs_extra
 
 executable_default_configs = []
 executable_default_configs += default_configs_pie
+executable_default_configs += default_configs_link_as_needed

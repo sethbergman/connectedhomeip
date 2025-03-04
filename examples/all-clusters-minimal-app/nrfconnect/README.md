@@ -1,5 +1,21 @@
 # Matter nRF Connect All Clusters Example Application
 
+> **Note:** This example is intended only to perform smoke tests of a Matter
+> solution integrated with nRF Connect SDK platform. The example quality is not
+> production ready and it may contain minor bugs or use not optimal
+> configuration. It is not recommended to use this example as a basis for
+> creating a market ready product.
+>
+> For the production ready and optimized Matter samples, see
+> [nRF Connect SDK samples](https://docs.nordicsemi.com/bundle/ncs-latest/page/nrf/samples/matter.html).
+> The Matter samples in nRF Connect SDK use various additional software
+> components and provide multiple optional features that improve the developer
+> and user experience. To read more about it, see
+> [Matter support in nRF Connect SDK](https://docs.nordicsemi.com/bundle/ncs-latest/page/nrf/protocols/matter/index.html#ug-matter)
+> page. Using Matter samples from nRF Connect SDK allows you to get a full
+> Nordic technical support via [DevZone](https://devzone.nordicsemi.com/)
+> portal.
+
 The nRF All Clusters Example Application implements various ZCL clusters
 populated on three endpoints. You can use this example as a reference for
 creating your own application.
@@ -19,46 +35,26 @@ device works as a Thread Minimal End Device.
 
 <hr>
 
--   [Overview](#overview)
-    -   [Bluetooth LE advertising](#bluetooth-le-advertising)
-    -   [Bluetooth LE rendezvous](#bluetooth-le-rendezvous)
--   [Requirements](#requirements)
-    -   [Supported devices](#supported_devices)
--   [Device UI](#device-ui)
--   [Setting up the environment](#setting-up-the-environment)
-    -   [Using Docker container for setup](#using-docker-container-for-setup)
-    -   [Using native shell for setup](#using-native-shell-for-setup)
--   [Building](#building)
-    -   [Removing build artifacts](#removing-build-artifacts)
-    -   [Building with release configuration](#building-with-release-configuration)
-    -   [Building with low-power configuration](#building-with-low-power-configuration)
-    -   [Building with Device Firmware Upgrade support](#building-with-device-firmware-upgrade-support)
--   [Configuring the example](#configuring-the-example)
-    -   [Example build types](#example-build-types)
--   [Flashing and debugging](#flashing-and-debugging)
-    -   [Flashing on the development kits](#nrfdks_flashing)
-    -   [Flashing on the nRF52840 Dongle](#nrf52840dongle_flashing)
--   [Testing the example](#testing-the-example)
-    -   [Testing using CHIPTool](#testing-using-chiptool)
-
-<hr>
-
-<a name="overview"></a>
-
 ## Overview
 
 This example is running on the nRF Connect platform, which is based on Nordic
 Semiconductor's
 [nRF Connect SDK](https://developer.nordicsemi.com/nRF_Connect_SDK/doc/latest/nrf/index.html)
 and [Zephyr RTOS](https://zephyrproject.org/). Visit Matter's
-[nRF Connect platform overview](../../../docs/guides/nrfconnect_platform_overview.md)
+[nRF Connect platform overview](../../../docs/platforms/nrf/nrfconnect_platform_overview.md)
 to read more about the platform structure and dependencies.
 
-The Matter device that runs the all clusters application is controlled by the
-Matter controller device over the Thread protocol. By default, the Matter device
-has Thread disabled, and it should be paired with Matter controller and get
-configuration from it. Some actions required before establishing full
-communication are described below.
+By default, the Matter accessory device has IPv6 networking disabled. You must
+pair it with the Matter controller over Bluetooth® LE to get the configuration
+from the controller to use the device within a Thread or Wi-Fi network. You have
+to make the device discoverable manually (for security reasons). See
+[Bluetooth LE advertising](#bluetooth-le-advertising) to learn how to do this.
+The controller must get the commissioning information from the Matter accessory
+device and provision the device into the network.
+
+You can test this application remotely over the Thread or the Wi-Fi protocol,
+which in either case requires more devices, including a Matter controller that
+you can configure either on a PC or a mobile device.
 
 ### Bluetooth LE advertising
 
@@ -85,15 +81,11 @@ with other Thread devices in the network.
 
 <hr>
 
-<a name="requirements"></a>
-
 ## Requirements
 
 The application requires a specific revision of the nRF Connect SDK to work
 correctly. See [Setting up the environment](#setting-up-the-environment) for
 more information.
-
-<a name="supported_devices"></a>
 
 ### Supported devices
 
@@ -101,13 +93,11 @@ The example supports building and running on the following devices:
 
 | Hardware platform                                                                                 | Build target               | Platform image                                                                                                                                          |
 | ------------------------------------------------------------------------------------------------- | -------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| [nRF52840 DK](https://www.nordicsemi.com/Software-and-Tools/Development-Kits/nRF52840-DK)         | `nrf52840dk_nrf52840`      | <details><summary>nRF52840 DK</summary><img src="../../platform/nrfconnect/doc/images/nRF52840_DK_info-medium.jpg" alt="nRF52840 DK"/></details>        |
-| [nRF5340 DK](https://www.nordicsemi.com/Software-and-Tools/Development-Kits/nRF5340-DK)           | `nrf5340dk_nrf5340_cpuapp` | <details><summary>nRF5340 DK</summary><img src="../../platform/nrfconnect/doc/images/nRF5340_DK_info-medium.jpg" alt="nRF5340 DK"/></details>           |
-| [nRF52840 Dongle](https://www.nordicsemi.com/Software-and-Tools/Development-Kits/nRF52840-Dongle) | `nrf52840dongle_nrf52840`  | <details><summary>nRF52840 Dongle</summary><img src="../../platform/nrfconnect/doc/images/nRF52840_Dongle-medium.jpg" alt="nRF52840 Dongle"/></details> |
+| [nRF52840 DK](https://www.nordicsemi.com/Software-and-Tools/Development-Kits/nRF52840-DK)         | `nrf52840dk/nrf52840`      | <details><summary>nRF52840 DK</summary><img src="../../platform/nrfconnect/doc/images/nRF52840_DK_info-medium.jpg" alt="nRF52840 DK"/></details>        |
+| [nRF5340 DK](https://www.nordicsemi.com/Software-and-Tools/Development-Kits/nRF5340-DK)           | `nrf5340dk/nrf5340/cpuapp` | <details><summary>nRF5340 DK</summary><img src="../../platform/nrfconnect/doc/images/nRF5340_DK_info-medium.jpg" alt="nRF5340 DK"/></details>           |
+| [nRF52840 Dongle](https://www.nordicsemi.com/Software-and-Tools/Development-Kits/nRF52840-Dongle) | `nrf52840dongle/nrf52840`  | <details><summary>nRF52840 Dongle</summary><img src="../../platform/nrfconnect/doc/images/nRF52840_Dongle-medium.jpg" alt="nRF52840 Dongle"/></details> |
 
 <hr>
-
-<a name="device-ui"></a>
 
 ## Device UI
 
@@ -136,8 +126,8 @@ following states are possible:
     Bluetooth LE.
 
 -   _Short Flash Off (950ms on/50ms off)_ &mdash; The device is fully
-    provisioned, but does not yet have full Thread network or service
-    connectivity.
+    provisioned, but does not yet have full connectivity for Thread or Wi-Fi
+    network, or the related services.
 
 -   _Solid On_ &mdash; The device is fully provisioned and has full Thread
     network and service connectivity.
@@ -154,7 +144,7 @@ for the predefined period of time (15 minutes by default).
 
 **SEGGER J-Link USB port** can be used to get logs from the device or
 communicate with it using the
-[command line interface](../../../docs/guides/nrfconnect_examples_cli.md).
+[command line interface](../../../docs/platforms/nrf/nrfconnect_examples_cli.md).
 
 <hr>
 
@@ -172,7 +162,7 @@ image that has the tools pre-installed.
 If you are a macOS user, you won't be able to use the Docker container to flash
 the application onto a Nordic development kit due to
 [certain limitations of Docker for macOS](https://docs.docker.com/docker-for-mac/faqs/#can-i-pass-through-a-usb-device-to-a-container).
-Use the [native shell](#using-native-shell) for building instead.
+Use the [native shell](#using-native-shell-for-setup) for building instead.
 
 ### Using Docker container for setup
 
@@ -255,8 +245,6 @@ Now you can proceed with the [Building](#building) instruction.
 
 <hr>
 
-<a name="building"></a>
-
 ## Building
 
 Complete the following steps, regardless of the method used for setting up the
@@ -268,14 +256,15 @@ environment:
 
 2.  Run the following command to build the example, with _build-target_ replaced
     with the build target name of the Nordic Semiconductor's kit you own, for
-    example `nrf52840dk_nrf52840`:
+    example `nrf52840dk/nrf52840`:
 
-         $ west build -b build-target
+         $ west build -b build-target --sysbuild
 
     You only need to specify the build target on the first build. See
     [Requirements](#requirements) for the build target names of compatible kits.
 
-The output `zephyr.hex` file will be available in the `build/zephyr/` directory.
+The output `zephyr.hex` file will be available in the `build/nrfconnect/zephyr/`
+directory.
 
 ### Removing build artifacts
 
@@ -290,7 +279,7 @@ following command:
 To build the example with release configuration that disables the diagnostic
 features like logs and command-line interface, run the following command:
 
-    $ west build -b build-target -- -DCONF_FILE=prj_release.conf
+    $ west build -b build-target --sysbuild -- -DFILE_SUFFIX=release
 
 Remember to replace _build-target_ with the build target name of the Nordic
 Semiconductor's kit you own.
@@ -301,9 +290,9 @@ Support for DFU using Matter OTA is disabled by default.
 
 To build the example with configuration that supports DFU, run the following
 command with _build-target_ replaced with the build target name of the Nordic
-Semiconductor kit you are using (for example `nrf52840dk_nrf52840`):
+Semiconductor kit you are using (for example `nrf52840dk/nrf52840`):
 
-    $ west build -b build-target -- -DCONF_FILE=prj_dfu.conf
+    $ west build -b build-target --sysbuild -- -DFILE_SUFFIX=dfu
 
 > **Note**:
 >
@@ -319,7 +308,7 @@ Semiconductor kit you are using (for example `nrf52840dk_nrf52840`):
 #### Changing bootloader configuration
 
 To change the default MCUboot configuration, edit the `prj.conf` file located in
-the `child_image/mcuboot` directory.
+the `sysbuild/mcuboot` directory.
 
 #### Changing flash memory settings
 
@@ -331,12 +320,11 @@ purposes. You can change these settings by defining
 This example uses this option to define using an external flash.
 
 To modify the flash settings of your board (that is, your _build-target_, for
-example `nrf52840dk_nrf52840`), edit the `pm_static_dfu.yml` file located in the
-`configuration/build-target/` directory.
+example `nrf52840dk/nrf52840`), edit the `pm_static_<build_target>.yml` file
+(for example `pm_static_nrf52840dk_nrf52840.yml`), located in the main
+application directory.
 
 <hr>
-
-<a name="configuring"></a>
 
 ## Configuring the example
 
@@ -346,7 +334,7 @@ using the menuconfig utility.
 To open the menuconfig utility, run the following command from the example
 directory:
 
-    $ west build -b build-target -t menuconfig
+    $ west build -b build-target --sysbuild -t menuconfig
 
 Remember to replace _build-target_ with the build target name of the Nordic
 Semiconductor's kit you own.
@@ -383,19 +371,15 @@ depending on the selected board:
     those platforms support the DFU.
 
 For more information, see the
-[Configuring nRF Connect SDK examples](../../../docs/guides/nrfconnect_examples_configuration.md)
+[Configuring nRF Connect SDK examples](../../../docs/platforms/nrf/nrfconnect_examples_configuration.md)
 page.
 
 <hr>
-
-<a name="flashing"></a>
 
 ## Flashing and debugging
 
 The flashing and debugging procedure is different for the development kits and
 the nRF52840 Dongle.
-
-<a name="nrfdks_flashing"></a>
 
 ### Flashing on the development kits
 
@@ -412,8 +396,6 @@ directory:
 
         $ west debug
 
-<a name="nrf52840dongle_flashing"></a>
-
 ### Flashing on the nRF52840 Dongle
 
 Visit
@@ -424,13 +406,20 @@ to read more about flashing on the nRF52840 Dongle.
 
 ## Testing the example
 
-Check the [CLI tutorial](../../../docs/guides/nrfconnect_examples_cli.md) to
-learn how to use command-line interface of the application.
+Check the [CLI tutorial](../../../docs/platforms/nrf/nrfconnect_examples_cli.md)
+to learn how to use command-line interface of the application.
 
-### Testing using CHIPTool
+### Testing using Linux CHIPTool
 
 Read the
-[Android commissioning guide](../../../docs/guides/nrfconnect_android_commissioning.md)
-to see how to use [CHIPTool](../../../src/android/CHIPTool/README.md) for
+[CHIP Tool user guide](../../../docs/development_controllers/chip-tool/chip_tool_guide.md)
+to see how to use [CHIP Tool for Linux or mac OS](../../chip-tool/README.md) to
+commission and control the application within a Matter-enabled Thread network.
+
+### Testing using Android CHIPTool
+
+Read the
+[Android commissioning guide](../../../docs/platforms/nrf/nrfconnect_android_commissioning.md)
+to see how to use [CHIPTool](../../../examples/android/CHIPTool/README.md) for
 Android smartphones to commission and control the application within a
 Matter-enabled Thread network.

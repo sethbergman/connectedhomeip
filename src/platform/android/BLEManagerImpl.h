@@ -23,9 +23,9 @@
 
 #pragma once
 
+#include <ble/Ble.h>
 #include <jni.h>
-
-#include <ble/BleLayer.h>
+#include <lib/support/JniReferences.h>
 #include <platform/internal/BLEManager.h>
 
 #if CHIP_DEVICE_CONFIG_ENABLE_CHIPOBLE
@@ -52,6 +52,9 @@ public:
 
     void InitializeWithObject(jobject managerObject);
 
+    void OnConnectSuccess(void * appState, BLE_CONNECTION_OBJECT connObj);
+    void OnConnectFailed(void * appState, CHIP_ERROR err);
+
 private:
     // ===== Members that implement the BLEManager internal interface.
 
@@ -69,20 +72,16 @@ private:
 
     // ===== Members that implement virtual methods on BlePlatformDelegate.
 
-    bool SubscribeCharacteristic(BLE_CONNECTION_OBJECT conId, const Ble::ChipBleUUID * svcId,
-                                 const Ble::ChipBleUUID * charId) override;
-    bool UnsubscribeCharacteristic(BLE_CONNECTION_OBJECT conId, const Ble::ChipBleUUID * svcId,
-                                   const Ble::ChipBleUUID * charId) override;
-    bool CloseConnection(BLE_CONNECTION_OBJECT conId) override;
+    CHIP_ERROR SubscribeCharacteristic(BLE_CONNECTION_OBJECT conId, const Ble::ChipBleUUID * svcId,
+                                       const Ble::ChipBleUUID * charId) override;
+    CHIP_ERROR UnsubscribeCharacteristic(BLE_CONNECTION_OBJECT conId, const Ble::ChipBleUUID * svcId,
+                                         const Ble::ChipBleUUID * charId) override;
+    CHIP_ERROR CloseConnection(BLE_CONNECTION_OBJECT conId) override;
     uint16_t GetMTU(BLE_CONNECTION_OBJECT conId) const override;
-    bool SendIndication(BLE_CONNECTION_OBJECT conId, const Ble::ChipBleUUID * svcId, const Ble::ChipBleUUID * charId,
-                        System::PacketBufferHandle pBuf) override;
-    bool SendWriteRequest(BLE_CONNECTION_OBJECT conId, const Ble::ChipBleUUID * svcId, const Ble::ChipBleUUID * charId,
-                          System::PacketBufferHandle pBuf) override;
-    bool SendReadRequest(BLE_CONNECTION_OBJECT conId, const Ble::ChipBleUUID * svcId, const Ble::ChipBleUUID * charId,
-                         System::PacketBufferHandle pBuf) override;
-    bool SendReadResponse(BLE_CONNECTION_OBJECT conId, BLE_READ_REQUEST_CONTEXT requestContext, const Ble::ChipBleUUID * svcId,
-                          const Ble::ChipBleUUID * charId) override;
+    CHIP_ERROR SendIndication(BLE_CONNECTION_OBJECT conId, const Ble::ChipBleUUID * svcId, const Ble::ChipBleUUID * charId,
+                              System::PacketBufferHandle pBuf) override;
+    CHIP_ERROR SendWriteRequest(BLE_CONNECTION_OBJECT conId, const Ble::ChipBleUUID * svcId, const Ble::ChipBleUUID * charId,
+                                System::PacketBufferHandle pBuf) override;
 
     // ===== Members that implement virtual methods on BleApplicationDelegate.
 
@@ -91,6 +90,7 @@ private:
     // ===== Members that implement virtual methods on BleConnectionDelegate.
 
     void NewConnection(BleLayer * bleLayer, void * appState, const SetupDiscriminator & connDiscriminator) override;
+    void NewConnection(BleLayer * bleLayer, void * appState, BLE_CONNECTION_OBJECT connObj) override{};
     CHIP_ERROR CancelConnection() override;
 
     // ===== Members for internal use by the following friends.
@@ -120,7 +120,7 @@ private:
     CHIP_ERROR HasFlag(Flags flag, bool & has);
     CHIP_ERROR SetFlag(Flags flag, bool isSet);
 
-    jobject mBLEManagerObject = nullptr;
+    chip::JniGlobalReference mBLEManagerObject;
 
     jmethodID mInitMethod    = nullptr;
     jmethodID mSetFlagMethod = nullptr;

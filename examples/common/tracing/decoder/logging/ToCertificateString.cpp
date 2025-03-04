@@ -19,6 +19,7 @@
 #include "ToCertificateString.h"
 
 #include <lib/support/Base64.h>
+#include <lib/support/SafeInt.h>
 #include <lib/support/ScopedBuffer.h>
 
 namespace {
@@ -34,23 +35,30 @@ const char * ToCertificate(const chip::ByteSpan & source, chip::MutableCharSpan 
 {
     // Reset the buffer
     memset(destination.data(), '\0', destination.size());
-
+    int snprintf_len = 0;
     if (source.size() == 0)
     {
         return destination.data();
     }
 
-    size_t base64DataLen = BASE64_ENCODED_LEN(source.size()) + 1;
-    if (base64DataLen + strlen(header) + strlen(footer) > destination.size())
+    if (!chip::CanCastTo<uint16_t>(source.size()))
+    {
+        ChipLogError(DataManagement, "The certificate is too large to do base64 conversion on");
+        return destination.data();
+    }
+
+    size_t base64DataLen = BASE64_ENCODED_LEN(source.size());
+    size_t bufferLen     = base64DataLen + 1; // add one character for null-terminator
+    if (bufferLen + strlen(header) + strlen(footer) > destination.size())
     {
         ChipLogError(DataManagement, "The certificate buffer is too small to hold the base64 encoded certificate");
         return destination.data();
     }
 
     chip::Platform::ScopedMemoryBuffer<char> str;
-    str.Alloc(base64DataLen);
+    str.Alloc(bufferLen);
 
-    auto encodedLen       = chip::Base64Encode(source.data(), source.size(), str.Get());
+    auto encodedLen       = chip::Base64Encode(source.data(), static_cast<uint16_t>(source.size()), str.Get());
     str.Get()[encodedLen] = '\0';
 
     if (IsChipCertificate(source))
@@ -62,7 +70,8 @@ const char * ToCertificate(const chip::ByteSpan & source, chip::MutableCharSpan 
             ChipLogError(DataManagement, "Certificate size is greater than 400 bytes");
         }
 
-        snprintf(destination.data(), destination.size(), "%s", str.Get());
+        snprintf_len = snprintf(destination.data(), destination.size(), "%s", str.Get());
+        VerifyOrExit(snprintf_len >= 0, ChipLogError(DataManagement, "Failed to write certificate"););
     }
     else
     {
@@ -75,14 +84,23 @@ const char * ToCertificate(const chip::ByteSpan & source, chip::MutableCharSpan 
         size_t inIndex  = 0;
         size_t outIndex = strlen(header) + 1;
 
-        snprintf(destination.data(), destination.size(), "%s\n", header);
+        snprintf_len = snprintf(destination.data(), destination.size(), "%s\n", header);
+        VerifyOrExit(snprintf_len >= 0, ChipLogError(DataManagement, "Failed to write header"););
         for (; inIndex < base64DataLen; inIndex += 64)
         {
-            outIndex += snprintf(&destination.data()[outIndex], destination.size() - outIndex, "%.64s\n", &str[inIndex]);
-        }
-        snprintf(&destination.data()[outIndex], destination.size() - outIndex, "%s", footer);
-    }
+            snprintf_len = snprintf(&destination.data()[outIndex], destination.size() - outIndex, "%.64s\n", &str[inIndex]);
+            VerifyOrExit(snprintf_len >= 0, ChipLogError(DataManagement, "Failed to write certificate"););
 
+            outIndex += static_cast<size_t>(snprintf_len);
+        }
+        snprintf_len = snprintf(&destination.data()[outIndex], destination.size() - outIndex, "%s", footer);
+        VerifyOrExit(snprintf_len >= 0, ChipLogError(DataManagement, "Failed to write footer"););
+    }
+exit:
+    if (snprintf_len < 0)
+    {
+        memset(destination.data(), '\0', destination.size());
+    }
     return destination.data();
 }
 
@@ -94,16 +112,16 @@ namespace logging {
 
 const char * ToCertificateString(const ByteSpan & source, MutableCharSpan destination)
 {
-    constexpr const char * kCertificateHeader = "-----BEGIN CERTIFICATE-----";
-    constexpr const char * kCertificateFooter = "-----END CERTIFICATE-----";
+    static constexpr char kCertificateHeader[] = "-----BEGIN CERTIFICATE-----";
+    static constexpr char kCertificateFooter[] = "-----END CERTIFICATE-----";
 
     return ToCertificate(source, destination, kCertificateHeader, kCertificateFooter);
 }
 
 const char * ToCertificateRequestString(const ByteSpan & source, MutableCharSpan destination)
 {
-    constexpr const char * kCertificateHeader = "-----BEGIN CERTIFICATE REQUEST-----";
-    constexpr const char * kCertificateFooter = "-----END CERTIFICATE REQUEST-----";
+    static constexpr char kCertificateHeader[] = "-----BEGIN CERTIFICATE REQUEST-----";
+    static constexpr char kCertificateFooter[] = "-----END CERTIFICATE REQUEST-----";
 
     return ToCertificate(source, destination, kCertificateHeader, kCertificateFooter);
 }

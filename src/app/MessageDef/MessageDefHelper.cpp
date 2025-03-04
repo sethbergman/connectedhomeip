@@ -24,7 +24,7 @@
 #include "MessageDefHelper.h"
 #include <algorithm>
 #include <app/AppConfig.h>
-#include <app/InteractionModelRevision.h>
+#include <app/SpecificationDefinedRevisions.h>
 #include <app/util/basic-types.h>
 #include <inttypes.h>
 #include <lib/support/logging/CHIPLogging.h>
@@ -33,7 +33,7 @@
 
 namespace chip {
 namespace app {
-#if CHIP_CONFIG_IM_ENABLE_SCHEMA_CHECK && CHIP_DETAIL_LOGGING
+#if CHIP_CONFIG_IM_PRETTY_PRINT && CHIP_DETAIL_LOGGING
 // this is used to run in signle thread for IM message debug purpose
 namespace {
 uint32_t gPrettyPrintingDepthLevel = 0;
@@ -56,7 +56,7 @@ void PrettyPrintIMBlankLine()
         if (sizeof(gLineBuffer) > gCurLineBufferSize)
         {
             size_t sizeLeft = sizeof(gLineBuffer) - gCurLineBufferSize;
-            size_t ret      = (size_t)(snprintf(gLineBuffer + gCurLineBufferSize, sizeLeft, "\t"));
+            size_t ret      = (size_t) (snprintf(gLineBuffer + gCurLineBufferSize, sizeLeft, "\t"));
             if (ret > 0)
             {
                 gCurLineBufferSize += std::min(ret, sizeLeft);
@@ -78,7 +78,7 @@ void PrettyPrintIM(bool aIsNewLine, const char * aFmt, ...)
     if (sizeof(gLineBuffer) > gCurLineBufferSize)
     {
         size_t sizeLeft = sizeof(gLineBuffer) - gCurLineBufferSize;
-        size_t ret      = (size_t)(vsnprintf(gLineBuffer + gCurLineBufferSize, sizeLeft, aFmt, args));
+        size_t ret      = (size_t) (vsnprintf(gLineBuffer + gCurLineBufferSize, sizeLeft, aFmt, args));
         if (ret > 0)
         {
             gCurLineBufferSize += std::min(ret, sizeLeft);
@@ -98,7 +98,7 @@ void DecreaseDepth()
 }
 #endif
 
-#if CHIP_CONFIG_IM_ENABLE_SCHEMA_CHECK
+#if CHIP_CONFIG_IM_PRETTY_PRINT
 CHIP_ERROR CheckIMPayload(TLV::TLVReader & aReader, int aDepth, const char * aLabel)
 {
     if (aDepth == 0)
@@ -138,7 +138,9 @@ CHIP_ERROR CheckIMPayload(TLV::TLVReader & aReader, int aDepth, const char * aLa
 
         ReturnErrorOnFailure(aReader.Get(value_s64));
 
-        PRETTY_PRINT_SAMELINE("%" PRId64 ", ", value_s64);
+        // TODO: Figure out how to not use PRId64 here, since it's not supported
+        // on all libcs.
+        PRETTY_PRINT_SAMELINE("%" PRId64 " (signed), ", value_s64);
         break;
     }
 
@@ -147,7 +149,9 @@ CHIP_ERROR CheckIMPayload(TLV::TLVReader & aReader, int aDepth, const char * aLa
 
         ReturnErrorOnFailure(aReader.Get(value_u64));
 
-        PRETTY_PRINT_SAMELINE("%" PRIu64 ", ", value_u64);
+        // TODO: Figure out how to not use PRIu64 here, since it's not supported
+        // on all libcs.
+        PRETTY_PRINT_SAMELINE("%" PRIu64 " (unsigned), ", value_u64);
         break;
     }
 
@@ -260,8 +264,7 @@ CHIP_ERROR CheckIMPayload(TLV::TLVReader & aReader, int aDepth, const char * aLa
 
     return CHIP_NO_ERROR;
 }
-
-#endif // CHIP_CONFIG_IM_ENABLE_SCHEMA_CHECK
+#endif // CHIP_CONFIG_IM_PRETTY_PRINT
 
 }; // namespace app
 }; // namespace chip

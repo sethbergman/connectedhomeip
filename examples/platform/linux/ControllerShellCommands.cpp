@@ -19,9 +19,9 @@
  * @file Contains shell commands for for performing discovery (eg. of commissionable nodes) related to commissioning.
  */
 
-#include <AppMain.h>
-#include <ControllerShellCommands.h>
-#include <inttypes.h>
+#include "ControllerShellCommands.h"
+#include "CommissionerMain.h"
+
 #include <lib/core/CHIPCore.h>
 #include <lib/shell/Commands.h>
 #include <lib/shell/Engine.h>
@@ -33,11 +33,12 @@
 #include <protocols/secure_channel/RendezvousParameters.h>
 #include <protocols/user_directed_commissioning/UserDirectedCommissioning.h>
 
+#include <inttypes.h>
+
 namespace chip {
 namespace Shell {
 
 using namespace chip;
-using namespace ::chip::Controller;
 
 #if CHIP_DEVICE_CONFIG_ENABLE_COMMISSIONER_DISCOVERY
 static CHIP_ERROR ResetUDC(bool printHeader)
@@ -117,7 +118,7 @@ static CHIP_ERROR display(bool printHeader)
 
     for (int i = 0; i < 10; i++)
     {
-        const Dnssd::DiscoveredNodeData * next = GetDeviceCommissioner()->GetDiscoveredDevice(i);
+        const Dnssd::CommissionNodeData * next = GetDeviceCommissioner()->GetDiscoveredDevice(i);
         if (next == nullptr)
         {
             streamer_printf(sout, "  Entry %d null\r\n", i);
@@ -125,8 +126,7 @@ static CHIP_ERROR display(bool printHeader)
         else
         {
             streamer_printf(sout, "  Entry %d instanceName=%s host=%s longDiscriminator=%d vendorId=%d productId=%d\r\n", i,
-                            next->commissionData.instanceName, next->resolutionData.hostName,
-                            next->commissionData.longDiscriminator, next->commissionData.vendorId, next->commissionData.productId);
+                            next->instanceName, next->hostName, next->longDiscriminator, next->vendorId, next->productId);
         }
     }
 
@@ -266,8 +266,8 @@ static CHIP_ERROR ControllerHandler(int argc, char ** argv)
         {
             if (argc >= 3)
             {
-                uint32_t pincode = (uint32_t) strtol(argv[2], &eptr, 10);
-                GetCommissionerDiscoveryController()->CommissionWithPincode(pincode);
+                uint32_t passcode = (uint32_t) strtol(argv[2], &eptr, 10);
+                GetCommissionerDiscoveryController()->CommissionWithPasscode(passcode);
                 return CHIP_NO_ERROR;
             }
             GetCommissionerDiscoveryController()->Ok();
@@ -280,15 +280,15 @@ static CHIP_ERROR ControllerHandler(int argc, char ** argv)
     }
     else if (strcmp(argv[0], "udc-commission") == 0)
     {
-        // udc-commission pincode index
+        // udc-commission passcode index
         if (argc < 3)
         {
             return PrintAllCommands();
         }
         char * eptr;
-        uint32_t pincode = (uint32_t) strtol(argv[1], &eptr, 10);
-        size_t index     = (size_t) strtol(argv[2], &eptr, 10);
-        return pairUDC(true, pincode, index);
+        uint32_t passcode = (uint32_t) strtol(argv[1], &eptr, 10);
+        size_t index      = (size_t) strtol(argv[2], &eptr, 10);
+        return pairUDC(true, passcode, index);
     }
 #endif // CHIP_DEVICE_CONFIG_ENABLE_BOTH_COMMISSIONER_AND_COMMISSIONEE
 
@@ -302,7 +302,6 @@ void RegisterControllerCommands()
 
     // Register the root `device` command with the top-level shell.
     Engine::Root().RegisterCommands(&sDeviceComand, 1);
-    return;
 }
 
 } // namespace Shell

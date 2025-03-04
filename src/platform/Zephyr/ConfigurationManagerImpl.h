@@ -67,7 +67,7 @@ private:
     CHIP_ERROR WriteConfigValueStr(Key key, const char * str) override;
     CHIP_ERROR WriteConfigValueStr(Key key, const char * str, size_t strLen) override;
     CHIP_ERROR WriteConfigValueBin(Key key, const uint8_t * data, size_t dataLen) override;
-    void RunConfigUnitTest(void) override;
+    void RunConfigUnitTest() override;
 
     // ===== Private members reserved for use by this class only.
 
@@ -92,11 +92,6 @@ inline CHIP_ERROR ConfigurationManagerImpl::ReadPersistedStorageValue(::chip::Pl
 inline CHIP_ERROR ConfigurationManagerImpl::WritePersistedStorageValue(::chip::Platform::PersistedStorage::Key key, uint32_t value)
 {
     return Internal::ZephyrConfig::WriteConfigValueCounter(key, value);
-}
-
-inline CHIP_ERROR ConfigurationManagerImpl::GetPrimaryWiFiMACAddress(uint8_t * /* buf */)
-{
-    return CHIP_ERROR_UNSUPPORTED_CHIP_FEATURE;
 }
 
 /**

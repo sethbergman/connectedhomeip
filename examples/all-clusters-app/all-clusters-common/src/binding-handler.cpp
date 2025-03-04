@@ -17,17 +17,17 @@
 
 #include "binding-handler.h"
 
-#include "app-common/zap-generated/ids/Clusters.h"
-#include "app-common/zap-generated/ids/Commands.h"
-#include "app/CommandSender.h"
-#include "app/clusters/bindings/BindingManager.h"
-#include "app/server/Server.h"
-#include "controller/InvokeInteraction.h"
-#include "lib/core/CHIPError.h"
-#include "platform/CHIPDeviceLayer.h"
+#include <app-common/zap-generated/ids/Clusters.h>
+#include <app-common/zap-generated/ids/Commands.h>
+#include <app/CommandSender.h>
+#include <app/clusters/bindings/BindingManager.h>
+#include <app/server/Server.h>
+#include <controller/InvokeInteraction.h>
+#include <lib/core/CHIPError.h>
+#include <platform/CHIPDeviceLayer.h>
 
 #if defined(ENABLE_CHIP_SHELL)
-#include "lib/shell/Engine.h"
+#include <lib/shell/Engine.h> // nogncheck
 
 using chip::Shell::Engine;
 using chip::Shell::shell_command_t;
@@ -73,14 +73,14 @@ static void BoundDeviceChangedHandler(const EmberBindingTableEntry & binding, ch
     using namespace chip;
     using namespace chip::app;
 
-    if (binding.type == EMBER_MULTICAST_BINDING)
+    if (binding.type == MATTER_MULTICAST_BINDING)
     {
         ChipLogError(NotSpecified, "Group binding is not supported now");
         return;
     }
 
-    if (binding.type == EMBER_UNICAST_BINDING && binding.local == 1 &&
-        (!binding.clusterId.HasValue() || binding.clusterId.Value() == Clusters::OnOff::Id))
+    if (binding.type == MATTER_UNICAST_BINDING && binding.local == 1 &&
+        binding.clusterId.value_or(Clusters::OnOff::Id) == Clusters::OnOff::Id)
     {
         auto onSuccess = [](const ConcreteCommandPath & commandPath, const StatusIB & status, const auto & dataResponse) {
             ChipLogProgress(NotSpecified, "OnOff command succeeds");

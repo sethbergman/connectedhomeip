@@ -31,13 +31,30 @@ static_library("minimal-mdns-example-common") {
   ]
 }
 
+executable("minimal-mdns-tester") {
+  sources = [ "tester.cpp" ]
+
+  deps = [
+    ":minimal-mdns-example-common",
+    "${chip_root}/examples/common/tracing:commandline",
+    "${chip_root}/src/lib",
+    "${chip_root}/src/lib/dnssd/minimal_mdns",
+  ]
+
+  cflags = [ "-Wconversion" ]
+
+  output_dir = root_out_dir
+}
+
 executable("minimal-mdns-client") {
   sources = [ "client.cpp" ]
 
   deps = [
     ":minimal-mdns-example-common",
+    "${chip_root}/examples/common/tracing:commandline",
     "${chip_root}/src/lib",
     "${chip_root}/src/lib/dnssd/minimal_mdns",
+    "${chip_root}/src/platform/logging:default",
   ]
 
   cflags = [ "-Wconversion" ]
@@ -50,9 +67,11 @@ executable("minimal-mdns-server") {
 
   deps = [
     ":minimal-mdns-example-common",
+    "${chip_root}/examples/common/tracing:commandline",
     "${chip_root}/src/lib",
     "${chip_root}/src/lib/dnssd/minimal_mdns",
     "${chip_root}/src/lib/dnssd/minimal_mdns/responders",
+    "${chip_root}/src/platform/logging:default",
   ]
 
   cflags = [ "-Wconversion" ]
@@ -65,11 +84,23 @@ executable("mdns-advertiser") {
 
   deps = [
     ":minimal-mdns-example-common",
+    "${chip_root}/examples/common/tracing:commandline",
     "${chip_root}/src/lib",
     "${chip_root}/src/lib/dnssd",
+    "${chip_root}/src/platform/logging:default",
   ]
 
   cflags = [ "-Wconversion" ]
 
   output_dir = root_out_dir
+}
+
+group("default") {
+  deps = [
+    ":mdns-advertiser",
+    ":minimal-mdns-client",
+    ":minimal-mdns-example-common",
+    ":minimal-mdns-server",
+    ":minimal-mdns-tester",
+  ]
 }

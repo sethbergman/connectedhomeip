@@ -22,20 +22,30 @@
 #include <app/BufferedReadCallback.h>
 #include <app/ClusterStateCache.h>
 #include <app/ConcreteAttributePath.h>
+#include <app/ConcreteClusterPath.h>
 #include <app/EventHeader.h>
 #include <app/MessageDef/StatusIB.h>
 #include <app/ReadClient.h>
 #include <app/ReadPrepareParams.h>
 #include <lib/core/CHIPError.h>
-#include <lib/core/CHIPTLV.h>
 #include <lib/core/DataModelTypes.h>
+#include <lib/core/TLV.h>
 
 #include <memory>
 
 /**
  * This file defines a base class for subscription callbacks used by
  * MTRBaseDevice and MTRDevice.  This base class handles everything except the
- * actual conversion from the incoming data to the desired data.
+ * actual conversion from the incoming data to the desired data and the dispatch
+ * of callbacks to the relevant client queues.  Its callbacks are called on the
+ * Matter queue.  This allows MTRDevice and MTRBaseDevice to do any necessary
+ * sync cleanup work before dispatching to the client callbacks on the client
+ * queue.
+ *
+ * After onDoneHandler is invoked, this object will at some point delete itself
+ * and destroy anything it owns (such as the ReadClient or the
+ * ClusterStateCache).  Consumers should drop references to all the relevant
+ * objects in that handler.  This deletion will happen on the Matter queue.
  *
  * The desired data is assumed to be NSObjects that can be stored in NSArray.
  */
@@ -46,21 +56,27 @@ typedef void (^DataReportCallback)(NSArray * value);
 typedef void (^ErrorCallback)(NSError * error);
 typedef void (^SubscriptionEstablishedHandler)(void);
 typedef void (^OnDoneHandler)(void);
+typedef void (^UnsolicitedMessageFromPublisherHandler)(void);
+typedef void (^ReportBeginHandler)(void);
+typedef void (^ReportEndHandler)(void);
 
 class MTRBaseSubscriptionCallback : public chip::app::ClusterStateCache::Callback {
 public:
-    MTRBaseSubscriptionCallback(dispatch_queue_t queue, DataReportCallback attributeReportCallback,
-        DataReportCallback eventReportCallback, ErrorCallback errorCallback,
-        MTRDeviceResubscriptionScheduledHandler _Nullable resubscriptionCallback,
-        SubscriptionEstablishedHandler _Nullable subscriptionEstablishedHandler, OnDoneHandler _Nullable onDoneHandler)
-        : mQueue(queue)
-        , mAttributeReportCallback(attributeReportCallback)
+    MTRBaseSubscriptionCallback(DataReportCallback attributeReportCallback, DataReportCallback eventReportCallback,
+        ErrorCallback errorCallback, MTRDeviceResubscriptionScheduledHandler _Nullable resubscriptionCallback,
+        SubscriptionEstablishedHandler _Nullable subscriptionEstablishedHandler, OnDoneHandler _Nullable onDoneHandler,
+        UnsolicitedMessageFromPublisherHandler _Nullable unsolicitedMessageFromPublisherHandler = nil,
+        ReportBeginHandler _Nullable reportBeginHandler = nil, ReportEndHandler _Nullable reportEndHandler = nil)
+        : mAttributeReportCallback(attributeReportCallback)
         , mEventReportCallback(eventReportCallback)
         , mErrorCallback(errorCallback)
         , mResubscriptionCallback(resubscriptionCallback)
         , mSubscriptionEstablishedHandler(subscriptionEstablishedHandler)
         , mBufferedReadAdapter(*this)
         , mOnDoneHandler(onDoneHandler)
+        , mUnsolicitedMessageFromPublisherHandler(unsolicitedMessageFromPublisherHandler)
+        , mReportBeginHandler(reportBeginHandler)
+        , mReportEndHandler(reportEndHandler)
     {
     }
 
@@ -69,9 +85,20 @@ public:
         // Ensure we release the ReadClient before we tear down anything else,
         // so it can call our OnDeallocatePaths properly.
         mReadClient = nullptr;
+
+        // Make sure the block isn't run after object destruction
+        if (mInterimReportBlock) {
+            dispatch_block_cancel(mInterimReportBlock);
+        }
     }
 
     chip::app::BufferedReadCallback & GetBufferedCallback() { return mBufferedReadAdapter; }
+
+    // Methods to clear state from our cluster state cache.  Must be called on
+    // the Matter queue.
+    void ClearCachedAttributeState(chip::EndpointId aEndpoint);
+    void ClearCachedAttributeState(const chip::app::ConcreteClusterPath & aCluster);
+    void ClearCachedAttributeState(const chip::app::ConcreteAttributePath & aAttribute);
 
     // We need to exist to get a ReadClient, so can't take this as a constructor argument.
     void AdoptReadClient(std::unique_ptr<chip::app::ReadClient> aReadClient) { mReadClient = std::move(aReadClient); }
@@ -88,6 +115,10 @@ protected:
     // be immediately followed by OnDone and we want to do the deletion there.
     void ReportError(CHIP_ERROR aError, bool aCancelSubscription = true);
 
+    // Called at attribute/event report time to queue a block to report on the Matter queue so that for multi-packet reports, this
+    // block is run and reports in batch. No-op if the block is already queued.
+    void QueueInterimReport();
+
 private:
     void OnReportBegin() override;
 
@@ -95,10 +126,12 @@ private:
 
     // OnEventData and OnAttributeData must be implemented by subclasses.
     void OnEventData(const chip::app::EventHeader & aEventHeader, chip::TLV::TLVReader * apData,
-        const chip::app::StatusIB * apStatus) override = 0;
+        const chip::app::StatusIB * apStatus) override
+        = 0;
 
     void OnAttributeData(const chip::app::ConcreteDataAttributePath & aPath, chip::TLV::TLVReader * apData,
-        const chip::app::StatusIB & aStatus) override = 0;
+        const chip::app::StatusIB & aStatus) override
+        = 0;
 
     void OnError(CHIP_ERROR aError) override;
 
@@ -106,9 +139,9 @@ private:
 
     void OnDeallocatePaths(chip::app::ReadPrepareParams && aReadPrepareParams) override;
 
-    void OnSubscriptionEstablished(chip::SubscriptionId aSubscriptionId) override;
-
     CHIP_ERROR OnResubscriptionNeeded(chip::app::ReadClient * apReadClient, CHIP_ERROR aTerminationCause) override;
+
+    void OnUnsolicitedMessageFromPublisher(chip::app::ReadClient * apReadClient) override;
 
     void ReportData();
 
@@ -116,15 +149,21 @@ protected:
     NSMutableArray * _Nullable mAttributeReports = nil;
     NSMutableArray * _Nullable mEventReports = nil;
 
+    void CallResubscriptionScheduledHandler(NSError * error, NSNumber * resubscriptionDelay);
+
+    void OnSubscriptionEstablished(chip::SubscriptionId aSubscriptionId) override;
+
 private:
-    dispatch_queue_t mQueue;
     DataReportCallback _Nullable mAttributeReportCallback = nil;
     DataReportCallback _Nullable mEventReportCallback = nil;
-    // We set mErrorCallback to nil when queueing error reports, so we
+    // We set mErrorCallback to nil before calling the error callback, so we
     // make sure to only report one error.
     ErrorCallback _Nullable mErrorCallback = nil;
     MTRDeviceResubscriptionScheduledHandler _Nullable mResubscriptionCallback = nil;
     SubscriptionEstablishedHandler _Nullable mSubscriptionEstablishedHandler = nil;
+    UnsolicitedMessageFromPublisherHandler _Nullable mUnsolicitedMessageFromPublisherHandler = nil;
+    ReportBeginHandler _Nullable mReportBeginHandler = nil;
+    ReportEndHandler _Nullable mReportEndHandler = nil;
     chip::app::BufferedReadCallback mBufferedReadAdapter;
 
     // Our lifetime management is a little complicated.  On errors that don't
@@ -138,13 +177,16 @@ private:
     // To handle this, enforce the following rules:
     //
     // 1) We guarantee that mErrorCallback is only invoked with an error once.
-    // 2) We ensure that we delete ourselves and the passed in ReadClient only from OnDone or a queued-up
-    //    error callback, but not both, by tracking whether we have a queued-up
-    //    deletion.
+    // 2) We guarantee that mOnDoneHandler is only invoked once, and always
+    //    invoked before we delete ourselves.
+    // 3) We ensure that we delete ourselves and the passed in ReadClient only
+    //    from OnDone or from an error callback but not both, by tracking whether
+    //    we have a queued-up deletion.
     std::unique_ptr<chip::app::ReadClient> mReadClient;
     std::unique_ptr<chip::app::ClusterStateCache> mClusterStateCache;
     bool mHaveQueuedDeletion = false;
     OnDoneHandler _Nullable mOnDoneHandler = nil;
+    dispatch_block_t mInterimReportBlock = nil;
 };
 
 NS_ASSUME_NONNULL_END

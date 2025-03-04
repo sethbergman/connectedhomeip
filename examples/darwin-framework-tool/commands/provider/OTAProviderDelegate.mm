@@ -59,12 +59,16 @@ constexpr uint8_t kUpdateTokenLen = 32;
         return;
     }
 
-    auto hasCandidate = [self SelectOTACandidate:params.vendorId rPID:params.productId rSV:params.softwareVersion];
+    auto hasCandidate = [self SelectOTACandidate:params.vendorID rPID:params.productID rSV:params.softwareVersion];
     if (!hasCandidate) {
         NSLog(@"Unable to select OTA Image.");
         _selectedCandidate.status = @(MTROTASoftwareUpdateProviderOTAQueryStatusNotAvailable);
         completion(_selectedCandidate, nil);
         return;
+    }
+
+    if (_delayedActionTime) {
+        _selectedCandidate.delayedActionTime = _delayedActionTime;
     }
 
     _selectedCandidate.updateToken = [self generateUpdateToken];
@@ -222,8 +226,8 @@ constexpr uint8_t kUpdateTokenLen = 32;
         auto candidateSoftwareVersion = [candidate.softwareVersion unsignedLongValue];
         auto candidateMinApplicableSoftwareVersion = [candidate.deviceModelData.minApplicableSoftwareVersion unsignedLongValue];
         auto candidateMaxApplicableSoftwareVersion = [candidate.deviceModelData.maxApplicableSoftwareVersion unsignedLongValue];
-        auto candidateVendorId = [candidate.deviceModelData.vendorId unsignedIntValue];
-        auto candidateProductId = [candidate.deviceModelData.productId unsignedIntValue];
+        auto candidateVendorId = [candidate.deviceModelData.vendorID unsignedIntValue];
+        auto candidateProductId = [candidate.deviceModelData.productID unsignedIntValue];
 
         if (candidateSoftwareVersionValid && (softwareVersion < candidateSoftwareVersion)
             && (softwareVersion >= candidateMinApplicableSoftwareVersion)

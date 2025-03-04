@@ -25,6 +25,8 @@
 #include <lib/support/JniReferences.h>
 #include <lib/support/JniTypeWrappers.h>
 
+#include <string>
+
 #if CHIP_DEVICE_CONFIG_APP_PLATFORM_ENABLED
 #include <app/app-platform/ContentAppPlatform.h>
 #endif // CHIP_DEVICE_CONFIG_APP_PLATFORM_ENABLED
@@ -267,6 +269,17 @@ char * AppPlatformHandler(int argc, char ** argv)
         }
         return response;
     }
+    else if (strcmp(argv[0], "print-apps") == 0)
+    {
+        ContentAppFactoryImpl * factory = GetContentAppFactoryImpl();
+        factory->LogInstalledApps();
+
+        ChipLogProgress(DeviceLayer, "logged installed apps");
+
+        strcpy(response, "logged installed apps");
+
+        return response;
+    }
     else if (strcmp(argv[0], "remove-app-access") == 0)
     {
         Access::GetAccessControl().DeleteAllEntriesForFabric(GetDeviceCommissioner()->GetFabricIndex());
@@ -367,7 +380,7 @@ JNI_METHOD(jstring, OnExecuteCommand)(JNIEnv * env, jobject, jobjectArray string
     // Fill in argv
     for (int i = 0; i < argc; i++)
     {
-        jstring string = (jstring)(env->GetObjectArrayElement(stringArray, i));
+        jstring string = (jstring) (env->GetObjectArrayElement(stringArray, i));
         argv[i]        = (char *) env->GetStringUTFChars(string, 0);
     }
 
@@ -378,7 +391,7 @@ JNI_METHOD(jstring, OnExecuteCommand)(JNIEnv * env, jobject, jobjectArray string
     for (int i = 0; i < argc; i++)
     {
         ChipLogProgress(DeviceLayer, " Value=%s ", argv[i]);
-        jstring string = (jstring)(env->GetObjectArrayElement(stringArray, i));
+        jstring string = (jstring) (env->GetObjectArrayElement(stringArray, i));
         env->ReleaseStringUTFChars(string, argv[i]);
     }
 

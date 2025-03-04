@@ -52,7 +52,7 @@ void RegisterAppShellCommands(void)
         .cmd_help = "App commands",
     };
 
-    sAppSubcommands.RegisterCommands(sAppSubCommands, ArraySize(sAppSubCommands));
+    sAppSubcommands.RegisterCommands(sAppSubCommands, MATTER_ARRAY_SIZE(sAppSubCommands));
 
     Engine::Root().RegisterCommands(&sAppCommand, 1);
 }
@@ -90,12 +90,12 @@ CHIP_ERROR AppCommandLockHandler(int argc, char * argv[])
     else if (strcmp(argv[0], "open") == 0)
     {
         streamer_printf(streamer_get(), "open ...\n");
-        LockMgr().SetDoorState(endpointId, DlDoorState::kDoorOpen);
+        LockMgr().SetDoorState(endpointId, DoorStateEnum::kDoorOpen);
     }
     else if (strcmp(argv[0], "close") == 0)
     {
         streamer_printf(streamer_get(), "close ...\n");
-        LockMgr().SetDoorState(endpointId, DlDoorState::kDoorClosed);
+        LockMgr().SetDoorState(endpointId, DoorStateEnum::kDoorClosed);
     }
     else
     {

@@ -18,16 +18,15 @@
 #pragma once
 #include "chip_porting.h"
 #include <platform/NetworkCommissioning.h>
-#include <wifi_structures.h>
 
 namespace chip {
 namespace DeviceLayer {
 namespace NetworkCommissioning {
 
 namespace {
-constexpr uint8_t kMaxWiFiNetworks                  = 1;
-constexpr uint8_t kWiFiScanNetworksTimeOutSeconds   = 10;
-constexpr uint8_t kWiFiConnectNetworkTimeoutSeconds = 20;
+inline constexpr uint8_t kMaxWiFiNetworks                  = 1;
+inline constexpr uint8_t kWiFiScanNetworksTimeOutSeconds   = 10;
+inline constexpr uint8_t kWiFiConnectNetworkTimeoutSeconds = 20;
 } // namespace
 
 class AmebaScanResponseIterator : public Iterator<WiFiScanResponse>
@@ -127,8 +126,8 @@ private:
     bool NetworkMatch(const WiFiNetwork & network, ByteSpan networkId);
     CHIP_ERROR StartScanWiFiNetworks(ByteSpan ssid);
 
-    WiFiNetwork mSavedNetwork;
-    WiFiNetwork mStagingNetwork;
+    WiFiNetwork mSavedNetwork   = { 0 };
+    WiFiNetwork mStagingNetwork = { 0 };
     ScanCallback * mpScanCallback;
     ConnectCallback * mpConnectCallback;
     NetworkStatusChangeCallback * mpStatusChangeCallback = nullptr;

@@ -17,12 +17,18 @@
 
 #pragma once
 
-#ifdef __cplusplus
-extern "C" {
-#endif
+#include <esp_err.h>
+#include <esp_openthread_types.h>
+#include <lib/core/CHIPError.h>
+#include <memory>
 
+#if defined(CONFIG_OPENTHREAD_BORDER_ROUTER) && defined(CONFIG_AUTO_UPDATE_RCP)
+#include <esp_rcp_update.h>
+esp_err_t openthread_init_br_rcp(const esp_rcp_update_config_t * update_config);
+#endif // CONFIG_OPENTHREAD_BORDER_ROUTER && CONFIG_AUTO_UPDATE_RCP
+esp_err_t set_openthread_platform_config(esp_openthread_platform_config_t * config);
+esp_err_t openthread_init_stack(void);
 esp_err_t openthread_launch_task(void);
-
-#ifdef __cplusplus
-}
-#endif
+esp_err_t openthread_deinit_stack(void);
+void openthread_delete_task(void);
+CHIP_ERROR cli_transmit_task_post(std::unique_ptr<char[]> && cli_str);

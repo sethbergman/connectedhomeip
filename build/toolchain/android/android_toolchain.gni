@@ -37,7 +37,6 @@ template("android_clang_toolchain") {
   _android_toolchain_args = {
     current_os = "android"
     is_clang = true
-
     forward_variables_from(_invoker_toolchain_args, "*")
   }
 

@@ -22,7 +22,7 @@
 #endif
 
 #include <zephyr/logging/log.h>
-LOG_MODULE_DECLARE(app, CONFIG_MATTER_LOG_LEVEL);
+LOG_MODULE_DECLARE(app, CONFIG_CHIP_APP_LOG_LEVEL);
 
 using namespace chip;
 using namespace chip::app;
@@ -198,7 +198,7 @@ void BindingHandler::LightSwitchChangedHandler(const EmberBindingTableEntry & bi
     VerifyOrReturn(context != nullptr, LOG_ERR("Invalid context for Light switch handler"););
     BindingData * data = static_cast<BindingData *>(context);
 
-    if (binding.type == EMBER_MULTICAST_BINDING && data->IsGroup)
+    if (binding.type == MATTER_MULTICAST_BINDING && data->IsGroup)
     {
         switch (data->ClusterId)
         {
@@ -209,11 +209,11 @@ void BindingHandler::LightSwitchChangedHandler(const EmberBindingTableEntry & bi
             LevelControlProcessCommand(data->CommandId, binding, nullptr, context);
             break;
         default:
-            ChipLogError(NotSpecified, "Invalid binding group command data");
+            LOG_ERR("Invalid binding group command data");
             break;
         }
     }
-    else if (binding.type == EMBER_UNICAST_BINDING && !data->IsGroup)
+    else if (binding.type == MATTER_UNICAST_BINDING && !data->IsGroup)
     {
         switch (data->ClusterId)
         {
@@ -224,7 +224,7 @@ void BindingHandler::LightSwitchChangedHandler(const EmberBindingTableEntry & bi
             LevelControlProcessCommand(data->CommandId, binding, deviceProxy, context);
             break;
         default:
-            ChipLogError(NotSpecified, "Invalid binding unicast command data");
+            LOG_ERR("Invalid binding unicast command data");
             break;
         }
     }
@@ -259,7 +259,7 @@ bool BindingHandler::IsGroupBound()
 
     for (auto & entry : bindingTable)
     {
-        if (EMBER_MULTICAST_BINDING == entry.type)
+        if (MATTER_MULTICAST_BINDING == entry.type)
         {
             return true;
         }
@@ -277,17 +277,17 @@ void BindingHandler::PrintBindingTable()
     {
         switch (entry.type)
         {
-        case EMBER_UNICAST_BINDING:
+        case MATTER_UNICAST_BINDING:
             LOG_INF("[%d] UNICAST:", i++);
             LOG_INF("\t\t+ Fabric: %d\n \
             \t+ LocalEndpoint %d \n \
             \t+ ClusterId %d \n \
             \t+ RemoteEndpointId %d \n \
             \t+ NodeId %d",
-                    (int) entry.fabricIndex, (int) entry.local, (int) entry.clusterId.Value(), (int) entry.remote,
-                    (int) entry.nodeId);
+                    (int) entry.fabricIndex, (int) entry.local, (int) entry.clusterId.value_or(kInvalidClusterId),
+                    (int) entry.remote, (int) entry.nodeId);
             break;
-        case EMBER_MULTICAST_BINDING:
+        case MATTER_MULTICAST_BINDING:
             LOG_INF("[%d] GROUP:", i++);
             LOG_INF("\t\t+ Fabric: %d\n \
             \t+ LocalEndpoint %d \n \
@@ -295,11 +295,8 @@ void BindingHandler::PrintBindingTable()
             \t+ GroupId %d",
                     (int) entry.fabricIndex, (int) entry.local, (int) entry.remote, (int) entry.groupId);
             break;
-        case EMBER_UNUSED_BINDING:
+        case MATTER_UNUSED_BINDING:
             LOG_INF("[%d] UNUSED", i++);
-            break;
-        case EMBER_MANY_TO_ONE_BINDING:
-            LOG_INF("[%d] MANY TO ONE", i++);
             break;
         default:
             break;

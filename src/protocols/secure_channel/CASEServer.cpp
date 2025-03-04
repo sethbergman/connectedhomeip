@@ -18,9 +18,11 @@
 #include <protocols/secure_channel/CASEServer.h>
 
 #include <lib/core/CHIPError.h>
+#include <lib/support/CHIPFaultInjection.h>
 #include <lib/support/CodeUtils.h>
 #include <lib/support/SafeInt.h>
 #include <lib/support/logging/CHIPLogging.h>
+#include <tracing/macros.h>
 #include <transport/SessionManager.h>
 
 using namespace ::chip::Inet;
@@ -48,6 +50,9 @@ CHIP_ERROR CASEServer::ListenForSessionEstablishment(Messaging::ExchangeManager 
     // Set up the group state provider that persists across all handshakes.
     GetSession().SetGroupDataProvider(mGroupDataProvider);
 
+    ChipLogProgress(Inet, "CASE Server enabling CASE session setups");
+    mExchangeManager->RegisterUnsolicitedMessageHandlerForType(Protocols::SecureChannel::MsgType::CASE_Sigma1, this);
+
     PrepareForSessionEstablishment();
 
     return CHIP_NO_ERROR;
@@ -55,7 +60,8 @@ CHIP_ERROR CASEServer::ListenForSessionEstablishment(Messaging::ExchangeManager 
 
 CHIP_ERROR CASEServer::InitCASEHandshake(Messaging::ExchangeContext * ec)
 {
-    ReturnErrorCodeIf(ec == nullptr, CHIP_ERROR_INVALID_ARGUMENT);
+    MATTER_TRACE_SCOPE("InitCASEHandshake", "CASEServer");
+    VerifyOrReturnError(ec != nullptr, CHIP_ERROR_INVALID_ARGUMENT);
 
     // Hand over the exchange context to the CASE session.
     ec->SetDelegate(&GetSession());
@@ -73,34 +79,79 @@ CHIP_ERROR CASEServer::OnUnsolicitedMessageReceived(const PayloadHeader & payloa
 CHIP_ERROR CASEServer::OnMessageReceived(Messaging::ExchangeContext * ec, const PayloadHeader & payloadHeader,
                                          System::PacketBufferHandle && payload)
 {
-    ChipLogProgress(Inet, "CASE Server received Sigma1 message. Starting handshake. EC %p", ec);
+    MATTER_TRACE_SCOPE("OnMessageReceived", "CASEServer");
+
+    bool busy = GetSession().GetState() != CASESession::State::kInitialized;
+    CHIP_FAULT_INJECT(FaultInjection::kFault_CASEServerBusy, busy = true);
+    if (busy)
+    {
+        // We are in the middle of CASE handshake
+
+        // Invoke watchdog to fix any stuck handshakes
+        bool watchdogFired = GetSession().InvokeBackgroundWorkWatchdog();
+        if (!watchdogFired)
+        {
+            // Handshake wasn't stuck, send the busy status report and let the existing handshake continue.
+
+            // A successful CASE handshake can take several seconds and some may time out (30 seconds or more).
+
+            System::Clock::Milliseconds16 delay = System::Clock::kZero;
+            if (GetSession().GetState() == CASESession::State::kSentSigma2)
+            {
+                // The delay should be however long we think it will take for
+                // that to time out.
+                auto sigma2Timeout = CASESession::ComputeSigma2ResponseTimeout(GetSession().GetRemoteMRPConfig());
+                if (sigma2Timeout < System::Clock::Milliseconds16::max())
+                {
+                    delay = std::chrono::duration_cast<System::Clock::Milliseconds16>(sigma2Timeout);
+                }
+                else
+                {
+                    // Avoid overflow issues, just wait for as long as we can to
+                    // get close to our expected Sigma2 timeout.
+                    delay = System::Clock::Milliseconds16::max();
+                }
+            }
+            else
+            {
+                // For now, setting minimum wait time to 5000 milliseconds if we
+                // have no other information.
+                delay = System::Clock::Milliseconds16(5000);
+            }
+            CHIP_ERROR err = SendBusyStatusReport(ec, delay);
+            if (err != CHIP_NO_ERROR)
+            {
+                ChipLogError(Inet, "Failed to send the busy status report, err:%" CHIP_ERROR_FORMAT, err.Format());
+            }
+            return err;
+        }
+    }
+
+    if (!ec->GetSessionHandle()->IsUnauthenticatedSession())
+    {
+        ChipLogError(Inet, "CASE Server received Sigma1 message %s EC %p", "over encrypted session. Ignoring.", ec);
+        return CHIP_ERROR_INCORRECT_STATE;
+    }
+
+    ChipLogProgress(Inet, "CASE Server received Sigma1 message %s EC %p", ". Starting handshake.", ec);
+
     CHIP_ERROR err = InitCASEHandshake(ec);
     SuccessOrExit(err);
 
     // TODO - Enable multiple concurrent CASE session establishment
     // https://github.com/project-chip/connectedhomeip/issues/8342
-    ChipLogProgress(Inet, "CASE Server disabling CASE session setups");
-    mExchangeManager->UnregisterUnsolicitedMessageHandlerForType(Protocols::SecureChannel::MsgType::CASE_Sigma1);
 
     err = GetSession().OnMessageReceived(ec, payloadHeader, std::move(payload));
     SuccessOrExit(err);
 
 exit:
-    if (err != CHIP_NO_ERROR)
-    {
-        PrepareForSessionEstablishment();
-    }
-
+    // CASESession::OnMessageReceived guarantees that it will call
+    // OnSessionEstablishmentError if it returns error, so nothing else to do here.
     return err;
 }
 
 void CASEServer::PrepareForSessionEstablishment(const ScopedNodeId & previouslyEstablishedPeer)
 {
-    // Let's re-register for CASE Sigma1 message, so that the next CASE session setup request can be processed.
-    // https://github.com/project-chip/connectedhomeip/issues/8342
-    ChipLogProgress(Inet, "CASE Server enabling CASE session setups");
-    mExchangeManager->RegisterUnsolicitedMessageHandlerForType(Protocols::SecureChannel::MsgType::CASE_Sigma1, this);
-
     GetSession().Clear();
 
     //
@@ -155,24 +206,31 @@ void CASEServer::PrepareForSessionEstablishment(const ScopedNodeId & previouslyE
 
 void CASEServer::OnSessionEstablishmentError(CHIP_ERROR err)
 {
+    MATTER_TRACE_SCOPE("OnSessionEstablishmentError", "CASEServer");
     ChipLogError(Inet, "CASE Session establishment failed: %" CHIP_ERROR_FORMAT, err.Format());
 
-    //
-    // We're not allowed to call methods that will eventually result in calling SessionManager::AllocateSecureSession
-    // from a SessionDelegate::OnSessionReleased callback. Schedule the preparation as an async work item.
-    //
-    mSessionManager->SystemLayer()->ScheduleWork(
-        [](auto * systemLayer, auto * appState) -> void {
-            CASEServer * _this = static_cast<CASEServer *>(appState);
-            _this->PrepareForSessionEstablishment();
-        },
-        this);
+    MATTER_TRACE_SCOPE("CASEFail", "CASESession");
+    PrepareForSessionEstablishment();
 }
 
 void CASEServer::OnSessionEstablished(const SessionHandle & session)
 {
+    MATTER_TRACE_SCOPE("OnSessionEstablished", "CASEServer");
     ChipLogProgress(Inet, "CASE Session established to peer: " ChipLogFormatScopedNodeId,
                     ChipLogValueScopedNodeId(session->GetPeer()));
     PrepareForSessionEstablishment(session->GetPeer());
 }
+
+CHIP_ERROR CASEServer::SendBusyStatusReport(Messaging::ExchangeContext * ec, System::Clock::Milliseconds16 minimumWaitTime)
+{
+    MATTER_TRACE_SCOPE("SendBusyStatusReport", "CASEServer");
+    ChipLogProgress(Inet, "Already in the middle of CASE handshake, sending busy status report");
+
+    System::PacketBufferHandle handle = Protocols::SecureChannel::StatusReport::MakeBusyStatusReportMessage(minimumWaitTime);
+    VerifyOrReturnError(!handle.IsNull(), CHIP_ERROR_NO_MEMORY);
+
+    ChipLogProgress(Inet, "Sending status report, exchange " ChipLogFormatExchange, ChipLogValueExchange(ec));
+    return ec->SendMessage(Protocols::SecureChannel::MsgType::StatusReport, std::move(handle));
+}
+
 } // namespace chip

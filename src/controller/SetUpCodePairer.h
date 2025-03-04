@@ -36,17 +36,29 @@
 #include <setup_payload/QRCodeSetupPayloadParser.h>
 
 #if CONFIG_NETWORK_LAYER_BLE
-#include <ble/BleLayer.h>
+#include <ble/Ble.h>
 #endif // CONFIG_NETWORK_BLE
 
 #include <controller/DeviceDiscoveryDelegate.h>
 
-#include <queue>
+#include <deque>
 
 namespace chip {
 namespace Controller {
 
 class DeviceCommissioner;
+
+class SetUpCodePairerParameters : public RendezvousParameters
+{
+public:
+    SetUpCodePairerParameters() = default;
+    SetUpCodePairerParameters(const Dnssd::CommonResolutionData & data, size_t index);
+#if CONFIG_NETWORK_LAYER_BLE
+    SetUpCodePairerParameters(BLE_CONNECTION_OBJECT connObj, bool connected = true);
+#endif // CONFIG_NETWORK_LAYER_BLE
+    char mHostName[Dnssd::kHostNameMaxLength + 1] = {};
+    Inet::InterfaceId mInterfaceId;
+};
 
 enum class SetupCodePairerBehaviour : uint8_t
 {
@@ -57,18 +69,20 @@ enum class SetupCodePairerBehaviour : uint8_t
 enum class DiscoveryType : uint8_t
 {
     kDiscoveryNetworkOnly,
+    kDiscoveryNetworkOnlyWithoutPASEAutoRetry,
     kAll,
 };
 
 class DLL_EXPORT SetUpCodePairer : public DevicePairingDelegate
 {
 public:
-    SetUpCodePairer(DeviceCommissioner * commissioner) : mCommissioner(commissioner) { ResetDiscoveryState(); }
-    virtual ~SetUpCodePairer() {}
+    SetUpCodePairer(DeviceCommissioner * commissioner) : mCommissioner(commissioner) {}
+    ~SetUpCodePairer();
 
     CHIP_ERROR PairDevice(chip::NodeId remoteId, const char * setUpCode,
-                          SetupCodePairerBehaviour connectionType = SetupCodePairerBehaviour::kCommission,
-                          DiscoveryType discoveryType             = DiscoveryType::kAll);
+                          SetupCodePairerBehaviour connectionType              = SetupCodePairerBehaviour::kCommission,
+                          DiscoveryType discoveryType                          = DiscoveryType::kAll,
+                          Optional<Dnssd::CommonResolutionData> resolutionData = NullOptional);
 
     // Called by the DeviceCommissioner to notify that we have discovered a new device.
     void NotifyCommissionableDeviceDiscovered(const chip::Dnssd::DiscoveredNodeData & nodeData);
@@ -79,9 +93,9 @@ public:
     void SetBleLayer(Ble::BleLayer * bleLayer) { mBleLayer = bleLayer; };
 #endif // CONFIG_NETWORK_LAYER_BLE
 
-    // Called to notify us that the DeviceCommissioner is shutting down and we
-    // should not try to do any more new work.
-    void CommissionerShuttingDown();
+    // Stop ongoing discovery / pairing of the specified node, or of
+    // whichever node we're pairing if kUndefinedNodeId is passed.
+    bool StopPairing(NodeId remoteId = kUndefinedNodeId);
 
 private:
     // DevicePairingDelegate implementation.
@@ -97,6 +111,8 @@ private:
     CHIP_ERROR StopConnectOverIP();
     CHIP_ERROR StartDiscoverOverSoftAP(SetupPayload & payload);
     CHIP_ERROR StopConnectOverSoftAP();
+    CHIP_ERROR StartDiscoverOverWiFiPAF(SetupPayload & payload);
+    CHIP_ERROR StopConnectOverWiFiPAF();
 
     // Returns whether we have kicked off a new connection attempt.
     bool ConnectToDiscoveredDevice();
@@ -136,8 +152,11 @@ private:
         kBLETransport = 0,
         kIPTransport,
         kSoftAPTransport,
+        kWiFiPAFTransport,
         kTransportTypeCount,
     };
+
+    void NotifyCommissionableDeviceDiscovered(const chip::Dnssd::CommonResolutionData & resolutionData);
 
     static void OnDeviceDiscoveredTimeoutCallback(System::Layer * layer, void * context);
 
@@ -149,13 +168,27 @@ private:
     static void OnDiscoveredDeviceOverBleSuccess(void * appState, BLE_CONNECTION_OBJECT connObj);
     static void OnDiscoveredDeviceOverBleError(void * appState, CHIP_ERROR err);
 #endif // CONFIG_NETWORK_LAYER_BLE
+#if CHIP_DEVICE_CONFIG_ENABLE_WIFIPAF
+    void OnDiscoveredDeviceOverWifiPAF();
+    void OnWifiPAFDiscoveryError(CHIP_ERROR err);
+    static void OnWiFiPAFSubscribeComplete(void * appState);
+    static void OnWiFiPAFSubscribeError(void * appState, CHIP_ERROR err);
+#endif
 
     bool NodeMatchesCurrentFilter(const Dnssd::DiscoveredNodeData & nodeData) const;
-    Dnssd::DiscoveryFilter currentFilter;
+    static bool IdIsPresent(uint16_t vendorOrProductID);
 
-    DeviceCommissioner * mCommissioner = nullptr;
-    System::Layer * mSystemLayer       = nullptr;
-    chip::NodeId mRemoteId;
+    Dnssd::DiscoveryFilter mCurrentFilter;
+    // The vendor id and product id from the SetupPayload.  They may be 0, which
+    // indicates "not available" (e.g. because the SetupPayload came from a
+    // short manual code).  In that case we should not filter on those values.
+    static constexpr uint16_t kNotAvailable = 0;
+    uint16_t mPayloadVendorID               = kNotAvailable;
+    uint16_t mPayloadProductID              = kNotAvailable;
+
+    DeviceCommissioner * mCommissioner       = nullptr;
+    System::Layer * mSystemLayer             = nullptr;
+    chip::NodeId mRemoteId                   = kUndefinedNodeId;
     uint32_t mSetUpPINCode                   = 0;
     SetupCodePairerBehaviour mConnectionType = SetupCodePairerBehaviour::kCommission;
     DiscoveryType mDiscoveryType             = DiscoveryType::kAll;
@@ -169,10 +202,15 @@ private:
     // process happening via the relevant transport.
     bool mWaitingForDiscovery[kTransportTypeCount] = { false };
 
-    // Queue of things we have discovered but not tried connecting to yet.  The
+    // Double ended-queue of things we have discovered but not tried connecting to yet.  The
     // general discovery/pairing process will terminate once this queue is empty
     // and all the booleans in mWaitingForDiscovery are false.
-    std::queue<RendezvousParameters> mDiscoveredParameters;
+    std::deque<SetUpCodePairerParameters> mDiscoveredParameters;
+
+    // Current thing we are trying to connect to over UDP. If a PASE connection fails with
+    // a CHIP_ERROR_TIMEOUT, the discovered parameters will be used to ask the
+    // mdns daemon to invalidate the
+    Optional<SetUpCodePairerParameters> mCurrentPASEParameters;
 
     // mWaitingForPASE is true if we have called either
     // EstablishPASEConnection or PairDevice on mCommissioner and are now just

@@ -19,13 +19,10 @@
 #include "DeviceControllerDelegateBridge.h"
 #import <Matter/Matter.h>
 
-@interface CHIPToolDeviceControllerDelegate ()
-@end
-
 @implementation CHIPToolDeviceControllerDelegate
-- (void)onStatusUpdate:(MTRCommissioningStatus)status
+- (void)controller:(MTRDeviceController *)controller statusUpdate:(MTRCommissioningStatus)status
 {
-    NSLog(@"Pairing Status Update: %lu", status);
+    NSLog(@"Pairing Status Update: %ld", static_cast<long>(status));
     switch (status) {
     case MTRCommissioningStatusSuccess:
         ChipLogProgress(chipTool, "Secure Pairing Success");
@@ -36,10 +33,10 @@
         _commandBridge->SetCommandExitStatus(CHIP_ERROR_INCORRECT_STATE);
         break;
     case MTRCommissioningStatusDiscoveringMoreDevices:
-        ChipLogProgress(chipTool, "Secure Pairing Discovering More Devices");
+        ChipLogError(chipTool, "MTRCommissioningStatusDiscoveringMoreDevices: This should not happen.");
         break;
     case MTRCommissioningStatusUnknown:
-        ChipLogError(chipTool, "Uknown Pairing Status");
+        ChipLogError(chipTool, "Unknown Pairing Status");
         break;
     }
 }
@@ -53,6 +50,11 @@
     }
     ChipLogProgress(chipTool, "Pairing Success");
     ChipLogProgress(chipTool, "PASE establishment successful");
+    if (_params == nil) {
+        _commandBridge->SetCommandExitStatus(nil);
+        return;
+    }
+
     NSError * commissionError;
     [_commissioner commissionNodeWithID:@(_deviceID) commissioningParams:_params error:&commissionError];
     if (commissionError != nil) {
@@ -64,6 +66,13 @@
 - (void)controller:(MTRDeviceController *)controller commissioningComplete:(NSError *)error
 {
     _commandBridge->SetCommandExitStatus(error, "Pairing Commissioning Complete");
+}
+
+- (void)controller:(MTRDeviceController *)controller commissioningComplete:(NSError *)error nodeID:(NSNumber *)nodeID metrics:(MTRMetrics *)metrics
+{
+    (void) nodeID;
+    NSString * message = [NSString stringWithFormat:@"Pairing Commissioning Complete with metrics %@", metrics];
+    _commandBridge->SetCommandExitStatus(error, [message UTF8String]);
 }
 
 @end

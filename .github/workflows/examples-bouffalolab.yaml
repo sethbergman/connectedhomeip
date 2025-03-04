@@ -12,66 +12,130 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-name: Build example - Bouffalolab BL702
+name: Build example - BouffaloLab
 
 on:
   push:
+    branches:
+      - master
+      - 'v*-branch'
   pull_request:
+  merge_group:
+  workflow_dispatch:
 
 concurrency:
   group: ${{ github.ref }}-${{ github.workflow }}-${{ (github.event_name == 'pull_request' && github.event.number) || (github.event_name == 'workflow_dispatch' && github.run_number) || github.sha }}
   cancel-in-progress: true
 
+env:
+  CHIP_NO_LOG_TIMESTAMPS: true
+
 jobs:
-  bl702:
-    name: BL702
-    timeout-minutes: 90
+  bouffalolab:
+    name: Bouffalo Lab
 
     runs-on: ubuntu-latest
     if: github.actor != 'restyled-io[bot]'
 
     container:
-      image: connectedhomeip/chip-build:latest
+      image: ghcr.io/project-chip/chip-build-bouffalolab:119
       volumes:
         - "/tmp/bloat_reports:/tmp/bloat_reports"
     steps:
-      - uses: Wandalen/wretry.action@v1.0.15
-        name: Checkout
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Checkout submodules & Bootstrap
+        uses: ./.github/actions/checkout-submodules-and-bootstrap
         with:
-          action: actions/checkout@v3
-          with: |
-            token: ${{ github.token }}
-          attempt_limit: 3
-          attempt_delay: 2000
-      - name: Checkout submodules
-        run: scripts/checkout_submodules.py --shallow --platform bouffalolab
-
+          platform: bouffalolab
+          extra-submodule-parameters: " --recursive"
       - name: Set up environment for size reports
+        uses: ./.github/actions/setup-size-reports
         if: ${{ !env.ACT }}
-        env:
-          GH_CONTEXT: ${{ toJson(github) }}
-        run: scripts/tools/memory/gh_sizes_environment.py "${GH_CONTEXT}"
+        with:
+          gh-context: ${{ toJson(github) }}
+      - name: Build example BL602 Lighting App
+        run: |
+          ./scripts/run_in_build_env.sh \
+            "./scripts/build/build_examples.py \
+              --target bouffalolab-bl602dk-light-wifi-littlefs-mfd-rpc \
+              build \
+              --copy-artifacts-to out/artifacts \
+            "
+      - name: Prepare some bloat report from the previous builds
+        run: |
+          .environment/pigweed-venv/bin/python3 scripts/tools/memory/gh_sizes.py \
+              bl602 bl602+mfd+littlefs+rpc lighting-app \
+              out/artifacts/bouffalolab-bl602dk-light-wifi-littlefs-mfd-rpc/chip-bl602-lighting-example.out \
+              /tmp/bloat_reports/
+      - name: Clean out build output
+        run: rm -rf ./out
 
       - name: Build example BL702 Lighting App
-        timeout-minutes: 30
         run: |
           ./scripts/run_in_build_env.sh \
-            "./scripts/build/build_examples.py --target bouffalolab-BL706-IoT-DVK-BL706C-22-light build"
-          .environment/pigweed-venv/bin/python3 scripts/tools/memory/gh_sizes.py bl702 bl702 lighting-app \
-            out/bouffalolab-BL706-IoT-DVK-BL706C-22-light/chip-bl702-lighting-example.out /tmp/bloat_reports/
+            "./scripts/build/build_examples.py \
+              --target bouffalolab-bl706dk-light-ethernet-easyflash \
+              --target bouffalolab-bl706dk-light-wifi-littlefs \
+              --target bouffalolab-bl706dk-light-thread-littlefs-mfd-rpc \
+              build \
+              --copy-artifacts-to out/artifacts \
+            "
+      - name: Prepare some bloat report from the previous builds
+        run: |
+          .environment/pigweed-venv/bin/python3 scripts/tools/memory/gh_sizes.py \
+              bl702 bl702+eth lighting-app \
+              out/artifacts/bouffalolab-bl706dk-light-ethernet-easyflash/chip-bl702-lighting-example.out \
+              /tmp/bloat_reports/
+          .environment/pigweed-venv/bin/python3 scripts/tools/memory/gh_sizes.py \
+              bl702 bl702+wifi lighting-app \
+              out/artifacts/bouffalolab-bl706dk-light-wifi-littlefs/chip-bl702-lighting-example.out \
+              /tmp/bloat_reports/
+          .environment/pigweed-venv/bin/python3 scripts/tools/memory/gh_sizes.py \
+              bl702 bl706+mfd+rpc+littlefs lighting-app \
+              out/artifacts/bouffalolab-bl706dk-light-thread-littlefs-mfd-rpc/chip-bl702-lighting-example.out \
+              /tmp/bloat_reports/
+      - name: Clean out build output
+        run: rm -rf ./out
 
-      - name: Build example BL702 Lighting App with RPCs
+      - name: Build example BL702L Lighting App
         timeout-minutes: 30
         run: |
           ./scripts/run_in_build_env.sh \
-            "./scripts/build/build_examples.py --target bouffalolab-BL706-IoT-DVK-BL706C-22-light-rpc build"
-          .environment/pigweed-venv/bin/python3 scripts/tools/memory/gh_sizes.py bl702 bl702+rpc lighting-app \
-            out/bouffalolab-BL706-IoT-DVK-BL706C-22-light-rpc/chip-bl702-lighting-example.out /tmp/bloat_reports/
+            "./scripts/build/build_examples.py \
+              --target bouffalolab-bl704ldk-light-thread-littlefs-mfd \
+              build \
+              --copy-artifacts-to out/artifacts \
+            "
+      - name: Prepare some bloat report from the previous builds
+        run: |
+          .environment/pigweed-venv/bin/python3 scripts/tools/memory/gh_sizes.py \
+              bl702l bl702l+mfd+littlefs lighting-app \
+              out/artifacts/bouffalolab-bl704ldk-light-thread-littlefs-mfd/chip-bl702l-lighting-example.out \
+              /tmp/bloat_reports/
+      - name: Clean out build output
+        run: rm -rf ./out
+
+      - name: Build example BL702L Contact Sensor
+        timeout-minutes: 30
+        run: |
+          ./scripts/run_in_build_env.sh \
+            "./scripts/build/build_examples.py \
+              --target bouffalolab-bl704ldk-contact-sensor-thread-mtd-littlefs-mfd \
+              build \
+              --copy-artifacts-to out/artifacts \
+            "
+      - name: Prepare some bloat report from the previous builds
+        run: |
+          .environment/pigweed-venv/bin/python3 scripts/tools/memory/gh_sizes.py \
+              bl702l bl702l+mfd+littlefs contact-sensor-app \
+              out/artifacts/bouffalolab-bl704ldk-contact-sensor-thread-mtd-littlefs-mfd/chip-bl702l-contact-sensor-example.out \
+              /tmp/bloat_reports/
+      - name: Clean out build output
+        run: rm -rf ./out
 
       - name: Uploading Size Reports
-        uses: actions/upload-artifact@v2
+        uses: ./.github/actions/upload-size-reports
         if: ${{ !env.ACT }}
         with:
-          name: Size,BL702-Examples,${{ env.GH_EVENT_PR }},${{ env.GH_EVENT_HASH }},${{ env.GH_EVENT_PARENT }},${{ github.event_name }}
-          path: |
-            /tmp/bloat_reports/
+          platform-name: BouffaloLab

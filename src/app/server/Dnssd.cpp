@@ -17,8 +17,8 @@
 
 #include <app/server/Dnssd.h>
 
+#include <app-common/zap-generated/cluster-enums.h>
 #include <inttypes.h>
-
 #include <lib/core/Optional.h>
 #include <lib/dnssd/Advertiser.h>
 #include <lib/dnssd/ServiceNaming.h>
@@ -38,7 +38,10 @@
 #include <setup_payload/SetupPayload.h>
 #include <system/TimeSource.h>
 
-#include <app/server/Server.h>
+#include <algorithm>
+
+using namespace chip;
+using namespace chip::DeviceLayer;
 
 namespace chip {
 namespace app {
@@ -46,13 +49,14 @@ namespace {
 
 void OnPlatformEvent(const DeviceLayer::ChipDeviceEvent * event)
 {
-    if (event->Type == DeviceLayer::DeviceEventType::kDnssdPlatformInitialized
-#if CHIP_DEVICE_CONFIG_ENABLE_SED
-        || event->Type == DeviceLayer::DeviceEventType::kSEDIntervalChange
-#endif
-    )
+    switch (event->Type)
     {
+    case DeviceLayer::DeviceEventType::kDnssdInitialized:
+    case DeviceLayer::DeviceEventType::kDnssdRestartNeeded:
         app::DnssdServer::Instance().StartServer();
+        break;
+    default:
+        break;
     }
 }
 
@@ -141,30 +145,78 @@ CHIP_ERROR DnssdServer::SetEphemeralDiscriminator(Optional<uint16_t> discriminat
     return CHIP_NO_ERROR;
 }
 
+#if CHIP_CONFIG_ENABLE_ICD_SERVER
+template <class AdvertisingParams>
+void DnssdServer::AddICDKeyToAdvertisement(AdvertisingParams & advParams)
+{
+    VerifyOrDieWithMsg(mICDManager != nullptr, Discovery,
+                       "Invalid pointer to the ICDManager which is required for the LIT operating mode");
+
+    Dnssd::ICDModeAdvertise ICDModeToAdvertise = Dnssd::ICDModeAdvertise::kNone;
+    // Only advertise the ICD key if the device can operate as a LIT
+    if (mICDManager->SupportsFeature(Clusters::IcdManagement::Feature::kLongIdleTimeSupport))
+    {
+        if (mICDManager->GetICDMode() == ICDConfigurationData::ICDMode::LIT)
+        {
+            ICDModeToAdvertise = Dnssd::ICDModeAdvertise::kLIT;
+        }
+        else
+        {
+            ICDModeToAdvertise = Dnssd::ICDModeAdvertise::kSIT;
+        }
+    }
+
+    advParams.SetICDModeToAdvertise(ICDModeToAdvertise);
+}
+#endif
+
+void DnssdServer::GetPrimaryOrFallbackMACAddress(MutableByteSpan & mac)
+{
+    if (ConfigurationMgr().GetPrimaryMACAddress(mac) != CHIP_NO_ERROR)
+    {
+        // Only generate a fallback "MAC" once, so we don't keep constantly changing our host name.
+        if (std::all_of(std::begin(mFallbackMAC), std::end(mFallbackMAC), [](uint8_t v) { return v == 0; }))
+        {
+            ChipLogError(Discovery, "Failed to get primary mac address of device. Generating a random one.");
+            Crypto::DRBG_get_bytes(mFallbackMAC, sizeof(mFallbackMAC));
+        }
+        VerifyOrDie(mac.size() == sizeof(mFallbackMAC)); // kPrimaryMACAddressLength
+        memcpy(mac.data(), mFallbackMAC, sizeof(mFallbackMAC));
+    }
+}
+
 /// Set MDNS operational advertisement
 CHIP_ERROR DnssdServer::AdvertiseOperational()
 {
-    VerifyOrDie(mFabricTable != nullptr);
+    VerifyOrReturnError(mFabricTable != nullptr, CHIP_ERROR_INCORRECT_STATE);
 
     for (const FabricInfo & fabricInfo : *mFabricTable)
     {
-        uint8_t macBuffer[DeviceLayer::ConfigurationManager::kPrimaryMACAddressLength];
-        MutableByteSpan mac(macBuffer);
-        if (chip::DeviceLayer::ConfigurationMgr().GetPrimaryMACAddress(mac) != CHIP_NO_ERROR)
+        if (!fabricInfo.ShouldAdvertiseIdentity())
         {
-            ChipLogError(Discovery, "Failed to get primary mac address of device. Generating a random one.");
-            Crypto::DRBG_get_bytes(macBuffer, sizeof(macBuffer));
+            continue;
         }
 
-        const auto advertiseParameters = chip::Dnssd::OperationalAdvertisingParameters()
-                                             .SetPeerId(fabricInfo.GetPeerId())
-                                             .SetMac(mac)
-                                             .SetPort(GetSecuredPort())
-                                             .SetInterfaceId(GetInterfaceId())
-                                             .SetLocalMRPConfig(GetLocalMRPConfig())
-                                             .SetTcpSupported(Optional<bool>(INET_CONFIG_ENABLE_TCP_ENDPOINT))
-                                             .EnableIpV4(true);
+        uint8_t macBuffer[DeviceLayer::ConfigurationManager::kPrimaryMACAddressLength];
+        MutableByteSpan mac(macBuffer);
+        GetPrimaryOrFallbackMACAddress(mac);
 
+        auto advertiseParameters = chip::Dnssd::OperationalAdvertisingParameters()
+                                       .SetPeerId(fabricInfo.GetPeerId())
+                                       .SetMac(mac)
+                                       .SetPort(GetSecuredPort())
+                                       .SetInterfaceId(GetInterfaceId())
+                                       .SetLocalMRPConfig(GetLocalMRPConfig().std_optional())
+                                       .EnableIpV4(true);
+
+#if CHIP_CONFIG_ENABLE_ICD_SERVER
+        AddICDKeyToAdvertisement(advertiseParameters);
+#endif
+
+#if INET_CONFIG_ENABLE_TCP_ENDPOINT
+        advertiseParameters.SetTCPSupportModes(mTCPServerEnabled ? chip::Dnssd::TCPModeAdvertise::kTCPClientServer
+                                                                 : chip::Dnssd::TCPModeAdvertise::kTCPClient);
+#endif
         auto & mdnsAdvertiser = chip::Dnssd::ServiceAdvertiser::Instance();
 
         ChipLogProgress(Discovery, "Advertise operational node " ChipLogFormatX64 "-" ChipLogFormatX64,
@@ -192,11 +244,7 @@ CHIP_ERROR DnssdServer::Advertise(bool commissionableNode, chip::Dnssd::Commissi
 
     uint8_t macBuffer[DeviceLayer::ConfigurationManager::kPrimaryMACAddressLength];
     MutableByteSpan mac(macBuffer);
-    if (chip::DeviceLayer::ConfigurationMgr().GetPrimaryMACAddress(mac) != CHIP_NO_ERROR)
-    {
-        ChipLogError(Discovery, "Failed to get primary mac address of device. Generating a random one.");
-        Crypto::DRBG_get_bytes(macBuffer, sizeof(macBuffer));
-    }
+    GetPrimaryOrFallbackMACAddress(mac);
     advertiseParameters.SetMac(mac);
 
     uint16_t value;
@@ -207,7 +255,7 @@ CHIP_ERROR DnssdServer::Advertise(bool commissionableNode, chip::Dnssd::Commissi
     }
     else
     {
-        advertiseParameters.SetVendorId(chip::Optional<uint16_t>::Value(value));
+        advertiseParameters.SetVendorId(std::make_optional<uint16_t>(value));
     }
 
     if (DeviceLayer::GetDeviceInstanceInfoProvider()->GetProductId(value) != CHIP_NO_ERROR)
@@ -216,93 +264,107 @@ CHIP_ERROR DnssdServer::Advertise(bool commissionableNode, chip::Dnssd::Commissi
     }
     else
     {
-        advertiseParameters.SetProductId(chip::Optional<uint16_t>::Value(value));
+        advertiseParameters.SetProductId(std::make_optional<uint16_t>(value));
     }
-
-    uint16_t discriminator = 0;
-    CHIP_ERROR error       = DeviceLayer::GetCommissionableDataProvider()->GetSetupDiscriminator(discriminator);
-    if (error != CHIP_NO_ERROR)
-    {
-        ChipLogError(Discovery,
-                     "Setup discriminator read error (%" CHIP_ERROR_FORMAT ")! Critical error, will not be commissionable.",
-                     error.Format());
-        return error;
-    }
-
-    // Override discriminator with temporary one if one is set
-    discriminator = mEphemeralDiscriminator.ValueOr(discriminator);
-
-    advertiseParameters.SetShortDiscriminator(static_cast<uint8_t>((discriminator >> 8) & 0x0F))
-        .SetLongDiscriminator(discriminator);
 
     if (DeviceLayer::ConfigurationMgr().IsCommissionableDeviceTypeEnabled() &&
         DeviceLayer::ConfigurationMgr().GetDeviceTypeId(val32) == CHIP_NO_ERROR)
     {
-        advertiseParameters.SetDeviceType(chip::Optional<uint32_t>::Value(val32));
+        advertiseParameters.SetDeviceType(std::make_optional<uint32_t>(val32));
     }
 
     char deviceName[chip::Dnssd::kKeyDeviceNameMaxLength + 1];
     if (DeviceLayer::ConfigurationMgr().IsCommissionableDeviceNameEnabled() &&
         DeviceLayer::ConfigurationMgr().GetCommissionableDeviceName(deviceName, sizeof(deviceName)) == CHIP_NO_ERROR)
     {
-        advertiseParameters.SetDeviceName(chip::Optional<const char *>::Value(deviceName));
+        advertiseParameters.SetDeviceName(std::make_optional<const char *>(deviceName));
     }
 
-#if CHIP_ENABLE_ROTATING_DEVICE_ID && defined(CHIP_DEVICE_CONFIG_ROTATING_DEVICE_ID_UNIQUE_ID)
-    char rotatingDeviceIdHexBuffer[RotatingDeviceId::kHexMaxLength];
-    ReturnErrorOnFailure(GenerateRotatingDeviceId(rotatingDeviceIdHexBuffer, ArraySize(rotatingDeviceIdHexBuffer)));
-    advertiseParameters.SetRotatingDeviceId(chip::Optional<const char *>::Value(rotatingDeviceIdHexBuffer));
+    advertiseParameters.SetLocalMRPConfig(GetLocalMRPConfig().std_optional());
+
+#if CHIP_CONFIG_ENABLE_ICD_SERVER
+    AddICDKeyToAdvertisement(advertiseParameters);
 #endif
 
-    advertiseParameters.SetLocalMRPConfig(GetLocalMRPConfig()).SetTcpSupported(Optional<bool>(INET_CONFIG_ENABLE_TCP_ENDPOINT));
-
-    if (!HaveOperationalCredentials())
+    if (commissionableNode)
     {
-        if (DeviceLayer::ConfigurationMgr().GetInitialPairingHint(value) != CHIP_NO_ERROR)
+        uint16_t discriminator = 0;
+        CHIP_ERROR error       = DeviceLayer::GetCommissionableDataProvider()->GetSetupDiscriminator(discriminator);
+        if (error != CHIP_NO_ERROR)
         {
-            ChipLogDetail(Discovery, "DNS-SD Pairing Hint not set");
-        }
-        else
-        {
-            advertiseParameters.SetPairingHint(chip::Optional<uint16_t>::Value(value));
+            ChipLogError(Discovery,
+                         "Setup discriminator read error (%" CHIP_ERROR_FORMAT ")! Critical error, will not be commissionable.",
+                         error.Format());
+            return error;
         }
 
-        if (DeviceLayer::ConfigurationMgr().GetInitialPairingInstruction(pairingInst, sizeof(pairingInst)) != CHIP_NO_ERROR)
+        // Override discriminator with temporary one if one is set
+        discriminator = mEphemeralDiscriminator.ValueOr(discriminator);
+
+        advertiseParameters.SetShortDiscriminator(static_cast<uint8_t>((discriminator >> 8) & 0x0F))
+            .SetLongDiscriminator(discriminator);
+
+#if CHIP_ENABLE_ROTATING_DEVICE_ID && defined(CHIP_DEVICE_CONFIG_ROTATING_DEVICE_ID_UNIQUE_ID)
+        char rotatingDeviceIdHexBuffer[RotatingDeviceId::kHexMaxLength];
+        ReturnErrorOnFailure(GenerateRotatingDeviceId(rotatingDeviceIdHexBuffer, MATTER_ARRAY_SIZE(rotatingDeviceIdHexBuffer)));
+        advertiseParameters.SetRotatingDeviceId(std::make_optional<const char *>(rotatingDeviceIdHexBuffer));
+#endif
+
+        if (!HaveOperationalCredentials())
         {
-            ChipLogDetail(Discovery, "DNS-SD Pairing Instruction not set");
+            if (DeviceLayer::ConfigurationMgr().GetInitialPairingHint(value) != CHIP_NO_ERROR)
+            {
+                ChipLogDetail(Discovery, "DNS-SD Pairing Hint not set");
+            }
+            else
+            {
+                advertiseParameters.SetPairingHint(std::make_optional<uint16_t>(value));
+            }
+
+            if (DeviceLayer::ConfigurationMgr().GetInitialPairingInstruction(pairingInst, sizeof(pairingInst)) != CHIP_NO_ERROR)
+            {
+                ChipLogDetail(Discovery, "DNS-SD Pairing Instruction not set");
+            }
+            else
+            {
+                advertiseParameters.SetPairingInstruction(std::make_optional<const char *>(pairingInst));
+            }
         }
         else
         {
-            advertiseParameters.SetPairingInstruction(chip::Optional<const char *>::Value(pairingInst));
+            if (DeviceLayer::ConfigurationMgr().GetSecondaryPairingHint(value) != CHIP_NO_ERROR)
+            {
+                ChipLogDetail(Discovery, "DNS-SD Pairing Hint not set");
+            }
+            else
+            {
+                advertiseParameters.SetPairingHint(std::make_optional<uint16_t>(value));
+            }
+
+            if (DeviceLayer::ConfigurationMgr().GetSecondaryPairingInstruction(pairingInst, sizeof(pairingInst)) != CHIP_NO_ERROR)
+            {
+                ChipLogDetail(Discovery, "DNS-SD Pairing Instruction not set");
+            }
+            else
+            {
+                advertiseParameters.SetPairingInstruction(std::make_optional<const char *>(pairingInst));
+            }
         }
     }
+#if CHIP_DEVICE_CONFIG_ENABLE_COMMISSIONER_PASSCODE
     else
     {
-        if (DeviceLayer::ConfigurationMgr().GetSecondaryPairingHint(value) != CHIP_NO_ERROR)
-        {
-            ChipLogDetail(Discovery, "DNS-SD Pairing Hint not set");
-        }
-        else
-        {
-            advertiseParameters.SetPairingHint(chip::Optional<uint16_t>::Value(value));
-        }
-
-        if (DeviceLayer::ConfigurationMgr().GetSecondaryPairingInstruction(pairingInst, sizeof(pairingInst)) != CHIP_NO_ERROR)
-        {
-            ChipLogDetail(Discovery, "DNS-SD Pairing Instruction not set");
-        }
-        else
-        {
-            advertiseParameters.SetPairingInstruction(chip::Optional<const char *>::Value(pairingInst));
-        }
+        advertiseParameters.SetCommissionerPasscodeSupported(std::make_optional<bool>(true));
     }
+#endif
 
     auto & mdnsAdvertiser = chip::Dnssd::ServiceAdvertiser::Instance();
 
-    ChipLogProgress(Discovery, "Advertise commission parameter vendorID=%u productID=%u discriminator=%04u/%02u cm=%u",
-                    advertiseParameters.GetVendorId().ValueOr(0), advertiseParameters.GetProductId().ValueOr(0),
+    ChipLogProgress(Discovery, "Advertise commission parameter vendorID=%u productID=%u discriminator=%04u/%02u cm=%u cp=%u",
+                    advertiseParameters.GetVendorId().value_or(0), advertiseParameters.GetProductId().value_or(0),
                     advertiseParameters.GetLongDiscriminator(), advertiseParameters.GetShortDiscriminator(),
-                    to_underlying(advertiseParameters.GetCommissioningMode()));
+                    to_underlying(advertiseParameters.GetCommissioningMode()),
+                    advertiseParameters.GetCommissionerPasscodeSupported().value_or(false) ? 1 : 0);
     return mdnsAdvertiser.Advertise(advertiseParameters);
 }
 
@@ -334,6 +396,33 @@ void DnssdServer::StartServer()
         mode = mCommissioningModeProvider->GetCommissioningMode();
     }
     return StartServer(mode);
+}
+
+void DnssdServer::StopServer()
+{
+    // Make sure we don't hold on to a dangling fabric table pointer.
+    mFabricTable = nullptr;
+
+    DeviceLayer::PlatformMgr().RemoveEventHandler(OnPlatformEventWrapper, 0);
+
+#if CHIP_DEVICE_CONFIG_ENABLE_EXTENDED_DISCOVERY
+    if (mExtendedDiscoveryExpiration != kTimeoutCleared)
+    {
+        DeviceLayer::SystemLayer().CancelTimer(HandleExtendedDiscoveryExpiration, nullptr);
+        mExtendedDiscoveryExpiration = kTimeoutCleared;
+    }
+#endif // CHIP_DEVICE_CONFIG_ENABLE_EXTENDED_DISCOVERY
+
+    if (Dnssd::ServiceAdvertiser::Instance().IsInitialized())
+    {
+        auto err = Dnssd::ServiceAdvertiser::Instance().RemoveServices();
+        if (err != CHIP_NO_ERROR)
+        {
+            ChipLogError(Discovery, "Failed to remove advertised services: %" CHIP_ERROR_FORMAT, err.Format());
+        }
+
+        Dnssd::ServiceAdvertiser::Instance().Shutdown();
+    }
 }
 
 void DnssdServer::StartServer(Dnssd::CommissioningMode mode)
@@ -428,6 +517,13 @@ CHIP_ERROR DnssdServer::GenerateRotatingDeviceId(char rotatingDeviceIdHexBuffer[
         additionalDataPayloadParams, rotatingDeviceIdHexBuffer, rotatingDeviceIdHexBufferSize, rotatingDeviceIdValueOutputSize);
 }
 #endif
+
+void DnssdServer::OnICDModeChange()
+{
+    // ICDMode changed, restart DNS-SD advertising, because SII and ICD key are affected by this change.
+    // StartServer will take care of setting the operational and commissionable advertisements
+    StartServer();
+}
 
 } // namespace app
 } // namespace chip

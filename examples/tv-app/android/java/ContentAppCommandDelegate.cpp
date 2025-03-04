@@ -24,23 +24,61 @@
 
 #include <app-common/zap-generated/cluster-objects.h>
 #include <app/CommandHandlerInterface.h>
+#include <app/util/config.h>
 #include <jni.h>
+#include <lib/core/DataModelTypes.h>
 #include <lib/support/CHIPJNIError.h>
 #include <lib/support/JniReferences.h>
 #include <lib/support/JniTypeWrappers.h>
 #include <lib/support/jsontlv/TlvJson.h>
+#include <platform/PlatformManager.h>
 #include <zap-generated/endpoint_config.h>
+
+#include <string>
 
 namespace chip {
 namespace AppPlatform {
 
-using CommandHandlerInterface = chip::app::CommandHandlerInterface;
-using LaunchResponseType      = chip::app::Clusters::ContentLauncher::Commands::LaunchResponse::Type;
+const std::string FAILURE_KEY         = "PlatformError";
+const std::string FAILURE_STATUS_KEY  = "Status";
+const std::string RESPONSE_STATUS_KEY = "Status";
+
+bool isValidJson(const char * response)
+{
+    Json::Reader reader;
+
+    Json::CharReaderBuilder readerBuilder;
+    std::string errors;
+
+    Json::Value value;
+    std::unique_ptr<Json::CharReader> testReader(readerBuilder.newCharReader());
+
+    if (!testReader->parse(response, response + std::strlen(response), &value, &errors))
+    {
+        ChipLogError(Zcl, "Failed to parse JSON: %s\n", errors.c_str());
+        return false;
+    }
+
+    // Validate and access JSON data safely
+    if (!value.isObject())
+    {
+        ChipLogError(Zcl, "Invalid JSON structure: not an object");
+        return false;
+    }
+
+    if (!reader.parse(response, value))
+    {
+        return false;
+    }
+
+    return true;
+}
 
 void ContentAppCommandDelegate::InvokeCommand(CommandHandlerInterface::HandlerContext & handlerContext)
 {
     if (handlerContext.mRequestPath.mEndpointId >= FIXED_ENDPOINT_COUNT)
     {
+        DeviceLayer::StackUnlock unlock;
         TLV::TLVReader readerForJson;
         readerForJson.Init(handlerContext.mPayload);
 
@@ -49,33 +87,49 @@ void ContentAppCommandDelegate::InvokeCommand(CommandHandlerInterface::HandlerCo
         err = TlvToJson(readerForJson, json);
         if (err != CHIP_NO_ERROR)
         {
-            // TODO : Add an interface to let the apps know a message came but there was a serialization error.
-            handlerContext.SetCommandNotHandled();
+            handlerContext.SetCommandHandled();
+            handlerContext.mCommandHandler.AddStatus(handlerContext.mRequestPath,
+                                                     chip::Protocols::InteractionModel::Status::InvalidCommand);
             return;
         }
 
-        JNIEnv * env      = JniReferences::GetInstance().GetEnvForCurrentThread();
-        Json::Value value = json["value"];
-        UtfString jsonString(env, JsonToString(value).c_str());
+        JNIEnv * env        = JniReferences::GetInstance().GetEnvForCurrentThread();
+        Json::Value value   = json["value"];
+        std::string payload = JsonToString(value);
+        UtfString jsonString(env, payload.c_str());
 
-        ChipLogProgress(Zcl, "ContentAppCommandDelegate::InvokeCommand send command being called with payload %s",
-                        JsonToString(json).c_str());
+        if (!mContentAppEndpointManager.HasValidObjectRef())
+        {
+            ChipLogProgress(Zcl, "mContentAppEndpointManager is not valid");
+            return;
+        }
 
-        jstring resp = (jstring) env->CallObjectMethod(
-            mContentAppEndpointManager, mSendCommandMethod, static_cast<jint>(handlerContext.mRequestPath.mEndpointId),
-            static_cast<jint>(handlerContext.mRequestPath.mClusterId), static_cast<jint>(handlerContext.mRequestPath.mCommandId),
-            jsonString.jniValue());
+        jstring resp = static_cast<jstring>(env->CallObjectMethod(
+            mContentAppEndpointManager.ObjectRef(), mSendCommandMethod, static_cast<jint>(handlerContext.mRequestPath.mEndpointId),
+            static_cast<jlong>(handlerContext.mRequestPath.mClusterId), static_cast<jlong>(handlerContext.mRequestPath.mCommandId),
+            jsonString.jniValue()));
         if (env->ExceptionCheck())
         {
             ChipLogError(Zcl, "Java exception in ContentAppCommandDelegate::sendCommand");
             env->ExceptionDescribe();
             env->ExceptionClear();
             FormatResponseData(handlerContext, "{\"value\":{}}");
-            return;
         }
-        const char * respStr = env->GetStringUTFChars(resp, 0);
-        ChipLogProgress(Zcl, "ContentAppCommandDelegate::InvokeCommand got response %s", respStr);
-        FormatResponseData(handlerContext, respStr);
+        else
+        {
+            JniUtfString respStr(env, resp);
+            ChipLogProgress(Zcl, "ContentAppCommandDelegate::InvokeCommand got response %s", respStr.c_str());
+            if (isValidJson(respStr.c_str()))
+            {
+                FormatResponseData(handlerContext, respStr.c_str());
+            }
+            else
+            {
+                // return dummy value in case JSON is invalid
+                FormatResponseData(handlerContext, "{\"value\":{}}");
+            }
+        }
+        env->DeleteLocalRef(resp);
     }
     else
     {
@@ -83,47 +137,286 @@ void ContentAppCommandDelegate::InvokeCommand(CommandHandlerInterface::HandlerCo
     }
 }
 
+Status ContentAppCommandDelegate::InvokeCommand(EndpointId epId, ClusterId clusterId, CommandId commandId, std::string payload,
+                                                bool & commandHandled, Json::Value & value)
+{
+    if (epId >= FIXED_ENDPOINT_COUNT)
+    {
+        JNIEnv * env = JniReferences::GetInstance().GetEnvForCurrentThread();
+        UtfString jsonString(env, payload.c_str());
+
+        ChipLogProgress(Zcl, "ContentAppCommandDelegate::InvokeCommand send command being called with payload %s", payload.c_str());
+
+        if (!mContentAppEndpointManager.HasValidObjectRef())
+        {
+            return chip::Protocols::InteractionModel::Status::Failure;
+        }
+
+        jstring resp =
+            (jstring) env->CallObjectMethod(mContentAppEndpointManager.ObjectRef(), mSendCommandMethod, static_cast<jint>(epId),
+                                            static_cast<jlong>(clusterId), static_cast<jlong>(commandId), jsonString.jniValue());
+        if (env->ExceptionCheck())
+        {
+            ChipLogError(Zcl, "Java exception in ContentAppCommandDelegate::sendCommand");
+            env->ExceptionDescribe();
+            env->ExceptionClear();
+            return chip::Protocols::InteractionModel::Status::Failure;
+        }
+        else
+        {
+            JniUtfString respStr(env, resp);
+            ChipLogProgress(Zcl, "ContentAppCommandDelegate::InvokeCommand got response %s", respStr.c_str());
+
+            Json::CharReaderBuilder readerBuilder;
+            std::string errors;
+
+            std::unique_ptr<Json::CharReader> testReader(readerBuilder.newCharReader());
+
+            if (!testReader->parse(respStr.c_str(), respStr.c_str() + std::strlen(respStr.c_str()), &value, &errors))
+            {
+                ChipLogError(Zcl, "Failed to parse JSON: %s\n", errors.c_str());
+                return chip::Protocols::InteractionModel::Status::Failure;
+            }
+
+            // Validate and access JSON data safely
+            if (!value.isObject())
+            {
+                ChipLogError(Zcl, "Invalid JSON structure: not an object");
+                return chip::Protocols::InteractionModel::Status::Failure;
+            }
+
+            Json::Reader reader;
+            if (!reader.parse(respStr.c_str(), value))
+            {
+                return chip::Protocols::InteractionModel::Status::Failure;
+            }
+        }
+        env->DeleteLocalRef(resp);
+
+        // Parse response here in case there is failure response.
+        // Return non-success error code to indicate to caller it should not parse response.
+        if (!value[FAILURE_KEY].empty())
+        {
+            value = value[FAILURE_KEY];
+            if (!value[FAILURE_STATUS_KEY].empty() && value[FAILURE_STATUS_KEY].isUInt())
+            {
+                return static_cast<Protocols::InteractionModel::Status>(value[FAILURE_STATUS_KEY].asUInt());
+            }
+            return chip::Protocols::InteractionModel::Status::Failure;
+        }
+
+        // Return success to indicate command has been sent, response returned and parsed successfully.
+        // Caller has to manually parse value input/output parameter to get response status/object.
+        return chip::Protocols::InteractionModel::Status::Success;
+    }
+    else
+    {
+        commandHandled = false;
+        return chip::Protocols::InteractionModel::Status::UnsupportedEndpoint;
+    }
+}
+
 void ContentAppCommandDelegate::FormatResponseData(CommandHandlerInterface::HandlerContext & handlerContext, const char * response)
 {
+    handlerContext.SetCommandHandled();
     Json::Reader reader;
     Json::Value value;
     if (!reader.parse(response, value))
     {
-        handlerContext.SetCommandNotHandled();
+        return;
+    }
+
+    // handle errors from platform-app
+    if (!value[FAILURE_KEY].empty())
+    {
+        value = value[FAILURE_KEY];
+        if (!value[FAILURE_STATUS_KEY].empty() && value[FAILURE_STATUS_KEY].isUInt())
+        {
+            handlerContext.mCommandHandler.AddStatus(
+                handlerContext.mRequestPath, static_cast<Protocols::InteractionModel::Status>(value[FAILURE_STATUS_KEY].asUInt()));
+            return;
+        }
+        handlerContext.mCommandHandler.AddStatus(handlerContext.mRequestPath, chip::Protocols::InteractionModel::Status::Failure);
         return;
     }
 
     switch (handlerContext.mRequestPath.mClusterId)
     {
     case app::Clusters::ContentLauncher::Id: {
-        LaunchResponseType launchResponse;
-        if (value["0"].empty())
+        Status status;
+        LaunchResponseType launchResponse = FormatContentLauncherResponse(value, status);
+        if (status != chip::Protocols::InteractionModel::Status::Success)
         {
-            launchResponse.status = chip::app::Clusters::ContentLauncher::ContentLaunchStatusEnum::kAuthFailed;
+            handlerContext.mCommandHandler.AddStatus(handlerContext.mRequestPath, status);
         }
         else
         {
-            launchResponse.status = static_cast<chip::app::Clusters::ContentLauncher::ContentLaunchStatusEnum>(value["0"].asInt());
-            if (!value["1"].empty())
-            {
-                launchResponse.data = chip::MakeOptional(CharSpan::fromCharString(value["1"].asCString()));
-            }
+            handlerContext.mCommandHandler.AddResponse(handlerContext.mRequestPath, launchResponse);
         }
-        handlerContext.mCommandHandler.AddResponseData(handlerContext.mRequestPath, launchResponse);
-        handlerContext.SetCommandHandled();
         break;
     }
 
-    // case app::Clusters::TargetNavigator::Id:
-    //     break;
+    case app::Clusters::TargetNavigator::Id: {
+        Status status;
+        NavigateTargetResponseType navigateTargetResponse = FormatNavigateTargetResponse(value, status);
+        if (status != chip::Protocols::InteractionModel::Status::Success)
+        {
+            handlerContext.mCommandHandler.AddStatus(handlerContext.mRequestPath, status);
+        }
+        else
+        {
+            handlerContext.mCommandHandler.AddResponse(handlerContext.mRequestPath, navigateTargetResponse);
+        }
+        break;
+    }
 
-    // case app::Clusters::MediaPlayback::Id:
-    //     break;
+    case app::Clusters::MediaPlayback::Id: {
+        Status status;
+        PlaybackResponseType playbackResponse = FormatMediaPlaybackResponse(value, status);
+        if (status != chip::Protocols::InteractionModel::Status::Success)
+        {
+            handlerContext.mCommandHandler.AddStatus(handlerContext.mRequestPath, status);
+        }
+        else
+        {
+            handlerContext.mCommandHandler.AddResponse(handlerContext.mRequestPath, playbackResponse);
+        }
+        break;
+    }
 
-    // case app::Clusters::AccountLogin::Id:
-    //     break;
+    case app::Clusters::AccountLogin::Id: {
+        switch (handlerContext.mRequestPath.mCommandId)
+        {
+        case app::Clusters::AccountLogin::Commands::GetSetupPIN::Id: {
+            Status status;
+            GetSetupPINResponseType getSetupPINresponse = FormatGetSetupPINResponse(value, status);
+            if (status != chip::Protocols::InteractionModel::Status::Success)
+            {
+                handlerContext.mCommandHandler.AddStatus(handlerContext.mRequestPath, status);
+            }
+            else
+            {
+                handlerContext.mCommandHandler.AddResponse(handlerContext.mRequestPath, getSetupPINresponse);
+            }
+            break;
+        }
+        case app::Clusters::AccountLogin::Commands::Login::Id: {
+            handlerContext.mCommandHandler.AddStatus(handlerContext.mRequestPath, FormatStatusResponse(value));
+            break;
+        }
+        case app::Clusters::AccountLogin::Commands::Logout::Id: {
+            handlerContext.mCommandHandler.AddStatus(handlerContext.mRequestPath, FormatStatusResponse(value));
+            break;
+        }
+        default:
+            break;
+        }
+        break;
+    }
     default:
         handlerContext.SetCommandNotHandled();
+    }
+}
+
+LaunchResponseType ContentAppCommandDelegate::FormatContentLauncherResponse(Json::Value value, Status & status)
+{
+    status = chip::Protocols::InteractionModel::Status::Success;
+    LaunchResponseType launchResponse;
+    std::string statusFieldId =
+        std::to_string(to_underlying(app::Clusters::ContentLauncher::Commands::LauncherResponse::Fields::kStatus));
+    if (value[statusFieldId].empty())
+    {
+        status = chip::Protocols::InteractionModel::Status::Failure;
+        return launchResponse;
+    }
+    else
+    {
+        launchResponse.status = static_cast<app::Clusters::ContentLauncher::StatusEnum>(value[statusFieldId].asInt());
+        std::string dataFieldId =
+            std::to_string(to_underlying(app::Clusters::ContentLauncher::Commands::LauncherResponse::Fields::kData));
+        if (!value[dataFieldId].empty())
+        {
+            launchResponse.data = chip::MakeOptional(CharSpan::fromCharString(value[dataFieldId].asCString()));
+        }
+    }
+    return launchResponse;
+}
+
+NavigateTargetResponseType ContentAppCommandDelegate::FormatNavigateTargetResponse(Json::Value value, Status & status)
+{
+    status = chip::Protocols::InteractionModel::Status::Success;
+    NavigateTargetResponseType navigateTargetResponse;
+    std::string statusFieldId =
+        std::to_string(to_underlying(app::Clusters::TargetNavigator::Commands::NavigateTargetResponse::Fields::kStatus));
+    if (value[statusFieldId].empty())
+    {
+        status = chip::Protocols::InteractionModel::Status::Failure;
+        return navigateTargetResponse;
+    }
+    else
+    {
+        navigateTargetResponse.status = static_cast<app::Clusters::TargetNavigator::StatusEnum>(value[statusFieldId].asInt());
+        std::string dataFieldId =
+            std::to_string(to_underlying(app::Clusters::TargetNavigator::Commands::NavigateTargetResponse::Fields::kData));
+        if (!value[dataFieldId].empty())
+        {
+            navigateTargetResponse.data = chip::MakeOptional(CharSpan::fromCharString(value[dataFieldId].asCString()));
+        }
+    }
+    return navigateTargetResponse;
+}
+
+PlaybackResponseType ContentAppCommandDelegate::FormatMediaPlaybackResponse(Json::Value value, Status & status)
+{
+    status = chip::Protocols::InteractionModel::Status::Success;
+    PlaybackResponseType playbackResponse;
+    std::string statusFieldId =
+        std::to_string(to_underlying(app::Clusters::MediaPlayback::Commands::PlaybackResponse::Fields::kStatus));
+    if (value[statusFieldId].empty())
+    {
+        status = chip::Protocols::InteractionModel::Status::Failure;
+        return playbackResponse;
+    }
+    else
+    {
+        playbackResponse.status = static_cast<app::Clusters::MediaPlayback::StatusEnum>(value[statusFieldId].asInt());
+        std::string dataFieldId =
+            std::to_string(to_underlying(app::Clusters::MediaPlayback::Commands::PlaybackResponse::Fields::kData));
+        if (!value[dataFieldId].empty())
+        {
+            playbackResponse.data = chip::MakeOptional(CharSpan::fromCharString(value[dataFieldId].asCString()));
+        }
+    }
+    return playbackResponse;
+}
+
+GetSetupPINResponseType ContentAppCommandDelegate::FormatGetSetupPINResponse(Json::Value value, Status & status)
+{
+    status = chip::Protocols::InteractionModel::Status::Success;
+    GetSetupPINResponseType getSetupPINresponse;
+    std::string setupPINFieldId =
+        std::to_string(to_underlying(app::Clusters::AccountLogin::Commands::GetSetupPINResponse::Fields::kSetupPIN));
+    if (!value[setupPINFieldId].empty())
+    {
+        getSetupPINresponse.setupPIN = CharSpan::fromCharString(value[setupPINFieldId].asCString());
+    }
+    else
+    {
+        status = chip::Protocols::InteractionModel::Status::Failure;
+    }
+    return getSetupPINresponse;
+}
+
+Status ContentAppCommandDelegate::FormatStatusResponse(Json::Value value)
+{
+    // check if JSON has "Status" key
+    if (!value[RESPONSE_STATUS_KEY].empty() && !value[RESPONSE_STATUS_KEY].isUInt())
+    {
+        return static_cast<Protocols::InteractionModel::Status>(value.asUInt());
+    }
+    else
+    {
+        return chip::Protocols::InteractionModel::Status::Failure;
     }
 }
 

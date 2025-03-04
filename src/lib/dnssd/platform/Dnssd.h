@@ -26,15 +26,17 @@
 #pragma once
 
 #include <algorithm>
+#include <optional>
 #include <stdint.h>
 
 #include <inet/IPAddress.h>
 #include <inet/InetInterface.h>
 #include <lib/core/CHIPError.h>
-#include <lib/core/Optional.h>
 #include <lib/dnssd/Constants.h>
 #include <lib/dnssd/ServiceNaming.h>
 #include <system/TimeSource.h>
+
+#include "DnssdBrowseDelegate.h"
 
 namespace chip {
 namespace Dnssd {
@@ -75,9 +77,12 @@ struct DnssdService
     size_t mTextEntrySize;
     const char ** mSubTypes;
     size_t mSubTypeSize;
-    Optional<chip::Inet::IPAddress> mAddress;
+    std::optional<chip::Inet::IPAddress> mAddress;
     // Time to live in seconds. Per rfc6762 section 10, because we have a hostname, our default TTL is 120 seconds
     uint32_t mTtlSeconds = 120;
+
+    void ToDiscoveredCommissionNodeData(const Span<Inet::IPAddress> & addresses, DiscoveredNodeData & nodeData);
+    void ToDiscoveredOperationalNodeBrowseData(DiscoveredNodeData & nodeData);
 };
 
 /**
@@ -203,6 +208,11 @@ CHIP_ERROR ChipDnssdFinalizeServiceUpdate();
  * @param[in] interface   The interface to send queries.
  * @param[in] callback    The callback for found services.
  * @param[in] context     The user context.
+ * @param[out] browseIdentifier an identifier for this browse operation. This
+ *                              can be used to call ChipDnssdStopBrowse.  Only
+ *                              set on success.  This value remains valid until
+ *                              the browse callback is called with an error or
+ *                              is called with finalBrowse set to true.
  *
  * @retval CHIP_NO_ERROR                The browse succeeds.
  * @retval CHIP_ERROR_INVALID_ARGUMENT  The type or callback is nullptr.
@@ -210,7 +220,45 @@ CHIP_ERROR ChipDnssdFinalizeServiceUpdate();
  *
  */
 CHIP_ERROR ChipDnssdBrowse(const char * type, DnssdServiceProtocol protocol, chip::Inet::IPAddressType addressType,
-                           chip::Inet::InterfaceId interface, DnssdBrowseCallback callback, void * context);
+                           chip::Inet::InterfaceId interface, DnssdBrowseCallback callback, void * context,
+                           intptr_t * browseIdentifier);
+
+/**
+ * Stop an ongoing browse, if supported by this backend.  If successful, this
+ * will trigger a final callback, with either an error status or finalBrowse set
+ * to true, to the DnssdBrowseCallback that was passed to the ChipDnssdBrowse
+ * call that handed back this browseIdentifier.
+ *
+ * @param browseIdentifier an identifier for a browse operation that came from
+ *                         ChipDnssdBrowse.
+ */
+CHIP_ERROR ChipDnssdStopBrowse(intptr_t browseIdentifier);
+
+#if CHIP_DEVICE_LAYER_TARGET_DARWIN
+/**
+ * This function continuously browses the services published by mDNS
+ * and reports any addition/removal of services.
+ *
+ * @param[in] type        The service type.
+ * @param[in] protocol    The service protocol.
+ * @param[in] addressType The protocol version of the IP address.
+ * @param[in] interface   The interface to send queries.
+ * @param[in] delegate    The delegate to notify when a service is found/removed.
+ *
+ * @retval CHIP_NO_ERROR                The browse succeeds.
+ * @retval CHIP_ERROR_INVALID_ARGUMENT  The type or the delegate is nullptr.
+ * @retval Error code                   The browse fails.
+ *
+ */
+CHIP_ERROR ChipDnssdBrowse(const char * type, DnssdServiceProtocol protocol, chip::Inet::IPAddressType addressType,
+                           chip::Inet::InterfaceId interface, DnssdBrowseDelegate * delegate);
+
+/**
+ * Stop an ongoing browse, if supported by this backend.  If successful, this
+ * will call the OnBrowseStop method of the delegate.
+ */
+CHIP_ERROR ChipDnssdStopBrowse(DnssdBrowseDelegate * delegate);
+#endif // CHIP_DEVICE_LAYER_TARGET_DARWIN
 
 /**
  * This function resolves the services published by mDNS
@@ -227,6 +275,39 @@ CHIP_ERROR ChipDnssdBrowse(const char * type, DnssdServiceProtocol protocol, chi
  */
 CHIP_ERROR ChipDnssdResolve(DnssdService * browseResult, chip::Inet::InterfaceId interface, DnssdResolveCallback callback,
                             void * context);
+
+#if CHIP_DEVICE_LAYER_TARGET_DARWIN
+/**
+ * This function resolves the services published by mDNS
+ *
+ * @param[in] browseResult  The service entry returned by @ref ChipDnssdBrowse
+ * @param[in] interface     The interface to send queries.
+ * @param[in] delegate      The delegate to notify when a service is resolved.
+ *
+ * @retval CHIP_NO_ERROR                The resolve succeeds.
+ * @retval CHIP_ERROR_INVALID_ARGUMENT  The name, type or delegate is nullptr.
+ * @retval Error code                   The resolve fails.
+ *
+ */
+CHIP_ERROR ChipDnssdResolve(DnssdService * browseResult, chip::Inet::InterfaceId interface, DiscoverNodeDelegate * delegate);
+#endif // CHIP_DEVICE_LAYER_TARGET_DARWIN
+
+/**
+ * This function notifies the implementation that a resolve result is no longer
+ * needed by some consumer, to allow implementations to stop unnecessary resolve
+ * work.
+ */
+void ChipDnssdResolveNoLongerNeeded(const char * instanceName);
+
+/**
+ * This function asks the mdns daemon to asynchronously reconfirm an address that appears to be out of date.
+ *
+ * @param[in] hostname      The hostname the address belongs to.
+ * @param[in] address       The address to reconfirm.
+ * @param[in] interface     The interfaceId of the address.
+ *
+ */
+CHIP_ERROR ChipDnssdReconfirmRecord(const char * hostname, chip::Inet::IPAddress address, chip::Inet::InterfaceId interface);
 
 } // namespace Dnssd
 } // namespace chip

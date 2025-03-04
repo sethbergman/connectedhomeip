@@ -18,18 +18,18 @@
 # Needed to use types in type hints before they are fully defined.
 from __future__ import annotations
 
+import base64
+import copy
 import ctypes
-from dataclasses import dataclass, field
-from typing import *
-from ctypes import *
-from rich.pretty import pprint
 import json
 import logging
-import base64
+from ctypes import CFUNCTYPE, POINTER, c_bool, c_char, c_char_p, c_uint16, c_void_p, py_object
+from typing import IO, Dict, Optional
+
 import chip.exceptions
-import copy
 import chip.native
-import builtins
+
+LOGGER = logging.getLogger(__name__)
 
 _SyncSetKeyValueCbFunct = CFUNCTYPE(
     None, py_object, c_char_p, POINTER(c_char),  c_uint16)
@@ -39,12 +39,12 @@ _SyncDeleteKeyValueCbFunct = CFUNCTYPE(None, py_object, c_char_p)
 
 
 @_SyncSetKeyValueCbFunct
-def _OnSyncSetKeyValueCb(storageObj, key: str, value, size):
+def _OnSyncSetKeyValueCb(storageObj, key: bytes, value, size):
     storageObj.SetSdkKey(key.decode("utf-8"), ctypes.string_at(value, size))
 
 
 @_SyncGetKeyValueCbFunct
-def _OnSyncGetKeyValueCb(storageObj, key: str, value, size, is_found):
+def _OnSyncGetKeyValueCb(storageObj, key: bytes, value, size, is_found):
     ''' This does not adhere to the API requirements of
     PersistentStorageDelegate::SyncGetKeyValue, but that is okay since
     the C++ storage binding layer is capable of adapting results from
@@ -90,12 +90,11 @@ class PersistentStorage:
 
         This interfaces with a C++ adapter that implements the PersistentStorageDelegate interface
         and can be passed into C++ logic that needs an instance of that interface.
-    '''
-    @classmethod
-    def logger(cls):
-        return logging.getLogger('PersistentStorage')
 
-    def __init__(self, path: str = None, jsonData: Dict = None):
+        Object must be resident before the Matter stack starts up and last past its shutdown.
+    '''
+
+    def __init__(self, path: Optional[str] = None, jsonData: Optional[Dict] = None):
         ''' Initializes the object with either a path to a JSON file that contains the configuration OR
             a JSON dictionary that contains an in-memory representation of the configuration.
 
@@ -109,9 +108,9 @@ class PersistentStorage:
             raise ValueError("Can't provide both a valid path and jsonData")
 
         if (path is not None):
-            self.logger().warn(f"Initializing persistent storage from file: {path}")
+            LOGGER.info(f"Initializing persistent storage from file: {path}")
         else:
-            self.logger().warn(f"Initializing persistent storage from dict")
+            LOGGER.info("Initializing persistent storage from dict")
 
         self._handle = chip.native.GetLibraryHandle()
         self._isActive = True
@@ -119,30 +118,30 @@ class PersistentStorage:
 
         if (self._path):
             try:
-                self._file = open(path, 'r')
+                self._file: Optional[IO[str]] = open(path, 'r')
                 self._file.seek(0, 2)
                 size = self._file.tell()
                 self._file.seek(0)
 
                 if (size != 0):
-                    self.logger().warn(f"Loading configuration from {path}...")
+                    LOGGER.info(f"Loading configuration from {path}...")
                     self._jsonData = json.load(self._file)
                 else:
                     self._jsonData = {}
 
             except Exception as ex:
-                logging.error(ex)
-                logging.critical(f"Could not load configuration from {path} - resetting configuration...")
+                LOGGER.error(ex)
+                LOGGER.critical(f"Could not load configuration from {path} - resetting configuration...")
                 self._jsonData = {}
         else:
             self._jsonData = jsonData
 
         if ('sdk-config' not in self._jsonData):
-            logging.warn(f"No valid SDK configuration present - clearing out configuration")
+            LOGGER.warn("No valid SDK configuration present - clearing out configuration")
             self._jsonData['sdk-config'] = {}
 
         if ('repl-config' not in self._jsonData):
-            logging.warn(f"No valid REPL configuration present - clearing out configuration")
+            LOGGER.warn("No valid REPL configuration present - clearing out configuration")
             self._jsonData['repl-config'] = {}
 
         # Clear out the file so that calling 'Commit' will re-open the file at that time in write mode.
@@ -150,7 +149,9 @@ class PersistentStorage:
 
         self._handle.pychip_Storage_InitializeStorageAdapter.restype = c_void_p
         self._handle.pychip_Storage_InitializeStorageAdapter.argtypes = [ctypes.py_object,
-                                                                         _SyncSetKeyValueCbFunct, _SyncGetKeyValueCbFunct, _SyncDeleteKeyValueCbFunct]
+                                                                         _SyncSetKeyValueCbFunct,
+                                                                         _SyncGetKeyValueCbFunct,
+                                                                         _SyncDeleteKeyValueCbFunct]
 
         self._closure = self._handle.pychip_Storage_InitializeStorageAdapter(ctypes.py_object(
             self), _OnSyncSetKeyValueCb, _OnSyncGetKeyValueCb, _OnSyncDeleteKeyValueCb)
@@ -164,7 +165,6 @@ class PersistentStorage:
         ''' Commits the cached JSON configuration to file (if one was provided in the constructor).
             Otherwise, this is a no-op.
         '''
-        self.logger().info("Committing...")
 
         if (self._path is None):
             return
@@ -173,9 +173,8 @@ class PersistentStorage:
             try:
                 self._file = open(self._path, 'w')
             except Exception as ex:
-                logging.warn(
-                    f"Could not open {self._path} for writing configuration. Error:")
-                logging.warn(ex)
+                LOGGER.error(
+                    f"Could not open {self._path} for writing configuration. Error: {ex}")
                 return
 
         self._file.seek(0)
@@ -186,13 +185,13 @@ class PersistentStorage:
     def SetReplKey(self, key: str, value):
         ''' Set a REPL key to a specific value. Creates the key if one doesn't exist already.
         '''
-        self.logger().info(f"SetReplKey: {key} = {value}")
+        LOGGER.debug(f"SetReplKey: {key} = {value}")
 
         if (key is None or key == ''):
             raise ValueError("Invalid Key")
 
         if (value is None):
-            del(self._jsonData['repl-config'][key])
+            del (self._jsonData['repl-config'][key])
         else:
             self._jsonData['repl-config'][key] = value
 
@@ -210,7 +209,7 @@ class PersistentStorage:
     def SetSdkKey(self, key: str, value: bytes):
         ''' Set an SDK key to a specific value. Creates the key if one doesn't exist already.
         '''
-        self.logger().info(f"SetSdkKey: {key} = {value}")
+        LOGGER.debug(f"SetSdkKey: {key} = {value}")
 
         if (key is None or key == ''):
             raise ValueError("Invalid Key")
@@ -234,22 +233,28 @@ class PersistentStorage:
     def DeleteSdkKey(self, key: str):
         ''' Deletes an SDK key if one exists.
         '''
-        self.logger().info(f"DeleteSdkKey: {key}")
+        LOGGER.debug(f"DeleteSdkKey: {key}")
 
-        del(self._jsonData['sdk-config'][key])
+        del (self._jsonData['sdk-config'][key])
         self.Commit()
 
     def Shutdown(self):
         ''' Shuts down the object by free'ing up the associated adapter instance.
-
             You cannot interact with this object there-after.
-        '''
-        self._handle.pychip_Storage_ShutdownAdapter.argtypes = [c_void_p]
-        builtins.chipStack.Call(
-            lambda: self._handle.pychip_Storage_ShutdownAdapter(self._closure)
-        )
 
-        self._isActive = False
+            This should only be called after the CHIP stack has shutdown (i.e
+            after calling pychip_DeviceController_StackShutdown()).
+        '''
+        if (self._isActive):
+            self._handle.pychip_Storage_ShutdownAdapter.argtypes = [c_void_p]
+
+            #
+            # Since the stack is not running at this point, we can safely call
+            # C++ method directly on the current execution context without worrying
+            # about race conditions.
+            #
+            self._handle.pychip_Storage_ShutdownAdapter(self._closure)
+            self._isActive = False
 
     @property
     def jsonData(self) -> Dict:
@@ -258,7 +263,4 @@ class PersistentStorage:
         return copy.deepcopy(self._jsonData)
 
     def __del__(self):
-        if (self._isActive):
-            builtins.chipStack.Call(
-                lambda: self._handle.pychip_Storage_ShutdownAdapter()
-            )
+        self.Shutdown()

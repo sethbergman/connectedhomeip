@@ -16,15 +16,15 @@ import("//build_overrides/build.gni")
 import("//build_overrides/chip.gni")
 
 import("${build_root}/config/compiler/compiler.gni")
+import("${chip_root}/build/chip/java/config.gni")
 import("${chip_root}/build/chip/tests.gni")
 import("${chip_root}/src/ble/ble.gni")
-import("${chip_root}/src/lwip/lwip.gni")
 import("${chip_root}/src/platform/device.gni")
+import("${chip_root}/src/tracing/tracing_args.gni")
 
-declare_args() {
-  # Build monolithic test library.
-  chip_monolithic_tests = false
-}
+# chip_root relative to root_build_dir for macro-prefix-map.
+# "/." avoids trailing "/" in result when chip_root is "//"
+build_relative_chip_root = rebase_path("${chip_root}/.", root_build_dir)
 
 config("includes") {
   include_dirs = [
@@ -33,31 +33,49 @@ config("includes") {
     "${root_gen_dir}/include",
   ]
 
-  # TODO: generated file dependency should be a lib NOT an include
-  include_dirs += [ "${chip_root}/zzz_generated/app-common" ]
+  if (chip_device_platform == "external" &&
+      chip_external_platform_include_dir != "") {
+    include_dirs += [ "${chip_external_platform_include_dir}" ]
+  }
 
   defines = [ "CHIP_HAVE_CONFIG_H=1" ]
+
+  # Make __FILE__ and related macros relative to chip_root
+  cflags = [ "-fmacro-prefix-map=${build_relative_chip_root}/=" ]
 }
 
 if (chip_build_tests) {
   import("${chip_root}/build/chip/chip_test_group.gni")
 
   chip_test_group("tests") {
-    deps = [
+    deps = []
+    tests = [
       "${chip_root}/src/access/tests",
+      "${chip_root}/src/app/cluster-building-blocks/tests",
+      "${chip_root}/src/app/data-model-provider/tests",
+      "${chip_root}/src/app/data-model/tests",
+      "${chip_root}/src/app/icd/server/tests",
       "${chip_root}/src/crypto/tests",
       "${chip_root}/src/inet/tests",
+      "${chip_root}/src/lib/address_resolve/tests",
+      "${chip_root}/src/app/server-cluster/tests",
       "${chip_root}/src/lib/asn1/tests",
       "${chip_root}/src/lib/core/tests",
+      "${chip_root}/src/lib/format/tests",
       "${chip_root}/src/messaging/tests",
       "${chip_root}/src/protocols/bdx/tests",
+      "${chip_root}/src/protocols/interaction_model/tests",
+      "${chip_root}/src/protocols/secure_channel/tests",
       "${chip_root}/src/protocols/user_directed_commissioning/tests",
+      "${chip_root}/src/lib/support/verhoeff/tests",
+      "${chip_root}/src/system/tests",
       "${chip_root}/src/transport/retransmit/tests",
+      "${chip_root}/src/transport/tests",
     ]
 
     # Skip DNSSD tests for Mbed platform due to flash memory size limitations
     if (current_os != "mbed") {
-      deps += [
+      tests += [
         "${chip_root}/src/lib/dnssd/minimal_mdns/core/tests",
         "${chip_root}/src/lib/dnssd/minimal_mdns/responders/tests",
         "${chip_root}/src/lib/dnssd/minimal_mdns/tests",
@@ -66,74 +84,107 @@ if (chip_build_tests) {
     }
 
     if (current_os != "zephyr" && current_os != "mbed") {
-      deps += [ "${chip_root}/src/lib/dnssd/minimal_mdns/records/tests" ]
+      tests += [ "${chip_root}/src/lib/dnssd/minimal_mdns/records/tests" ]
     }
 
-    if (current_os != "zephyr" && current_os != "mbed" &&
-        chip_device_platform != "efr32") {
-      deps += [
+    if (current_os != "zephyr" && current_os != "mbed") {
+      # Avoid these items from "one single binary" test executions. Once tests
+      # are split, we can re-visit this (and likely many others).
+      #
+      # In particular: "data-model-providers/codegen/tests" contains
+      # symbols for ember mocks which are used by other tests.
+
+      tests += [
         "${chip_root}/src/setup_payload/tests",
         "${chip_root}/src/transport/raw/tests",
       ]
     }
 
+    if (current_os != "zephyr" && current_os != "mbed" &&
+        chip_device_platform != "efr32") {
+      # Disabled from "one single binary" since the "mocks" contain duplicate sybmols
+      # with ember
+      # Disabled on EFR32 since "include <random>" fails with `::fabs` not defined
+      tests += [ "${chip_root}/src/data-model-providers/codegen/tests" ]
+    }
+
     if (chip_device_platform != "efr32") {
-      deps += [
-        # TODO(#10447): App test has HF on EFR32.
+      tests += [
         "${chip_root}/src/app/tests",
+
+        # Disabled for EFR32 because _open is not implemented.
+        # https://github.com/project-chip/connectedhomeip/issues/35624
         "${chip_root}/src/credentials/tests",
         "${chip_root}/src/lib/support/tests",
-        "${chip_root}/src/protocols/secure_channel/tests",
-        "${chip_root}/src/system/tests",
-        "${chip_root}/src/transport/tests",
       ]
     }
 
-    if (chip_device_platform != "none") {
-      deps += [ "${chip_root}/src/lib/dnssd/minimal_mdns/tests" ]
+    if (matter_enable_tracing_support &&
+        matter_trace_config == "${chip_root}/src/tracing/multiplexed") {
+      tests += [ "${chip_root}/src/tracing/tests" ]
     }
 
-    if (chip_device_platform != "esp32" && chip_device_platform != "efr32" &&
-        chip_device_platform != "ameba") {
-      deps += [ "${chip_root}/src/platform/tests" ]
+    if (chip_device_platform != "none") {
+      tests += [ "${chip_root}/src/lib/dnssd/minimal_mdns/tests" ]
+    }
+
+    if (chip_device_platform != "ameba") {
+      tests += [ "${chip_root}/src/platform/tests" ]
     }
 
     if (chip_config_network_layer_ble) {
-      deps += [ "${chip_root}/src/ble/tests" ]
+      tests += [ "${chip_root}/src/ble/tests" ]
     }
 
     # On nrfconnect, the controller tests run into
     # https://github.com/project-chip/connectedhomeip/issues/9630
-    if (chip_device_platform != "nrfconnect" &&
-        chip_device_platform != "efr32") {
-      # TODO(#10447): Controller test has HF on EFR32.
-      deps += [
-        "${chip_root}/src/controller/tests",
-        "${chip_root}/src/controller/tests/data_model",
-      ]
+    if (chip_device_platform != "nrfconnect") {
+      tests += [ "${chip_root}/src/controller/tests/data_model" ]
+
+      # Skip controller test for Open IoT SDK
+      # https://github.com/project-chip/connectedhomeip/issues/23747
+      if (chip_device_platform != "openiotsdk") {
+        tests += [ "${chip_root}/src/controller/tests" ]
+      }
     }
 
     if (current_os != "zephyr" && current_os != "mbed" &&
         chip_device_platform != "esp32" && chip_device_platform != "ameba") {
-      deps += [ "${chip_root}/src/lib/shell/tests" ]
+      tests += [ "${chip_root}/src/lib/shell/tests" ]
     }
 
     if (chip_monolithic_tests) {
+      deps += [ "${chip_root}/src/lib/support:pw_tests_wrapper" ]
       build_monolithic_library = true
       output_name = "libCHIP_tests"
       output_dir = "${root_out_dir}/lib"
     }
   }
 
+  chip_test_group("example_tests") {
+    deps = []
+    tests = []
+    if (chip_device_platform != "esp32" && chip_device_platform != "efr32" &&
+        current_os != "android") {
+      tests += [ "${chip_root}/examples/energy-management-app/energy-management-common/tests" ]
+    }
+  }
+
   chip_test_group("fake_platform_tests") {
-    deps = [ "${chip_root}/src/lib/dnssd/platform/tests" ]
+    tests = [ "${chip_root}/src/lib/dnssd/platform/tests" ]
   }
 
   # Tests to run with each Crypto PAL
   chip_test_group("crypto_tests") {
-    deps = [
+    tests = [
       "${chip_root}/src/credentials/tests",
       "${chip_root}/src/crypto/tests",
     ]
+  }
+
+  if (matter_enable_java_compilation) {
+    group("java_controller_tests") {
+      deps = [ "${chip_root}/src/controller/java:unit_tests" ]
+    }
   }
 }

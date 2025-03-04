@@ -27,9 +27,9 @@
 #include "CHIPDeviceManager.h"
 #include <app/ConcreteAttributePath.h>
 #include <app/util/basic-types.h>
+#include <lib/core/ErrorStr.h>
 #include <lib/support/CHIPMem.h>
 #include <lib/support/CodeUtils.h>
-#include <lib/support/ErrorStr.h>
 #include <setup_payload/SetupPayload.h>
 
 using namespace ::chip;
@@ -60,10 +60,9 @@ CHIP_ERROR CHIPDeviceManager::Init(CHIPDeviceManagerCallbacks * cb)
     err = PlatformMgr().InitChipStack();
     SuccessOrExit(err);
 
-    if (CONFIG_NETWORK_LAYER_BLE)
-    {
-        ConnectivityMgr().SetBLEAdvertisingEnabled(true);
-    }
+#if CONFIG_NETWORK_LAYER_BLE
+    ConnectivityMgr().SetBLEAdvertisingEnabled(true);
+#endif
 
     err = Platform::MemoryInit();
     SuccessOrExit(err);

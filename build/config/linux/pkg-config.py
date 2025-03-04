@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 # Copyright (c) 2013 The Chromium Authors. All rights reserved.
-# Copyright (c) 2020 Project CHIP Authors
+# Copyright (c) 2020-2024 Project CHIP Authors
 #
 # Redistribution and use in source and binary forms, with or without
 # modification, are permitted provided that the following conditions are
@@ -32,9 +32,9 @@ from __future__ import print_function
 
 import json
 import os
+import re
 import subprocess
 import sys
-import re
 from optparse import OptionParser
 
 # This script runs pkg-config, optionally filtering out some results, and
@@ -99,7 +99,7 @@ def GetPkgConfigPrefixToStrip(options, args):
     # from pkg-config's |prefix| variable.
     prefix = subprocess.check_output([options.pkg_config,
                                       "--variable=prefix"] + args, env=os.environ).decode('utf-8')
-    if prefix[-4] == '/usr':
+    if prefix[:4] == '/usr':
         return prefix[4:]
     return prefix
 
@@ -108,7 +108,7 @@ def MatchesAnyRegexp(flag, list_of_regexps):
     """Returns true if the first argument matches any regular expression in the
     given list."""
     for regexp in list_of_regexps:
-        if regexp.search(flag) != None:
+        if regexp.search(flag) is not None:
             return True
     return False
 
@@ -127,6 +127,7 @@ def RewritePath(path, strip_prefix, sysroot):
 def main():
     parser = OptionParser()
     parser.add_option('-d', '--debug', action='store_true')
+    parser.add_option('-o', '--optional', action='store_true')
     parser.add_option('-p', action='store', dest='pkg_config', type='string',
                       default='pkg-config')
     parser.add_option('-v', action='append', dest='strip_out', type='string')
@@ -141,11 +142,13 @@ def main():
                       dest='dridriverdir')
     parser.add_option('--version-as-components', action='store_true',
                       dest='version_as_components')
+    parser.add_option('--static', action='store_true',
+                      dest='static')
     (options, args) = parser.parse_args()
 
     # Make a list of regular expressions to strip out.
     strip_out = []
-    if options.strip_out != None:
+    if options.strip_out is not None:
         for regexp in options.strip_out:
             strip_out.append(re.compile(regexp))
 
@@ -202,13 +205,23 @@ def main():
         sys.stdout.write(dridriverdir.strip())
         return
 
-    cmd = [options.pkg_config, "--cflags", "--libs"] + args
+    cmd = [options.pkg_config, "--cflags", "--libs"]
+
+    if options.static:
+        cmd.append("--static")
+
+    cmd.extend(args)
+
     if options.debug:
         sys.stderr.write('Running: %s\n' % ' '.join(cmd))
 
     try:
         flag_string = subprocess.check_output(cmd).decode('utf-8')
     except Exception:
+        if options.optional:
+            sys.stderr.write('Ignoring failure to run pkg-config for optional library.\n')
+            print(json.dumps([False]))  # Output a GN array indicating missing optional packages
+            return 0
         sys.stderr.write('Could not run pkg-config.\n')
         return 1
 
@@ -248,10 +261,10 @@ def main():
         else:
             cflags.append(flag)
 
-    # Output a GN array, the first one is the cflags, the second are the libs. The
+    # Output a GN array, indicating success and our output lists.
     # JSON formatter prints GN compatible lists when everything is a list of
     # strings.
-    print(json.dumps([includes, cflags, libs, lib_dirs]))
+    print(json.dumps([True, includes, cflags, libs, lib_dirs]))
     return 0
 
 

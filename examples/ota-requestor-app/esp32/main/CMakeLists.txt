@@ -16,75 +16,55 @@
 #
 #
 # (Uses default behaviour of compiling all source files in directory, adding 'include' to include path.)
+get_filename_component(CHIP_ROOT ${CMAKE_SOURCE_DIR}/third_party/connectedhomeip REALPATH)
+get_filename_component(APP_COMMON_GEN_DIR ${CHIP_ROOT}/zzz_generated/app-common/app-common/zap-generated REALPATH)
+
 set(PRIV_INCLUDE_DIRS_LIST
                       "${CMAKE_CURRENT_LIST_DIR}/include"
-                      "${CMAKE_SOURCE_DIR}/third_party/connectedhomeip/src"
-                      "${CMAKE_SOURCE_DIR}/third_party/connectedhomeip/zzz_generated/ota-requestor-app/"
-                      "${CMAKE_SOURCE_DIR}/third_party/connectedhomeip/examples/platform/esp32"
-                      "${CMAKE_SOURCE_DIR}/third_party/connectedhomeip/examples/providers"
+                      "${CHIP_ROOT}/examples/platform/esp32"
+                      "${CHIP_ROOT}/examples/providers"
 )
 
 set(SRC_DIRS_LIST
                       "${CMAKE_CURRENT_LIST_DIR}"
-                      "${CMAKE_SOURCE_DIR}/third_party/connectedhomeip/zzz_generated/ota-requestor-app/zap-generated"
-                      "${CMAKE_SOURCE_DIR}/third_party/connectedhomeip/zzz_generated/app-common/app-common/zap-generated/attributes"
-                      "${CMAKE_SOURCE_DIR}/third_party/connectedhomeip/zzz_generated/app-common/app-common/zap-generated"
-                      "${CMAKE_SOURCE_DIR}/third_party/connectedhomeip/src/app/server"
-                      "${CMAKE_SOURCE_DIR}/third_party/connectedhomeip/src/app/util"
-                      "${CMAKE_SOURCE_DIR}/third_party/connectedhomeip/src/app/reporting"
-                      "${CMAKE_SOURCE_DIR}/third_party/connectedhomeip/src/app/clusters/access-control-server"
-                      "${CMAKE_SOURCE_DIR}/third_party/connectedhomeip/src/app/clusters/administrator-commissioning-server"
-                      "${CMAKE_SOURCE_DIR}/third_party/connectedhomeip/src/app/clusters/basic"
-                      "${CMAKE_SOURCE_DIR}/third_party/connectedhomeip/src/app/clusters/bindings"
-                      "${CMAKE_SOURCE_DIR}/third_party/connectedhomeip/src/app/clusters/descriptor"
-                      "${CMAKE_SOURCE_DIR}/third_party/connectedhomeip/src/app/clusters/diagnostic-logs-server"
-                      "${CMAKE_SOURCE_DIR}/third_party/connectedhomeip/src/app/clusters/ethernet-network-diagnostics-server"
-                      "${CMAKE_SOURCE_DIR}/third_party/connectedhomeip/src/app/clusters/groups-server"
-                      "${CMAKE_SOURCE_DIR}/third_party/connectedhomeip/src/app/clusters/identify-server"
-                      "${CMAKE_SOURCE_DIR}/third_party/connectedhomeip/src/app/clusters/localization-configuration-server"
-                      "${CMAKE_SOURCE_DIR}/third_party/connectedhomeip/src/app/clusters/on-off-server"
-                      "${CMAKE_SOURCE_DIR}/third_party/connectedhomeip/src/app/clusters/time-format-localization-server"
-                      "${CMAKE_SOURCE_DIR}/third_party/connectedhomeip/src/app/clusters/fixed-label-server"
-                      "${CMAKE_SOURCE_DIR}/third_party/connectedhomeip/src/app/clusters/user-label-server"
-                      "${CMAKE_SOURCE_DIR}/third_party/connectedhomeip/src/app/clusters/thread-network-diagnostics-server"
-                      "${CMAKE_SOURCE_DIR}/third_party/connectedhomeip/src/app/clusters/wifi-network-diagnostics-server"
-                      "${CMAKE_SOURCE_DIR}/third_party/connectedhomeip/src/app/clusters/software-diagnostics-server"
-                      "${CMAKE_SOURCE_DIR}/third_party/connectedhomeip/src/app/clusters/switch-server"
-                      "${CMAKE_SOURCE_DIR}/third_party/connectedhomeip/src/app/clusters/general-diagnostics-server"
-                      "${CMAKE_SOURCE_DIR}/third_party/connectedhomeip/src/app/clusters/group-key-mgmt-server"
-                      "${CMAKE_SOURCE_DIR}/third_party/connectedhomeip/src/app/clusters/general-commissioning-server"
-                      "${CMAKE_SOURCE_DIR}/third_party/connectedhomeip/src/app/clusters/network-commissioning"
-                      "${CMAKE_SOURCE_DIR}/third_party/connectedhomeip/src/app/clusters/operational-credentials-server"
-                      "${CMAKE_SOURCE_DIR}/third_party/connectedhomeip/src/app/clusters/ota-requestor"
-                      "${CMAKE_SOURCE_DIR}/third_party/connectedhomeip/examples/platform/esp32/shell_extension"
-		      "${CMAKE_SOURCE_DIR}/third_party/connectedhomeip/examples/platform/esp32/ota"
-                      "${CMAKE_SOURCE_DIR}/third_party/connectedhomeip/examples/platform/esp32/route_hook"
-                      "${CMAKE_SOURCE_DIR}/third_party/connectedhomeip/examples/platform/esp32/common"
-                      "${CMAKE_SOURCE_DIR}/third_party/connectedhomeip/examples/providers"
+                      "${APP_COMMON_GEN_DIR}/attributes"
+                      "${APP_COMMON_GEN_DIR}"
+                      "${CHIP_ROOT}/examples/platform/esp32/shell_extension"
+                      "${CHIP_ROOT}/examples/platform/esp32/ota"
+                      "${CHIP_ROOT}/examples/platform/esp32/common"
+                      "${CHIP_ROOT}/examples/providers"
 )
-
-set(PRIV_REQUIRES_LIST chip QRCode bt console app_update)
 
 if (CONFIG_ENABLE_PW_RPC)
 # Append additional directories for RPC build
 set(PRIV_INCLUDE_DIRS_LIST  "${PRIV_INCLUDE_DIRS_LIST}"
-                     "${CMAKE_SOURCE_DIR}/third_party/connectedhomeip/examples/platform/esp32/pw_sys_io/public"
-                     "${CMAKE_SOURCE_DIR}/third_party/connectedhomeip/examples/common"
-                     "${CMAKE_SOURCE_DIR}/third_party/connectedhomeip/examples/common/pigweed"
-                     "${CMAKE_SOURCE_DIR}/third_party/connectedhomeip/examples/common/pigweed/esp32"
-                     "${CMAKE_SOURCE_DIR}/third_party/connectedhomeip/src/lib/support"
-                     "${IDF_PATH}/components/freertos/include/freertos"
+                     "${CHIP_ROOT}/examples/platform/esp32/pw_sys_io/public"
+                     "${CHIP_ROOT}/examples/common"
+                     "${CHIP_ROOT}/examples/common/pigweed"
+                     "${CHIP_ROOT}/examples/common/pigweed/esp32"
+                     "${CHIP_ROOT}/src/lib/support"
 )
+
+if (${IDF_VERSION_MAJOR} LESS 5)
+    list(APPEND PRIV_INCLUDE_DIRS_LIST "${IDF_PATH}/components/freertos/include/freertos")
+else()
+    list(APPEND PRIV_INCLUDE_DIRS_LIST "${IDF_PATH}/components/freertos/FreeRTOS-Kernel/include/freertos")
+endif()
+
 set(SRC_DIRS_LIST  "${SRC_DIRS_LIST}"
-                     "${CMAKE_SOURCE_DIR}/third_party/connectedhomeip/examples/platform/esp32"
-                     "${CMAKE_SOURCE_DIR}/third_party/connectedhomeip/examples/common/pigweed"
-                     "${CMAKE_SOURCE_DIR}/third_party/connectedhomeip/examples/common/pigweed/esp32"
+                     "${CHIP_ROOT}/examples/platform/esp32"
+                     "${CHIP_ROOT}/examples/common/pigweed"
+                     "${CHIP_ROOT}/examples/common/pigweed/esp32"
 )
 endif (CONFIG_ENABLE_PW_RPC)
 
 idf_component_register(PRIV_INCLUDE_DIRS ${PRIV_INCLUDE_DIRS_LIST}
-                       SRC_DIRS ${SRC_DIRS_LIST}
-                       PRIV_REQUIRES ${PRIV_REQUIRES_LIST})
+                       SRC_DIRS ${SRC_DIRS_LIST})
+
+include(${CHIP_ROOT}/src/app/chip_data_model.cmake)
+chip_configure_data_model(${COMPONENT_LIB}
+    ZAP_FILE ${CHIP_ROOT}/examples/ota-requestor-app/ota-requestor-common/ota-requestor-app.zap
+)
 
 set_property(TARGET ${COMPONENT_LIB} PROPERTY CXX_STANDARD 17)
 target_compile_options(${COMPONENT_LIB} PRIVATE "-DCHIP_HAVE_CONFIG_H")
@@ -94,7 +74,6 @@ target_compile_options(${COMPONENT_LIB} PUBLIC
 
 if (CONFIG_ENABLE_PW_RPC)
 
-get_filename_component(CHIP_ROOT ${CMAKE_SOURCE_DIR}/third_party/connectedhomeip REALPATH)
 
 set(PIGWEED_ROOT "${CHIP_ROOT}/third_party/pigweed/repo")
 include(${PIGWEED_ROOT}/pw_build/pigweed.cmake)
@@ -172,6 +151,8 @@ target_link_libraries(${COMPONENT_LIB} PUBLIC
   pw_hdlc
   pw_log
   pw_rpc.server
+  pw_sys_io
+  pw_trace
   pw_trace_tokenized
   pw_trace_tokenized.trace_buffer
   pw_trace_tokenized.rpc_service
@@ -181,6 +162,7 @@ target_link_libraries(${COMPONENT_LIB} PUBLIC
 target_link_options(${COMPONENT_LIB}
   PUBLIC
     "-T${PIGWEED_ROOT}/pw_tokenizer/pw_tokenizer_linker_sections.ld"
+    "-L${PIGWEED_ROOT}/pw_tokenizer"
 )
 
 target_compile_options(${COMPONENT_LIB} PRIVATE

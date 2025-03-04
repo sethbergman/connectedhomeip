@@ -16,24 +16,42 @@
  */
 
 #include <lib/support/CodeUtils.h>
-#include <lib/support/UnitTestRegistration.h>
+#include <lib/support/UnitTest.h>
 #include <platform/CHIPDeviceLayer.h>
+#include <pw_unit_test/framework.h>
 
-#include <logging/log.h>
-#include <settings/settings.h>
+#include <unistd.h>
+#include <vector>
+
+#include <nsi_cmdline.h>
+#include <zephyr/logging/log.h>
+#include <zephyr/settings/settings.h>
 
 using namespace ::chip;
 using namespace ::chip::DeviceLayer;
 
 LOG_MODULE_REGISTER(runner, CONFIG_MATTER_LOG_LEVEL);
 
-void main(void)
+int main(void)
 {
     VerifyOrDie(settings_subsys_init() == 0);
 
+    int argc;
+    char ** argv;
+    nsi_get_test_cmd_line_args(&argc, &argv);
+
+    std::vector<std::string_view> suites_to_run;
+    for (int i = 0; i < argc; ++i)
+    {
+        suites_to_run.push_back(argv[i]);
+    }
+
+    pw::unit_test::SetTestSuitesToRun(suites_to_run);
+
     LOG_INF("Starting CHIP tests!");
-    int status = RunRegisteredUnitTests();
+    int status = 0;
+    status += chip::test::RunAllTests();
     LOG_INF("CHIP test status: %d", status);
 
-    exit(status);
+    _exit(status);
 }

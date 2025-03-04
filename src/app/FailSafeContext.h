@@ -56,6 +56,7 @@ public:
     void SetUpdateNocCommandInvoked() { mUpdateNocCommandHasBeenInvoked = true; }
     void SetAddTrustedRootCertInvoked() { mAddTrustedRootCertHasBeenInvoked = true; }
     void SetCsrRequestForUpdateNoc(bool isForUpdateNoc) { mIsCsrRequestForUpdateNoc = isForUpdateNoc; }
+    void SetUpdateTermsAndConditionsHasBeenInvoked() { mUpdateTermsAndConditionsHasBeenInvoked = true; }
 
     /**
      * @brief
@@ -66,7 +67,7 @@ public:
 
     bool IsFailSafeArmed(FabricIndex accessingFabricIndex) const
     {
-        return mFailSafeArmed && MatchesFabricIndex(accessingFabricIndex);
+        return IsFailSafeArmed() && MatchesFabricIndex(accessingFabricIndex);
     }
 
     // Returns true if the fail-safe is in a state where commands that require an armed
@@ -82,7 +83,7 @@ public:
 
     bool MatchesFabricIndex(FabricIndex accessingFabricIndex) const
     {
-        VerifyOrDie(mFailSafeArmed);
+        VerifyOrDie(IsFailSafeArmed());
         return (accessingFabricIndex == mFabricIndex);
     }
 
@@ -91,10 +92,11 @@ public:
     bool UpdateNocCommandHasBeenInvoked() const { return mUpdateNocCommandHasBeenInvoked; }
     bool AddTrustedRootCertHasBeenInvoked() const { return mAddTrustedRootCertHasBeenInvoked; }
     bool IsCsrRequestForUpdateNoc() const { return mIsCsrRequestForUpdateNoc; }
+    bool UpdateTermsAndConditionsHasBeenInvoked() { return mUpdateTermsAndConditionsHasBeenInvoked; }
 
     FabricIndex GetFabricIndex() const
     {
-        VerifyOrDie(mFailSafeArmed);
+        VerifyOrDie(IsFailSafeArmed());
         return mFabricIndex;
     }
 
@@ -109,8 +111,9 @@ private:
     bool mUpdateNocCommandHasBeenInvoked   = false;
     bool mAddTrustedRootCertHasBeenInvoked = false;
     // The fact of whether a CSR occurred at all is stored elsewhere.
-    bool mIsCsrRequestForUpdateNoc = false;
-    FabricIndex mFabricIndex       = kUndefinedFabricIndex;
+    bool mIsCsrRequestForUpdateNoc               = false;
+    FabricIndex mFabricIndex                     = kUndefinedFabricIndex;
+    bool mUpdateTermsAndConditionsHasBeenInvoked = false;
 
     /**
      * @brief
@@ -131,21 +134,24 @@ private:
      */
     static void HandleDisarmFailSafe(intptr_t arg);
 
+    void SetFailSafeArmed(bool armed);
+
     /**
      * @brief Reset to unarmed basic state
      */
     void ResetState()
     {
-        mFailSafeArmed                    = false;
-        mAddNocCommandHasBeenInvoked      = false;
-        mUpdateNocCommandHasBeenInvoked   = false;
-        mAddTrustedRootCertHasBeenInvoked = false;
-        mFailSafeBusy                     = false;
-        mIsCsrRequestForUpdateNoc         = false;
+        SetFailSafeArmed(false);
+
+        mAddNocCommandHasBeenInvoked            = false;
+        mUpdateNocCommandHasBeenInvoked         = false;
+        mAddTrustedRootCertHasBeenInvoked       = false;
+        mFailSafeBusy                           = false;
+        mIsCsrRequestForUpdateNoc               = false;
+        mUpdateTermsAndConditionsHasBeenInvoked = false;
     }
 
     void FailSafeTimerExpired();
-    CHIP_ERROR CommitToStorage();
 };
 
 } // namespace app

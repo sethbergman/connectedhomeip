@@ -34,6 +34,7 @@
 #include <credentials/GroupDataProvider.h>
 #include <credentials/OperationalCertificateStore.h>
 #include <credentials/attestation_verifier/DeviceAttestationVerifier.h>
+#include <protocols/secure_channel/SessionResumptionStorage.h>
 
 namespace chip {
 
@@ -90,26 +91,62 @@ struct SetupParams
     //
     bool enableServerInteractions = false;
 
+    /**
+     * Controls whether shutdown of the controller removes the corresponding
+     * entry from the in-memory fabric table, but NOT from storage.
+     *
+     * Note that this means that after controller shutdown the storage and
+     * in-memory versions of the fabric table will be out of sync.
+     * For compatibility reasons this is the default behavior.
+     *
+     * @see deleteFromFabricTableOnShutdown
+     */
+    bool removeFromFabricTableOnShutdown = true;
+
+    /**
+     * Controls whether shutdown of the controller deletes the corresponding
+     * entry from the fabric table (both in-memory and storage).
+     *
+     * If both `removeFromFabricTableOnShutdown` and this setting are true,
+     * this setting will take precedence.
+     *
+     * @see removeFromFabricTableOnShutdown
+     */
+    bool deleteFromFabricTableOnShutdown = false;
+
+    /**
+     * Specifies whether to utilize the fabric table entry for the given FabricIndex
+     * for initialization. If provided and neither the operational key pair nor the NOC
+     * chain are provided, then attempt to locate a fabric corresponding to the given FabricIndex.
+     */
+    chip::Optional<FabricIndex> fabricIndex;
+
     Credentials::DeviceAttestationVerifier * deviceAttestationVerifier = nullptr;
     CommissioningDelegate * defaultCommissioner                        = nullptr;
 };
 
-// TODO everything other than the fabric storage, group data provider, OperationalKeystore
-// and OperationalCertificateStore here should be removed. We're blocked because of the
-// need to support !CHIP_DEVICE_LAYER
+// TODO everything other than the fabric storage, group data provider, OperationalKeystore,
+// OperationalCertificateStore, SessionKeystore, and SessionResumptionStorage here should
+// be removed. We're blocked because of the need to support !CHIP_DEVICE_LAYER
 struct FactoryInitParams
 {
     System::Layer * systemLayer                                        = nullptr;
     PersistentStorageDelegate * fabricIndependentStorage               = nullptr;
     Credentials::CertificateValidityPolicy * certificateValidityPolicy = nullptr;
     Credentials::GroupDataProvider * groupDataProvider                 = nullptr;
+    app::reporting::ReportScheduler::TimerDelegate * timerDelegate     = nullptr;
+    Crypto::SessionKeystore * sessionKeystore                          = nullptr;
     Inet::EndPointManager<Inet::TCPEndPoint> * tcpEndPointManager      = nullptr;
     Inet::EndPointManager<Inet::UDPEndPoint> * udpEndPointManager      = nullptr;
     FabricTable * fabricTable                                          = nullptr;
-    OperationalKeystore * operationalKeystore                          = nullptr;
+    Crypto::OperationalKeystore * operationalKeystore                  = nullptr;
     Credentials::OperationalCertificateStore * opCertStore             = nullptr;
+    SessionResumptionStorage * sessionResumptionStorage                = nullptr;
 #if CONFIG_NETWORK_LAYER_BLE
     Ble::BleLayer * bleLayer = nullptr;
+#endif
+#if CHIP_DEVICE_CONFIG_ENABLE_WIFIPAF
+    Transport::WiFiPAFLayer * wifipaf_layer = nullptr;
 #endif
 
     //
@@ -123,6 +160,11 @@ struct FactoryInitParams
     /* The port used for operational communication to listen for and send messages over UDP/TCP.
      * The default value of `0` will pick any available port. */
     uint16_t listenPort = 0;
+
+    // MUST NOT be null during initialization: every application must define the
+    // data model it wants to use. Backwards-compatibility can use `CodegenDataModelProviderInstance`
+    // for ember/zap-generated models.
+    chip::app::DataModel::Provider * dataModelProvider = nullptr;
 };
 
 class DeviceControllerFactory
@@ -138,7 +180,9 @@ public:
 
     // Shuts down matter and frees the system state.
     //
-    // Must not be called while any controllers are alive.
+    // Must not be called while any controllers are alive, or while any calls
+    // to RetainSystemState or EnsureAndRetainSystemState have not been balanced
+    // by a call to ReleaseSystemState.
     void Shutdown();
 
     CHIP_ERROR SetupController(SetupParams params, DeviceController & controller);
@@ -154,15 +198,16 @@ public:
 
     ~DeviceControllerFactory();
     DeviceControllerFactory(DeviceControllerFactory const &) = delete;
-    void operator=(DeviceControllerFactory const &) = delete;
+    void operator=(DeviceControllerFactory const &)          = delete;
 
     //
     // Some clients do not prefer a complete shutdown of the stack being initiated if
     // all device controllers have ceased to exist. To avoid that, this method has been
     // created to permit retention of the underlying system state.
     //
-    // NB: The system state will still be freed in Shutdown() regardless of this call.
-    void RetainSystemState() { (void) mSystemState->Retain(); }
+    // Calls to this method must be balanced by calling ReleaseSystemState before Shutdown.
+    //
+    void RetainSystemState();
 
     //
     // To initiate shutdown of the stack upon termination of all resident controllers in the
@@ -171,7 +216,13 @@ public:
     //
     // This should only be invoked if a matching call to RetainSystemState() was called prior.
     //
-    void ReleaseSystemState() { mSystemState->Release(); }
+    // Returns true if stack was shut down in response to this call, or false otherwise.
+    //
+    bool ReleaseSystemState();
+
+    // Like RetainSystemState(), but will re-initialize the system state first if necessary.
+    // Calls to this method must be balanced by calling ReleaseSystemState before Shutdown.
+    CHIP_ERROR EnsureAndRetainSystemState();
 
     //
     // Retrieve a read-only pointer to the system state object that contains pointers to key stack
@@ -236,14 +287,17 @@ private:
     DeviceControllerFactory() {}
     void PopulateInitParams(ControllerInitParams & controllerParams, const SetupParams & params);
     CHIP_ERROR InitSystemState(FactoryInitParams params);
-    CHIP_ERROR InitSystemState();
+    CHIP_ERROR ReinitSystemStateIfNecessary();
+    void ControllerInitialized(const DeviceController & controller);
 
     uint16_t mListenPort;
-    DeviceControllerSystemState * mSystemState              = nullptr;
-    PersistentStorageDelegate * mFabricIndependentStorage   = nullptr;
-    Crypto::OperationalKeystore * mOperationalKeystore      = nullptr;
-    Credentials::OperationalCertificateStore * mOpCertStore = nullptr;
-    bool mEnableServerInteractions                          = false;
+    DeviceControllerSystemState * mSystemState                          = nullptr;
+    PersistentStorageDelegate * mFabricIndependentStorage               = nullptr;
+    Crypto::OperationalKeystore * mOperationalKeystore                  = nullptr;
+    Credentials::OperationalCertificateStore * mOpCertStore             = nullptr;
+    Credentials::CertificateValidityPolicy * mCertificateValidityPolicy = nullptr;
+    SessionResumptionStorage * mSessionResumptionStorage                = nullptr;
+    bool mEnableServerInteractions                                      = false;
 };
 
 } // namespace Controller

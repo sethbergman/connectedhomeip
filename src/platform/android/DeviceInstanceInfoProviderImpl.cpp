@@ -32,7 +32,8 @@ CHIP_ERROR DeviceInstanceInfoProviderImpl::GetHardwareVersionString(char * buf, 
                                                       hardwareVersionLen);
     if (err == CHIP_DEVICE_ERROR_CONFIG_NOT_FOUND)
     {
-        ReturnErrorCodeIf(bufSize < sizeof(CHIP_DEVICE_CONFIG_DEFAULT_DEVICE_HARDWARE_VERSION_STRING), CHIP_ERROR_BUFFER_TOO_SMALL);
+        VerifyOrReturnError(bufSize >= sizeof(CHIP_DEVICE_CONFIG_DEFAULT_DEVICE_HARDWARE_VERSION_STRING),
+                            CHIP_ERROR_BUFFER_TOO_SMALL);
         strcpy(buf, CHIP_DEVICE_CONFIG_DEFAULT_DEVICE_HARDWARE_VERSION_STRING);
     }
 
@@ -55,6 +56,24 @@ CHIP_ERROR DeviceInstanceInfoProviderImpl::GetProductId(uint16_t & productId)
     return CHIP_NO_ERROR;
 }
 
+CHIP_ERROR DeviceInstanceInfoProviderImpl::GetPartNumber(char * buf, size_t bufSize)
+{
+    size_t dateLen;
+    return Internal::AndroidConfig::ReadConfigValueStr(Internal::AndroidConfig::kConfigKey_PartNumber, buf, bufSize, dateLen);
+}
+
+CHIP_ERROR DeviceInstanceInfoProviderImpl::GetProductURL(char * buf, size_t bufSize)
+{
+    size_t dateLen;
+    return Internal::AndroidConfig::ReadConfigValueStr(Internal::AndroidConfig::kConfigKey_ProductURL, buf, bufSize, dateLen);
+}
+
+CHIP_ERROR DeviceInstanceInfoProviderImpl::GetProductLabel(char * buf, size_t bufSize)
+{
+    size_t dateLen;
+    return Internal::AndroidConfig::ReadConfigValueStr(Internal::AndroidConfig::kConfigKey_ProductLabel, buf, bufSize, dateLen);
+}
+
 CHIP_ERROR DeviceInstanceInfoProviderImpl::GetProductName(char * buf, size_t bufSize)
 {
     CHIP_ERROR err;
@@ -63,7 +82,7 @@ CHIP_ERROR DeviceInstanceInfoProviderImpl::GetProductName(char * buf, size_t buf
         Internal::AndroidConfig::ReadConfigValueStr(Internal::AndroidConfig::kConfigKey_ProductName, buf, bufSize, productNameSize);
     if (err == CHIP_DEVICE_ERROR_CONFIG_NOT_FOUND)
     {
-        ReturnErrorCodeIf(bufSize < sizeof(CHIP_DEVICE_CONFIG_DEVICE_PRODUCT_NAME), CHIP_ERROR_BUFFER_TOO_SMALL);
+        VerifyOrReturnError(bufSize >= sizeof(CHIP_DEVICE_CONFIG_DEVICE_PRODUCT_NAME), CHIP_ERROR_BUFFER_TOO_SMALL);
         strcpy(buf, CHIP_DEVICE_CONFIG_DEVICE_PRODUCT_NAME);
     }
     return CHIP_NO_ERROR;
