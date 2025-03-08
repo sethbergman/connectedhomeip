@@ -96,39 +96,42 @@ CHIP_ERROR TCPEndPointImplSockets::BindImpl(IPAddressType addrType, const IPAddr
 
     if (res == CHIP_NO_ERROR)
     {
+        SockAddr sa;
+        memset(&sa, 0, sizeof(sa));
+        socklen_t sockaddrsize = 0;
+
         if (addrType == IPAddressType::kIPv6)
         {
-            struct sockaddr_in6 sa;
-            memset(&sa, 0, sizeof(sa));
-            sa.sin6_family   = AF_INET6;
-            sa.sin6_port     = htons(port);
-            sa.sin6_flowinfo = 0;
-            sa.sin6_addr     = addr.ToIPv6();
-            sa.sin6_scope_id = 0;
+            sa.in6.sin6_family   = AF_INET6;
+            sa.in6.sin6_port     = htons(port);
+            sa.in6.sin6_flowinfo = 0;
+            sa.in6.sin6_addr     = addr.ToIPv6();
+            sa.in6.sin6_scope_id = 0;
 
-            if (bind(mSocket, reinterpret_cast<const sockaddr *>(&sa), static_cast<unsigned>(sizeof(sa))) != 0)
-            {
-                res = CHIP_ERROR_POSIX(errno);
-            }
+            sockaddrsize = sizeof(sa.in6);
         }
 #if INET_CONFIG_ENABLE_IPV4
         else if (addrType == IPAddressType::kIPv4)
         {
-            struct sockaddr_in sa;
-            memset(&sa, 0, sizeof(sa));
-            sa.sin_family = AF_INET;
-            sa.sin_port   = htons(port);
-            sa.sin_addr   = addr.ToIPv4();
+            sa.in.sin_family = AF_INET;
+            sa.in.sin_port   = htons(port);
+            sa.in.sin_addr   = addr.ToIPv4();
 
-            if (bind(mSocket, reinterpret_cast<const sockaddr *>(&sa), static_cast<unsigned>(sizeof(sa))) != 0)
-            {
-                res = CHIP_ERROR_POSIX(errno);
-            }
+            sockaddrsize = sizeof(sa.in);
         }
 #endif // INET_CONFIG_ENABLE_IPV4
         else
         {
             res = INET_ERROR_WRONG_ADDRESS_TYPE;
+        }
+
+        if (res == CHIP_NO_ERROR)
+        {
+            // NOLINTNEXTLINE(clang-analyzer-unix.StdCLibraryFunctions): GetSocket calls ensure mSocket is valid
+            if (bind(mSocket, &sa.any, sockaddrsize) != 0)
+            {
+                res = CHIP_ERROR_POSIX(errno);
+            }
         }
     }
 
@@ -218,8 +221,7 @@ CHIP_ERROR TCPEndPointImplSockets::ConnectImpl(const IPAddress & addr, uint16_t 
     int flags = fcntl(mSocket, F_GETFL, 0);
     fcntl(mSocket, F_SETFL, flags | O_NONBLOCK);
 
-    socklen_t sockaddrsize       = 0;
-    const sockaddr * sockaddrptr = nullptr;
+    socklen_t sockaddrsize = 0;
 
     SockAddr sa;
     memset(&sa, 0, sizeof(sa));
@@ -232,7 +234,6 @@ CHIP_ERROR TCPEndPointImplSockets::ConnectImpl(const IPAddress & addr, uint16_t 
         sa.in6.sin6_addr     = addr.ToIPv6();
         sa.in6.sin6_scope_id = intfId.GetPlatformInterface();
         sockaddrsize         = sizeof(sockaddr_in6);
-        sockaddrptr          = reinterpret_cast<const sockaddr *>(&sa.in6);
     }
 #if INET_CONFIG_ENABLE_IPV4
     else if (addrType == IPAddressType::kIPv4)
@@ -241,7 +242,6 @@ CHIP_ERROR TCPEndPointImplSockets::ConnectImpl(const IPAddress & addr, uint16_t 
         sa.in.sin_port   = htons(port);
         sa.in.sin_addr   = addr.ToIPv4();
         sockaddrsize     = sizeof(sockaddr_in);
-        sockaddrptr      = reinterpret_cast<const sockaddr *>(&sa.in);
     }
 #endif // INET_CONFIG_ENABLE_IPV4
     else
@@ -249,7 +249,8 @@ CHIP_ERROR TCPEndPointImplSockets::ConnectImpl(const IPAddress & addr, uint16_t 
         return INET_ERROR_WRONG_ADDRESS_TYPE;
     }
 
-    int conRes = connect(mSocket, sockaddrptr, sockaddrsize);
+    // NOLINTNEXTLINE(clang-analyzer-unix.StdCLibraryFunctions): GetSocket calls ensure mSocket is valid
+    int conRes = connect(mSocket, &sa.any, sockaddrsize);
 
     if (conRes == -1 && errno != EINPROGRESS)
     {
@@ -442,7 +443,7 @@ CHIP_ERROR TCPEndPointImplSockets::DisableKeepAlive()
     return CHIP_NO_ERROR;
 }
 
-CHIP_ERROR TCPEndPointImplSockets::AckReceive(uint16_t len)
+CHIP_ERROR TCPEndPointImplSockets::AckReceive(size_t len)
 {
     VerifyOrReturnError(IsConnected(), CHIP_ERROR_INCORRECT_STATE);
 
@@ -484,7 +485,7 @@ CHIP_ERROR TCPEndPointImplSockets::DriveSendingImpl()
 
     while (!mSendQueue.IsNull())
     {
-        uint16_t bufLen = mSendQueue->DataLength();
+        size_t bufLen = mSendQueue->DataLength();
 
         ssize_t lenSentRaw = send(mSocket, mSendQueue->Start(), bufLen, sendFlags);
 
@@ -497,14 +498,13 @@ CHIP_ERROR TCPEndPointImplSockets::DriveSendingImpl()
             break;
         }
 
-        if (lenSentRaw < 0 || lenSentRaw > bufLen)
+        if (lenSentRaw < 0 || bufLen < static_cast<size_t>(lenSentRaw))
         {
             err = CHIP_ERROR_INCORRECT_STATE;
             break;
         }
 
-        // Cast is safe because bufLen is uint16_t.
-        uint16_t lenSent = static_cast<uint16_t>(lenSentRaw);
+        size_t lenSent = static_cast<size_t>(lenSentRaw);
 
         // Mark the connection as being active.
         MarkActive();
@@ -798,7 +798,7 @@ void TCPEndPointImplSockets::HandlePendingIO(System::SocketEvents events)
         // The socket being writable indicates the connection has completed (successfully or otherwise).
         if (events.Has(System::SocketEventFlags::kWrite))
         {
-#if !__MBED__
+#ifndef __MBED__
             // Get the connection result from the socket.
             int osConRes;
             socklen_t optLen = sizeof(osConRes);
@@ -806,11 +806,11 @@ void TCPEndPointImplSockets::HandlePendingIO(System::SocketEvents events)
             {
                 osConRes = errno;
             }
-#else
-            // On Mbed OS, connect blocks and never returns EINPROGRESS
-            // The socket option SO_ERROR is not available.
+#else  // __MBED__
+       // On Mbed OS, connect blocks and never returns EINPROGRESS
+       // The socket option SO_ERROR is not available.
             int osConRes     = 0;
-#endif
+#endif // !__MBED__
             CHIP_ERROR conRes = CHIP_ERROR_POSIX(osConRes);
 
             // Process the connection result.
@@ -949,10 +949,9 @@ void TCPEndPointImplSockets::ReceiveData()
         {
             VerifyOrDie(rcvLen > 0);
             size_t newDataLength = rcvBuf->DataLength() + static_cast<size_t>(rcvLen);
-            VerifyOrDie(CanCastTo<uint16_t>(newDataLength));
             if (isNewBuf)
             {
-                rcvBuf->SetDataLength(static_cast<uint16_t>(newDataLength));
+                rcvBuf->SetDataLength(newDataLength);
                 rcvBuf.RightSize();
                 if (mRcvQueue.IsNull())
                 {
@@ -965,7 +964,7 @@ void TCPEndPointImplSockets::ReceiveData()
             }
             else
             {
-                rcvBuf->SetDataLength(static_cast<uint16_t>(newDataLength), mRcvQueue);
+                rcvBuf->SetDataLength(newDataLength, mRcvQueue);
             }
         }
     }

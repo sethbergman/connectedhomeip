@@ -1,5 +1,5 @@
 #
-#   Copyright (c) 2022 Project CHIP Authors
+#   Copyright (c) 2022-2024 Project CHIP Authors
 #
 #   Licensed under the Apache License, Version 2.0 (the "License");
 #   you may not use this file except in compliance with the License.
@@ -28,68 +28,7 @@ if (CONFIG_CHIP)
 include(ExternalProject)
 include(../../zephyr/ota-image.cmake)
 include(../../zephyr/zephyr-util.cmake)
-
-# ==============================================================================
-# Declare configuration variables and define constants
-# ==============================================================================
-
-# C/C++ compiler flags passed to CHIP build system
-list(APPEND CHIP_CFLAGS)
-
-# C compiler flags passed to CHIP build system
-list(APPEND CHIP_CFLAGS_C)
-
-# C++ compiler flags passed to CHIP build system
-list(APPEND CHIP_CFLAGS_CC)
-
-# CHIP libraries that the application should be linked with
-list(APPEND CHIP_LIBRARIES)
-
-# GN meta-build system arguments in the form of 'key1 = value1\nkey2 = value2...' string
-string(APPEND CHIP_GN_ARGS)
-
-# C/C++ compiler flags which should not be forwarded to CHIP
-# build system (e.g. because CHIP configures them on its own)
-set(CHIP_CFLAG_EXCLUDES 
-    "-fno-asynchronous-unwind-tables"
-    "-fno-common"
-    "-fno-defer-pop"
-    "-fno-reorder-functions"
-    "-ffunction-sections"
-    "-fdata-sections"
-    "-g*"
-    "-O*"
-    "-W*"
-)
-
-# ==============================================================================
-# Helper macros
-# ==============================================================================
-
-macro(chip_gn_arg_import FILE)
-    string(APPEND CHIP_GN_ARGS "import(\"${FILE}\")\n")
-endmacro()
-
-macro(chip_gn_arg_string ARG STRING)
-    string(APPEND CHIP_GN_ARGS "${ARG} = \"${STRING}\"\n")
-endmacro()
-
-macro(chip_gn_arg_bool ARG BOOLEAN)
-    if (${BOOLEAN})
-        string(APPEND CHIP_GN_ARGS "${ARG} = true\n")
-    else()
-        string(APPEND CHIP_GN_ARGS "${ARG} = false\n")
-    endif()
-endmacro()
-
-macro(chip_gn_arg_cflags ARG CFLAGS)
-    set(CFLAG_EXCLUDES "[")
-    foreach(cflag ${CHIP_CFLAG_EXCLUDES})
-        string(APPEND CFLAG_EXCLUDES "\"${cflag}\", ")
-    endforeach()
-    string(APPEND CFLAG_EXCLUDES "]")
-    string(APPEND CHIP_GN_ARGS "${ARG} = filter_exclude(string_split(\"${CFLAGS}\"), ${CFLAG_EXCLUDES})\n")
-endmacro()
+include(generate_factory_data.cmake)
 
 # ==============================================================================
 # Prepare CHIP configuration based on the project Kconfig configuration
@@ -98,70 +37,40 @@ endmacro()
 if (NOT CHIP_ROOT)
     get_filename_component(CHIP_ROOT ${CMAKE_CURRENT_SOURCE_DIR}/../../.. REALPATH)
 endif()
+get_filename_component(GN_ROOT_TARGET ${CHIP_ROOT}/config/telink/chip-gn REALPATH)
+get_filename_component(COMMON_CMAKE_SOURCE_DIR ${CHIP_ROOT}/config/common/cmake REALPATH)
 
-set(GN_ROOT_TARGET ${CHIP_ROOT}/config/telink/chip-gn)
+# Get common Cmake sources
+
+include(${COMMON_CMAKE_SOURCE_DIR}/chip_gn_args.cmake)
+include(${COMMON_CMAKE_SOURCE_DIR}/chip_gn.cmake)
+
+# Prepare compiler flags
+matter_add_flags(-isystem${ZEPHYR_BASE}/../modules/crypto/mbedtls/include/)
 
 if (CONFIG_POSIX_API)
-    list(APPEND CHIP_CFLAGS
-        -D_SYS__PTHREADTYPES_H_
-        -isystem${ZEPHYR_BASE}/include/zephyr/posix
-    )
+    matter_add_flags(-D_DEFAULT_SOURCE)
+    matter_add_flags(-isystem${ZEPHYR_BASE}/include/zephyr/posix)
 endif()
 
-# Add MbedTLS config file
-list(APPEND CHIP_CFLAGS -DMBEDTLS_CONFIG_FILE=CONFIG_MBEDTLS_CFG_FILE)
+matter_add_flags(-DNL_ASSERT_USE_FLAGS_DEFAULT=1)
 
-# Add hardware cryptography dependencies
-zephyr_include_directories(${ZEPHYR_BASE}/../modules/crypto/mbedtls/include)
-zephyr_include_directories(${ZEPHYR_BASE}/modules/mbedtls/configs)
 zephyr_include_directories(${CHIP_ROOT}/src/platform/telink/)
-zephyr_include_directories(${CHIP_ROOT}/src/platform/telink/crypto/)
-zephyr_sources(${ZEPHYR_BASE}/../modules/hal/telink/tlsr9/drivers/B91/aes.c)
-zephyr_sources(${ZEPHYR_BASE}/../modules/hal/telink/tlsr9/drivers/B91/pke.c)
+zephyr_include_directories(${CHIP_ROOT}/src/platform/telink/wifi/${ZEPHYR_VERSION_STRING})
 
-zephyr_get_compile_flags(CHIP_CFLAGS_C C)
-zephyr_get_compile_flags(CHIP_CFLAGS_CC CXX)
-zephyr_get_gnu_cpp_standard(CHIP_CFLAGS_CC)
+zephyr_get_compile_flags(ZEPHYR_CFLAGS_C C)
+matter_add_cflags("${ZEPHYR_CFLAGS_C}")
+zephyr_get_compile_flags(ZEPHYR_CFLAGS_CC CXX)
+matter_add_cxxflags("${ZEPHYR_CFLAGS_CC}")
+zephyr_get_gnu_cpp_standard(ZEPHYR_GNU_CPP_STD)
+matter_add_cxxflags(${ZEPHYR_GNU_CPP_STD})
 
-convert_list_of_flags_to_string_of_flags(CHIP_CFLAGS CHIP_CFLAGS)
-convert_list_of_flags_to_string_of_flags(CHIP_CFLAGS_C CHIP_CFLAGS_C)
-convert_list_of_flags_to_string_of_flags(CHIP_CFLAGS_CC CHIP_CFLAGS_CC)
-
-# Prepare CHIP libraries that the application should be linked with
-
-if (NOT CHIP_LIBRARIES)
-    set(CHIP_LIBRARIES -lCHIP)
-endif()
-
-if (CONFIG_CHIP_LIB_SHELL)
-    list(APPEND CHIP_LIBRARIES -lCHIPShell)
-endif()
-
-if (CONFIG_CHIP_PW_RPC)
-    list(APPEND CHIP_LIBRARIES -lPwRpc)
-endif()
-
-if (CONFIG_TELINK_BLE_LIB)
-    list(APPEND CHIP_LIBRARIES -lB91_ble_lib)
-endif()
-
-# Set up CHIP project configuration file
-
-if (CONFIG_CHIP_PROJECT_CONFIG)
-    get_filename_component(CHIP_PROJECT_CONFIG 
-        ${CONFIG_CHIP_PROJECT_CONFIG}
-        REALPATH
-        BASE_DIR ${CMAKE_SOURCE_DIR}
-    )
-    set(CHIP_PROJECT_CONFIG "<${CHIP_PROJECT_CONFIG}>")
-else()
-    set(CHIP_PROJECT_CONFIG "")
-endif()
+matter_add_flags(-DMBEDTLS_USER_CONFIG_FILE=<${CONFIG_MBEDTLS_CFG_FILE}>)
 
 # Set up custom OpenThread configuration
 
 if (CONFIG_CHIP_OPENTHREAD_CONFIG)
-    get_filename_component(CHIP_OPENTHREAD_CONFIG 
+    get_filename_component(CHIP_OPENTHREAD_CONFIG
         ${CONFIG_CHIP_OPENTHREAD_CONFIG}
         REALPATH
         BASE_DIR ${CMAKE_SOURCE_DIR}
@@ -169,149 +78,140 @@ if (CONFIG_CHIP_OPENTHREAD_CONFIG)
     zephyr_set_openthread_config(${CHIP_OPENTHREAD_CONFIG})
 endif()
 
-# Find required programs
-
-find_program(GN_EXECUTABLE gn)
-if (${GN_EXECUTABLE} STREQUAL GN_EXECUTABLE-NOTFOUND)
-    message(FATAL_ERROR "The 'gn' command was not found. Make sure you have GN installed.")
-else()
-    # Parse the 'gn --version' output to find the installed version.
-    set(MIN_GN_VERSION 1851)
-    execute_process(
-        COMMAND
-        ${GN_EXECUTABLE} --version
-        OUTPUT_VARIABLE gn_version_output
-        ERROR_VARIABLE  gn_error_output
-        RESULT_VARIABLE gn_status
-    )
-
-    if(${gn_status} EQUAL 0)
-        if(gn_version_output VERSION_LESS ${MIN_GN_VERSION})
-            message(FATAL_ERROR "Found unsuitable version of 'gn'. Required is at least ${MIN_GN_VERSION}")
-        endif()
-    else()
-        message(FATAL_ERROR "Could NOT find working gn: Found gn (${GN_EXECUTABLE}), but failed to load with:\n ${gn_error_output}")
-    endif()
-endif()
-
-find_package(Python3 REQUIRED)
-
 # ==============================================================================
 # Generate configuration for CHIP GN build system
 # ==============================================================================
 
-chip_gn_arg_cflags("target_cflags"                          ${CHIP_CFLAGS})
-chip_gn_arg_cflags("target_cflags_c"                        ${CHIP_CFLAGS_C})
-chip_gn_arg_cflags("target_cflags_cc"                       ${CHIP_CFLAGS_CC})
-chip_gn_arg_string("zephyr_ar"                              ${CMAKE_AR})
-chip_gn_arg_string("zephyr_cc"                              ${CMAKE_C_COMPILER})
-chip_gn_arg_string("zephyr_cxx"                             ${CMAKE_CXX_COMPILER})
-chip_gn_arg_string("chip_project_config_include"            "${CHIP_PROJECT_CONFIG}")
-chip_gn_arg_string("chip_system_project_config_include"     "${CHIP_PROJECT_CONFIG}")
-chip_gn_arg_bool  ("is_debug"                               CONFIG_DEBUG)
-chip_gn_arg_bool  ("chip_enable_openthread"                 CONFIG_NET_L2_OPENTHREAD)
-chip_gn_arg_bool  ("chip_openthread_ftd"                    CONFIG_OPENTHREAD_FTD)
-chip_gn_arg_bool  ("chip_inet_config_enable_ipv4"           CONFIG_NET_IPV4)
-chip_gn_arg_bool  ("chip_enable_ota_requestor"              CONFIG_CHIP_OTA_REQUESTOR)
-chip_gn_arg_bool  ("chip_build_tests"                       CONFIG_CHIP_BUILD_TESTS)
-chip_gn_arg_bool  ("chip_inet_config_enable_tcp_endpoint"   CONFIG_CHIP_BUILD_TESTS)
-chip_gn_arg_bool  ("chip_build_libshell"                    CONFIG_CHIP_LIB_SHELL)
-
-if (CONFIG_CHIP_ENABLE_DNSSD_SRP)
-    chip_gn_arg_string("chip_mdns" "platform")
-endif()
-
-if (CONFIG_CHIP_EXAMPLE_DEVICE_INFO_PROVIDER)
-    chip_gn_arg_bool("chip_build_example_providers" "true")
-    list(APPEND CHIP_LIBRARIES -lMatterDeviceInfoProviderExample)
-endif()
-
-file(GENERATE OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/args.gn CONTENT ${CHIP_GN_ARGS})
-
-# ==============================================================================
-# Define 'chip-gn' target that builds CHIP library(ies) with GN build system
-# ==============================================================================
-ExternalProject_Add(
-    chip-gn
-    PREFIX                  ${CMAKE_CURRENT_BINARY_DIR}
-    SOURCE_DIR              ${CHIP_ROOT}
-    BINARY_DIR              ${CMAKE_CURRENT_BINARY_DIR}
-    CONFIGURE_COMMAND       ${GN_EXECUTABLE}
-                                --root=${CHIP_ROOT}
-                                --root-target=${GN_ROOT_TARGET}
-                                --dotfile=${GN_ROOT_TARGET}/.gn
-                                --script-executable=${Python3_EXECUTABLE}
-                                gen --check --fail-on-unused-args ${CMAKE_CURRENT_BINARY_DIR}
-    BUILD_COMMAND           ninja
-    INSTALL_COMMAND         ""
-    BUILD_BYPRODUCTS        ${CHIP_LIBRARIES}
-    BUILD_ALWAYS            TRUE
-    USES_TERMINAL_CONFIGURE TRUE
-    USES_TERMINAL_BUILD     TRUE
+matter_common_gn_args(
+    DEBUG           CONFIG_DEBUG
+    LIB_SHELL       CONFIG_CHIP_LIB_SHELL
+    LIB_TESTS       CONFIG_CHIP_BUILD_TESTS
+    PROJECT_CONFIG  ${CONFIG_CHIP_PROJECT_CONFIG}
+    DEVICE_INFO_EXAMPLE_PROVIDER CONFIG_CHIP_EXAMPLE_DEVICE_INFO_PROVIDER
 )
-add_dependencies(chip-gn kernel)
+matter_add_gn_arg_string("zephyr_ar"                              ${CMAKE_AR})
+matter_add_gn_arg_string("zephyr_cc"                              ${CMAKE_C_COMPILER})
+matter_add_gn_arg_string("zephyr_cxx"                             ${CMAKE_CXX_COMPILER})
+matter_add_gn_arg_bool  ("chip_logging"                           CONFIG_LOG)
+matter_add_gn_arg_bool  ("chip_enable_openthread"                 CONFIG_NET_L2_OPENTHREAD)
+matter_add_gn_arg_bool  ("chip_openthread_ftd"                    CONFIG_OPENTHREAD_FTD)
+matter_add_gn_arg_bool  ("chip_config_network_layer_ble"          CONFIG_BT)
+matter_add_gn_arg_bool  ("chip_inet_config_enable_ipv4"           CONFIG_CHIP_IPV4)
+matter_add_gn_arg_bool  ("chip_enable_nfc_onboarding_payload"     CONFIG_CHIP_NFC_ONBOARDING_PAYLOAD)
+matter_add_gn_arg_bool  ("chip_enable_ota_requestor"              CONFIG_CHIP_OTA_REQUESTOR)
+matter_add_gn_arg_bool  ("chip_inet_config_enable_tcp_endpoint"   FALSE)
+matter_add_gn_arg_bool  ("chip_error_logging"                     CONFIG_MATTER_LOG_LEVEL GREATER_EQUAL 1)
+matter_add_gn_arg_bool  ("chip_progress_logging"                  CONFIG_MATTER_LOG_LEVEL GREATER_EQUAL 3)
+matter_add_gn_arg_bool  ("chip_detail_logging"                    CONFIG_MATTER_LOG_LEVEL GREATER_EQUAL 4)
+matter_add_gn_arg_bool  ("chip_automation_logging"                FALSE)
+matter_add_gn_arg_bool  ("chip_enable_wifi"                       CONFIG_WIFI_W91)
+matter_add_gn_arg_bool  ("chip_enable_icd_server"                 CONFIG_CHIP_ENABLE_ICD_SUPPORT)
+matter_add_gn_arg_bool  ("chip_enable_factory_data"               CONFIG_CHIP_FACTORY_DATA)
+matter_add_gn_arg_bool  ("chip_mdns_minimal"                      CONFIG_WIFI_W91)
+matter_add_gn_arg_bool  ("chip_mdns_platform"                     CONFIG_NET_L2_OPENTHREAD)
+
+if (CONFIG_CHIP_ENABLE_ICD_SUPPORT)
+    matter_add_gn_arg_bool  ("chip_enable_icd_lit"                       CONFIG_CHIP_ICD_LIT_SUPPORT)
+    matter_add_gn_arg_bool  ("chip_enable_icd_checkin"                   CONFIG_CHIP_ICD_CHECK_IN_SUPPORT)
+    matter_add_gn_arg_bool  ("chip_enable_icd_user_active_mode_trigger"  CONFIG_CHIP_ICD_UAT_SUPPORT)
+endif()
+
+if (CONFIG_CHIP_FACTORY_DATA OR CONFIG_CHIP_FACTORY_DATA_CUSTOM_BACKEND)
+    matter_add_gn_arg_bool("chip_use_transitional_commissionable_data_provider"  FALSE)
+    matter_add_gn_arg_bool("chip_use_transitional_device_instance_info_provider" FALSE)
+endif()
+
+if (CONFIG_CHIP_ROTATING_DEVICE_ID)
+    matter_add_gn_arg_bool("chip_enable_rotating_device_id"          TRUE)
+    matter_add_gn_arg_bool("chip_enable_additional_data_advertising" TRUE)
+endif()
+
+if (CONFIG_WIFI_W91)
+    matter_add_gn_arg_string("chip_mdns" "minimal")
+elseif (CONFIG_NET_L2_OPENTHREAD)
+    matter_add_gn_arg_string("chip_mdns" "platform")
+else()
+    matter_add_gn_arg_string("chip_mdns" "none")
+endif()
+
+if (CONFIG_CHIP_PW_RPC)
+    set(PIGWEED_DIR "//third_party/pigweed/repo")
+    matter_add_gn_arg_string("pw_assert_BACKEND" ${PIGWEED_DIR}/pw_assert_log:check_backend)
+    matter_add_gn_arg_string("pw_log_BACKEND" ${PIGWEED_DIR}/pw_log_basic)
+    matter_add_gn_arg("pw_build_LINK_DEPS" [\"${PIGWEED_DIR}/pw_assert:impl\",\ \"${PIGWEED_DIR}/pw_log:impl\"])
+endif()
+
+matter_generate_args_tmp_file()
 
 # ==============================================================================
-# Define 'chip' target that exposes CHIP headers & libraries to the application
+# Build chip library
 # ==============================================================================
 
-zephyr_interface_library_named(chip)
-target_compile_definitions(chip INTERFACE CHIP_HAVE_CONFIG_H)
-target_include_directories(chip INTERFACE
-    ${CHIP_ROOT}/src
-    ${CHIP_ROOT}/src/include
-    ${CHIP_ROOT}/src/lib
-    ${CHIP_ROOT}/third_party/nlassert/repo/include
-    ${CHIP_ROOT}/third_party/telink_sdk
-    ${CMAKE_CURRENT_BINARY_DIR}/gen/include
+matter_build(chip
+    LIB_SHELL   ${CONFIG_CHIP_LIB_SHELL}
+    DEVICE_INFO_EXAMPLE_PROVIDER ${CONFIG_CHIP_EXAMPLE_DEVICE_INFO_PROVIDER}
+    GN_DEPENDENCIES kernel
 )
-target_link_directories(chip INTERFACE ${CMAKE_CURRENT_BINARY_DIR}/lib)
-if (CONFIG_CHIP_LIB_SHELL)
-    target_link_options(chip INTERFACE -Wl,--whole-archive -lCHIPShell -Wl,--no-whole-archive)
+set_property(GLOBAL APPEND PROPERTY ZEPHYR_INTERFACE_LIBS chip)
+
+include(${TELINK_COMMON}/common.cmake)
+
+if (CONFIG_CHIP_APP_LOG_LEVEL GREATER_EQUAL 4)
+    include(${TELINK_COMMON}/build_info.cmake)
 endif()
 
-if (CONFIG_CHIP_EXAMPLE_DEVICE_INFO_PROVIDER)
-    target_include_directories(chip INTERFACE ${CHIP_ROOT}/examples/providers)
+# ==============================================================================
+# Define 'process_binaries' target for collecting final binary to flash
+# ==============================================================================
+
+add_custom_target(
+    process_binaries ALL
+    COMMAND ${Python3_EXECUTABLE} ${CHIP_ROOT}/scripts/tools/telink/process_binaries.py
+    WORKING_DIRECTORY ${PROJECT_BINARY_DIR}
+)
+add_dependencies(process_binaries ${ZEPHYR_FINAL_EXECUTABLE})
+
+# ==============================================================================
+# Define 'build_mcuboot' target for building the MCUBoot bootloader
+# ==============================================================================
+
+if (CONFIG_BOOTLOADER_MCUBOOT AND (CONFIG_SOC_RISCV_TELINK_B9X OR CONFIG_SOC_RISCV_TELINK_TLX))
+    add_custom_target(build_mcuboot ALL
+        COMMAND
+        west build -b ${BASE_BOARD} -d build_mcuboot ${ZEPHYR_BASE}/../bootloader/mcuboot/boot/zephyr
+            -- -DOVERLAY_CONFIG=${GLOBAL_BOOT_CONF_OVERLAY_FILE} -DDTC_OVERLAY_FILE="${GLOBAL_BOOT_DTC_OVERLAY_FILE};${FLASH_DTC_OVERLAY_FILE};${USB_BOOT_DTC_OVERLAY_FILE};${MARS_BOOT_DTC_OVERLAY_FILE}"
+        COMMAND
+        cp ${PROJECT_BINARY_DIR}/../modules/chip-module/build_mcuboot/zephyr/zephyr.bin ${PROJECT_BINARY_DIR}/mcuboot.bin
+    )
 endif()
-
-if (CONFIG_TELINK_BLE_LIB)
-    target_link_directories(chip INTERFACE ${CHIP_ROOT}/third_party/telink_sdk/repo/eagle_ble_sdk/proj_lib)
-endif()
-
-target_link_libraries(chip INTERFACE -Wl,--start-group ${CHIP_LIBRARIES} -Wl,--end-group)
-
-add_dependencies(chip chip-gn)
 
 # ==============================================================================
 # Define 'chip-ota-image' target for building CHIP OTA image
 # ==============================================================================
 
 if (CONFIG_CHIP_OTA_IMAGE_BUILD)
-    add_custom_target(build_mcuboot ALL
-        COMMAND
-        west build -b tlsr9518adk80d -d build_mcuboot ${ZEPHYR_BASE}/../bootloader/mcuboot/boot/zephyr
-    )
-
-    add_custom_target(west_sign ALL
-        COMMAND
-        west sign -t imgtool -p ${ZEPHYR_BASE}/../bootloader/mcuboot/scripts/imgtool.py -d ${PROJECT_BINARY_DIR}/.. -- --key ${ZEPHYR_BASE}/../bootloader/mcuboot/root-rsa-2048.pem
-    )
-
-    add_custom_target(final_bin ALL
-        COMMAND
-        dd if=${PROJECT_BINARY_DIR}/../modules/chip-module/build_mcuboot/zephyr/zephyr.bin of=${PROJECT_BINARY_DIR}/zephyr_final.bin
-        COMMAND
-        dd if=${PROJECT_BINARY_DIR}/zephyr.signed.bin of=${PROJECT_BINARY_DIR}/zephyr_final.bin bs=1024 seek=64
-    )
+    if (CONFIG_COMPRESS_LZMA)
+        add_custom_command(
+            OUTPUT ${PROJECT_BINARY_DIR}/${CONFIG_SIGNED_OTA_IMAGE_FILE_NAME}
+            COMMAND ${CMAKE_COMMAND} -E true
+            COMMENT "Fake command, ${CONFIG_SIGNED_OTA_IMAGE_FILE_NAME} file created in process_binaries target"
+            DEPENDS ${ZEPHYR_FINAL_EXECUTABLE}
+        )
+    endif()
 
     chip_ota_image(chip-ota-image
-        INPUT_FILES ${PROJECT_BINARY_DIR}/zephyr.signed.bin
-        OUTPUT_FILE ${PROJECT_BINARY_DIR}/zephyr-ota.bin
+        INPUT_FILES ${PROJECT_BINARY_DIR}/${CONFIG_SIGNED_OTA_IMAGE_FILE_NAME}
+        OUTPUT_FILE ${PROJECT_BINARY_DIR}/${CONFIG_CHIP_OTA_IMAGE_FILE_NAME}
     )
+    add_dependencies(chip-ota-image process_binaries)
+endif()
 
-    add_dependencies(west_sign ${ZEPHYR_FINAL_EXECUTABLE})
-    add_dependencies(final_bin west_sign)
-    add_dependencies(chip-ota-image west_sign)
+# ==============================================================================
+# Define 'factory_data' target for generating a factory data partition
+# ==============================================================================
+
+if (CONFIG_CHIP_FACTORY_DATA_BUILD)
+    telink_generate_factory_data()
 endif()
 
 endif() # CONFIG_CHIP

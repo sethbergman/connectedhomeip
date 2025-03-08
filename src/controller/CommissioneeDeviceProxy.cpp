@@ -26,16 +26,14 @@
 
 #include <controller/CommissioneeDeviceProxy.h>
 
-#include <controller-clusters/zap-generated/CHIPClusters.h>
-
 #include <app/CommandSender.h>
 #include <app/ReadPrepareParams.h>
 #include <app/util/DataModelHandler.h>
 #include <lib/core/CHIPCore.h>
 #include <lib/core/CHIPEncoding.h>
 #include <lib/core/CHIPSafeCasts.h>
+#include <lib/core/ErrorStr.h>
 #include <lib/support/CodeUtils.h>
-#include <lib/support/ErrorStr.h>
 #include <lib/support/SafeInt.h>
 #include <lib/support/logging/CHIPLogging.h>
 
@@ -68,16 +66,23 @@ void CommissioneeDeviceProxy::CloseSession()
     mPairing.Clear();
 }
 
+chip::Optional<SessionHandle> CommissioneeDeviceProxy::DetachSecureSession()
+{
+    auto session = mSecureSession.Get();
+    mSecureSession.Release();
+    mState = ConnectionState::NotConnected;
+    mPairing.Clear();
+    return session;
+}
+
 CHIP_ERROR CommissioneeDeviceProxy::UpdateDeviceData(const Transport::PeerAddress & addr,
                                                      const ReliableMessageProtocolConfig & config)
 {
     mDeviceAddress = addr;
 
-    mRemoteMRPConfig = config;
-
     // Initialize PASE session state with any MRP parameters that DNS-SD has provided.
     // It can be overridden by PASE session protocol messages that include MRP parameters.
-    mPairing.SetRemoteMRPConfig(mRemoteMRPConfig);
+    mPairing.SetRemoteMRPConfig(config);
 
     if (!mSecureSession)
     {

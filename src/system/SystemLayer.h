@@ -25,6 +25,9 @@
 
 #pragma once
 
+#include <type_traits>
+#include <utility>
+
 // Include configuration headers
 #include <system/SystemConfig.h>
 
@@ -37,15 +40,16 @@
 #include <system/SystemError.h>
 #include <system/SystemEvent.h>
 
-#if CHIP_SYSTEM_CONFIG_USE_SOCKETS
+#if CHIP_SYSTEM_CONFIG_USE_SOCKETS || CHIP_SYSTEM_CONFIG_USE_NETWORK_FRAMEWORK
+#include <lib/support/IntrusiveList.h>
 #include <system/SocketEvents.h>
-#endif // CHIP_SYSTEM_CONFIG_USE_SOCKETS
+#endif // CHIP_SYSTEM_CONFIG_USE_SOCKETS || CHIP_SYSTEM_USE_NETWORK_FRAMEWORK
 
 #if CHIP_SYSTEM_CONFIG_USE_DISPATCH
 #include <dispatch/dispatch.h>
-#endif // CHIP_SYSTEM_CONFIG_USE_DISPATCH
-
-#include <utility>
+#elif CHIP_SYSTEM_CONFIG_USE_LIBEV
+#include <ev.h>
+#endif // CHIP_SYSTEM_CONFIG_USE_DISPATCH/LIBEV
 
 namespace chip {
 namespace System {
@@ -96,7 +100,8 @@ public:
 
     /**
      * @brief
-     *   This method starts a one-shot timer.
+     *   This method starts a one-shot timer.  This method must be called while in the Matter context (from
+     *   the Matter event loop, or while holding the Matter stack lock).
      *
      *   @note
      *       Only a single timer is allowed to be started with the same @a aComplete and @a aAppState
@@ -115,15 +120,60 @@ public:
 
     /**
      * @brief
-     *   This method cancels a one-shot timer, started earlier through @p StartTimer().
+     *   This method extends the timer expiry to the provided aDelay. This method must be called while in the Matter context
+     *   (from the Matter event loop, or while holding the Matter stack lock).
+     *   aDelay is not added to the Remaining time of the timer. The finish line is pushed back to aDelay.
+     *
+     *   @note The goal of this method is that the timer remaining time cannot be shrunk and only extended to a new time
+     *         If the provided new Delay is smaller than the timer's remaining time, the timer is left untouched.
+     *         In the other case the method acts like StartTimer
+     *
+     *   @param[in]  aDelay             Time before this timer fires.
+     *   @param[in]  aComplete          A pointer to the function called when timer expires.
+     *   @param[in]  aAppState          A pointer to the application state object used when timer expires.
+     *
+     *   @return CHIP_NO_ERROR On success.
+     *   @return CHIP_ERROR_INVALID_ARGUMENT If the provided aDelay value is 0
+     *   @return CHIP_ERROR_NO_MEMORY If a timer cannot be allocated.
+     *   @return Other Value indicating timer failed to start.
+     */
+    virtual CHIP_ERROR ExtendTimerTo(Clock::Timeout aDelay, TimerCompleteCallback aComplete, void * aAppState) = 0;
+
+    /**
+     * @brief
+     *   This method searches for the timer matching the provided parameters.
+     *   and returns whether it is still "running" and waiting to trigger or not.
+     *
+     *   @note This is used to verify by how long the ExtendTimer method extends the timer, as it may ignore an extension request
+     *        if it is shorter than the current timer's remaining time.
+     *
+     *   @param[in]  onComplete         A pointer to the function called when timer expires.
+     *   @param[in]  appState           A pointer to the application state object used when timer expires.
+     *
+     *   @return True if there is a current timer set to call, at some point in the future, the provided onComplete callback
+     *           with the corresponding appState context. False otherwise.
+     */
+    virtual bool IsTimerActive(TimerCompleteCallback onComplete, void * appState) = 0;
+
+    /**
+     * @brief
+     *   This method searches for the timer matching the provided parameters
+     *   and returns the remaining time left before it expires.
+     *   @param[in]  onComplete         A pointer to the function called when timer expires.
+     *   @param[in]  appState           A pointer to the application state object used when timer expires.
+     *
+     *  @return The remaining time left before the timer expires.
+     */
+    virtual Clock::Timeout GetRemainingTime(TimerCompleteCallback onComplete, void * appState) = 0;
+
+    /**
+     * @brief This method cancels a one-shot timer, started earlier through @p StartTimer().  This method must
+     *        be called while in the Matter context (from the Matter event loop, or while holding the Matter
+     *        stack lock).
      *
      *   @note
-     *       The cancellation could fail silently in two different ways. If the timer specified by the combination of the callback
-     *       function and application state object couldn't be found, cancellation could fail. If the timer has fired, then
-     *       an event is queued and will be processed later.
-     *
-     *   WARNING: Timer handlers MUST assume that they may be hit even after CancelTimer due to cancelling an
-     *            already fired timer that is queued in the event loop already.
+     *       The cancellation could fail silently if the timer specified by the combination of the callback
+     *       function and application state object couldn't be found.
      *
      *   @param[in]  aOnComplete   A pointer to the callback function used in calling @p StartTimer().
      *   @param[in]  aAppState     A pointer to the application state object used in calling @p StartTimer().
@@ -133,7 +183,11 @@ public:
 
     /**
      * @brief
-     *   Schedules a function with a signature identical to `OnCompleteFunct` to be run as soon as possible in the CHIP context.
+     *   Schedules a `TimerCompleteCallback` to be run as soon as possible in the Matter context.
+     *
+     *  WARNING: This must only be called when already in the Matter context (from the Matter event loop, or
+     *           while holding the Matter stack lock). The `PlatformMgr::ScheduleWork()` equivalent method
+     *           is safe to call outside Matter context.
      *
      * @param[in] aComplete     A pointer to a callback function to be called when this timer fires.
      * @param[in] aAppState     A pointer to an application state object to be passed to the callback function as argument.
@@ -146,32 +200,30 @@ public:
 
     /**
      * @brief
-     *   Schedules a lambda even to be run as soon as possible in the CHIP context. This function is not thread-safe,
-     *   it must be called with in the CHIP context
+     *   Schedules a lambda object to be run as soon as possible in the Matter context.
      *
-     *  @param[in] event   A object encapsulate the context of a lambda
+     * This is safe to call from any context and will guarantee execution in Matter context.
+     * Note that the Lambda's capture have to fit within `CHIP_CONFIG_LAMBDA_EVENT_SIZE` bytes.
      *
-     *  @retval    CHIP_NO_ERROR                  On success.
-     *  @retval    other Platform-specific errors generated indicating the reason for failure.
-     */
-    CHIP_ERROR ScheduleLambdaBridge(LambdaBridge && event);
-
-    /**
-     * @brief
-     *   Schedules a lambda object to be run as soon as possible in the CHIP context. This function is not thread-safe,
-     *   it must be called with in the CHIP context
+     * @param[in] lambda The Lambda to execute in Matter context.
+     *
+     * @retval CHIP_NO_ERROR On success.
+     * @retval other Platform-specific errors generated indicating the reason for failure.
      */
     template <typename Lambda>
     CHIP_ERROR ScheduleLambda(const Lambda & lambda)
     {
+        static_assert(std::is_invocable_v<Lambda>, "lambda argument must be an invocable with no arguments");
         LambdaBridge bridge;
         bridge.Initialize(lambda);
         return ScheduleLambdaBridge(std::move(bridge));
     }
 
 private:
-    // Copy and assignment NOT DEFINED
-    Layer(const Layer &) = delete;
+    CHIP_ERROR ScheduleLambdaBridge(LambdaBridge && bridge);
+
+    // Not copyable
+    Layer(const Layer &)             = delete;
     Layer & operator=(const Layer &) = delete;
 };
 
@@ -183,7 +235,7 @@ class LayerFreeRTOS : public Layer
 
 #endif // CHIP_SYSTEM_CONFIG_USE_LWIP
 
-#if CHIP_SYSTEM_CONFIG_USE_SOCKETS
+#if CHIP_SYSTEM_CONFIG_USE_SOCKETS || CHIP_SYSTEM_CONFIG_USE_NETWORK_FRAMEWORK
 
 class LayerSockets : public Layer
 {
@@ -192,6 +244,7 @@ public:
      * Initialize watching for events on a file descriptor.
      *
      * Returns an opaque token through @a tokenOut that must be passed to subsequent operations for this file descriptor.
+     * Multiple calls to start watching the same file descriptor will return the same token.
      * StopWatchingSocket() must be called before closing the file descriptor.
      */
     virtual CHIP_ERROR StartWatchingSocket(int fd, SocketWatchToken * tokenOut) = 0;
@@ -237,6 +290,44 @@ public:
     virtual SocketWatchToken InvalidSocketWatchToken() = 0;
 };
 
+class LayerSocketsLoop;
+
+/**
+ * EventLoopHandlers can be registered with a LayerSocketsLoop instance to enable
+ * participation of those handlers in the processing cycle of the event loop. This makes
+ * it possible to implement adapters that allow components utilizing a third-party event
+ * loop API to participate in the Matter event loop, instead of having to run an entirely
+ * separate event loop on another thread.
+ *
+ * Specifically, the `PrepareEvents` and `HandleEvents` methods of registered event loop
+ * handlers will be called from the LayerSocketsLoop methods of the same names.
+ *
+ * @see LayerSocketsLoop::PrepareEvents
+ * @see LayerSocketsLoop::HandleEvents
+ */
+class EventLoopHandler : public chip::IntrusiveListNodeBase<>
+{
+public:
+    virtual ~EventLoopHandler() {}
+
+    /**
+     * Prepares events and returns the next requested wake time.
+     */
+    virtual Clock::Timestamp PrepareEvents(Clock::Timestamp now) { return Clock::Timestamp::max(); }
+
+    /**
+     * Handles / dispatches pending events.
+     * Every call to this method will have been preceded by a call to `PrepareEvents`.
+     */
+    virtual void HandleEvents() = 0;
+
+private:
+    // mState is provided exclusively for use by the LayerSocketsLoop implementation
+    // sub-class and can be accessed by it via the LayerSocketsLoop::LoopHandlerState() helper.
+    friend class LayerSocketsLoop;
+    intptr_t mState = 0;
+};
+
 class LayerSocketsLoop : public LayerSockets
 {
 public:
@@ -247,13 +338,25 @@ public:
     virtual void HandleEvents()    = 0;
     virtual void EventLoopEnds()   = 0;
 
+#if !CHIP_SYSTEM_CONFIG_USE_DISPATCH
+    virtual void AddLoopHandler(EventLoopHandler & handler)    = 0;
+    virtual void RemoveLoopHandler(EventLoopHandler & handler) = 0;
+#endif // !CHIP_SYSTEM_CONFIG_USE_DISPATCH
+
 #if CHIP_SYSTEM_CONFIG_USE_DISPATCH
     virtual void SetDispatchQueue(dispatch_queue_t dispatchQueue) = 0;
     virtual dispatch_queue_t GetDispatchQueue()                   = 0;
-#endif // CHIP_SYSTEM_CONFIG_USE_DISPATCH
+#elif CHIP_SYSTEM_CONFIG_USE_LIBEV
+    virtual void SetLibEvLoop(struct ev_loop * aLibEvLoopP) = 0;
+    virtual struct ev_loop * GetLibEvLoop()                 = 0;
+#endif // CHIP_SYSTEM_CONFIG_USE_DISPATCH/LIBEV
+
+protected:
+    // Expose EventLoopHandler.mState as a non-const reference to sub-classes
+    decltype(EventLoopHandler::mState) & LoopHandlerState(EventLoopHandler & handler) { return handler.mState; }
 };
 
-#endif // CHIP_SYSTEM_CONFIG_USE_SOCKETS
+#endif // CHIP_SYSTEM_CONFIG_USE_SOCKETS || CHIP_SYSTEM_CONFIG_USE_NETWORK_FRAMEWORK
 
 } // namespace System
 } // namespace chip

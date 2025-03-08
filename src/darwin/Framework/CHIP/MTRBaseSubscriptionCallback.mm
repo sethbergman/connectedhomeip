@@ -16,7 +16,9 @@
 
 #import "MTRBaseSubscriptionCallback.h"
 #import "MTRError_Internal.h"
+#import "MTRLogging_Internal.h"
 
+#include <lib/support/FibonacciUtils.h>
 #include <platform/PlatformManager.h>
 
 using namespace chip;
@@ -26,32 +28,60 @@ void MTRBaseSubscriptionCallback::OnReportBegin()
 {
     mAttributeReports = [NSMutableArray new];
     mEventReports = [NSMutableArray new];
+    if (mReportBeginHandler) {
+        mReportBeginHandler();
+    }
 }
 
 // Reports attribute and event data if any exists
 void MTRBaseSubscriptionCallback::ReportData()
 {
+    // At data reporting time, nil out scheduled or currently running interimReportBlock
+    if (mInterimReportBlock) {
+        dispatch_block_cancel(mInterimReportBlock); // no-op when running from mInterimReportBlock
+        mInterimReportBlock = nil;
+    }
+
     __block NSArray * attributeReports = mAttributeReports;
     mAttributeReports = nil;
-    __block auto attributeCallback = mAttributeReportCallback;
+    auto attributeCallback = mAttributeReportCallback;
 
     __block NSArray * eventReports = mEventReports;
     mEventReports = nil;
-    __block auto eventCallback = mEventReportCallback;
+    auto eventCallback = mEventReportCallback;
 
     if (attributeCallback != nil && attributeReports.count) {
-        dispatch_async(mQueue, ^{
-            attributeCallback(attributeReports);
-        });
+        attributeCallback(attributeReports);
     }
+
     if (eventCallback != nil && eventReports.count) {
-        dispatch_async(mQueue, ^{
-            eventCallback(eventReports);
-        });
+        eventCallback(eventReports);
     }
 }
 
-void MTRBaseSubscriptionCallback::OnReportEnd() { ReportData(); }
+void MTRBaseSubscriptionCallback::QueueInterimReport()
+{
+    if (mInterimReportBlock) {
+        return;
+    }
+
+    mInterimReportBlock = dispatch_block_create(DISPATCH_BLOCK_INHERIT_QOS_CLASS, ^{
+        ReportData();
+        // Allocate reports arrays to continue accumulation
+        mAttributeReports = [NSMutableArray new];
+        mEventReports = [NSMutableArray new];
+    });
+
+    dispatch_async(DeviceLayer::PlatformMgrImpl().GetWorkQueue(), mInterimReportBlock);
+}
+
+void MTRBaseSubscriptionCallback::OnReportEnd()
+{
+    ReportData();
+    if (mReportEndHandler) {
+        mReportEndHandler();
+    }
+}
 
 void MTRBaseSubscriptionCallback::OnError(CHIP_ERROR aError)
 {
@@ -81,9 +111,9 @@ void MTRBaseSubscriptionCallback::OnDeallocatePaths(ReadPrepareParams && aReadPr
     }
 
     VerifyOrDie((aReadPrepareParams.mDataVersionFilterListSize == 0 && aReadPrepareParams.mpDataVersionFilterList == nullptr)
-        || (aReadPrepareParams.mDataVersionFilterListSize == 1 && aReadPrepareParams.mpDataVersionFilterList != nullptr));
+        || (aReadPrepareParams.mDataVersionFilterListSize > 0 && aReadPrepareParams.mpDataVersionFilterList != nullptr));
     if (aReadPrepareParams.mpDataVersionFilterList != nullptr) {
-        delete aReadPrepareParams.mpDataVersionFilterList;
+        delete[] aReadPrepareParams.mpDataVersionFilterList;
     }
 
     VerifyOrDie((aReadPrepareParams.mEventPathParamsListSize == 0 && aReadPrepareParams.mpEventPathParamsList == nullptr)
@@ -96,7 +126,8 @@ void MTRBaseSubscriptionCallback::OnDeallocatePaths(ReadPrepareParams && aReadPr
 void MTRBaseSubscriptionCallback::OnSubscriptionEstablished(SubscriptionId aSubscriptionId)
 {
     if (mSubscriptionEstablishedHandler) {
-        dispatch_async(mQueue, mSubscriptionEstablishedHandler);
+        auto subscriptionEstablishedHandler = mSubscriptionEstablishedHandler;
+        subscriptionEstablishedHandler();
     }
 }
 
@@ -105,15 +136,26 @@ CHIP_ERROR MTRBaseSubscriptionCallback::OnResubscriptionNeeded(ReadClient * apRe
     CHIP_ERROR err = ClusterStateCache::Callback::OnResubscriptionNeeded(apReadClient, aTerminationCause);
     ReturnErrorOnFailure(err);
 
+    auto error = [MTRError errorForCHIPErrorCode:aTerminationCause];
+    auto delayMs = @(apReadClient->ComputeTimeTillNextSubscription());
+    CallResubscriptionScheduledHandler(error, delayMs);
+    return CHIP_NO_ERROR;
+}
+
+void MTRBaseSubscriptionCallback::CallResubscriptionScheduledHandler(NSError * error, NSNumber * resubscriptionDelay)
+{
     if (mResubscriptionCallback != nil) {
         auto callback = mResubscriptionCallback;
-        auto error = [MTRError errorForCHIPErrorCode:aTerminationCause];
-        auto delayMs = @(apReadClient->ComputeTimeTillNextSubscription());
-        dispatch_async(mQueue, ^{
-            callback(error, delayMs);
-        });
+        callback(error, resubscriptionDelay);
     }
-    return CHIP_NO_ERROR;
+}
+
+void MTRBaseSubscriptionCallback::OnUnsolicitedMessageFromPublisher(ReadClient *)
+{
+    if (mUnsolicitedMessageFromPublisherHandler) {
+        auto unsolicitedMessageFromPublisherHandler = mUnsolicitedMessageFromPublisherHandler;
+        unsolicitedMessageFromPublisherHandler();
+    }
 }
 
 void MTRBaseSubscriptionCallback::ReportError(CHIP_ERROR aError, bool aCancelSubscription)
@@ -129,19 +171,19 @@ void MTRBaseSubscriptionCallback::ReportError(CHIP_ERROR aError, bool aCancelSub
         return;
     }
 
-    __block ErrorCallback callback = mErrorCallback;
     __block auto * myself = this;
+
+    auto errorCallback = mErrorCallback;
     mErrorCallback = nil;
     mAttributeReportCallback = nil;
     mEventReportCallback = nil;
-    __auto_type onDoneHandler = mOnDoneHandler;
+    auto onDoneHandler = mOnDoneHandler;
     mOnDoneHandler = nil;
-    dispatch_async(mQueue, ^{
-        callback(err);
-        if (onDoneHandler) {
-            onDoneHandler();
-        }
-    });
+
+    errorCallback(err);
+    if (onDoneHandler) {
+        onDoneHandler();
+    }
 
     if (aCancelSubscription) {
         // We can't synchronously delete ourselves, because we're inside one of
@@ -157,5 +199,29 @@ void MTRBaseSubscriptionCallback::ReportError(CHIP_ERROR aError, bool aCancelSub
         dispatch_async(DeviceLayer::PlatformMgrImpl().GetWorkQueue(), ^{
             delete myself;
         });
+    }
+}
+
+void MTRBaseSubscriptionCallback::ClearCachedAttributeState(EndpointId aEndpoint)
+{
+    assertChipStackLockedByCurrentThread();
+    if (mClusterStateCache) {
+        mClusterStateCache->ClearAttributes(aEndpoint);
+    }
+}
+
+void MTRBaseSubscriptionCallback::ClearCachedAttributeState(const ConcreteClusterPath & aCluster)
+{
+    assertChipStackLockedByCurrentThread();
+    if (mClusterStateCache) {
+        mClusterStateCache->ClearAttributes(aCluster);
+    }
+}
+
+void MTRBaseSubscriptionCallback::ClearCachedAttributeState(const ConcreteAttributePath & aAttribute)
+{
+    assertChipStackLockedByCurrentThread();
+    if (mClusterStateCache) {
+        mClusterStateCache->ClearAttribute(aAttribute);
     }
 }

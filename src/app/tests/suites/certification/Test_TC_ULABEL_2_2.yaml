@@ -23,7 +23,8 @@ config:
     endpoint: 1
 
 tests:
-    - label: "Wait for the commissioned device to be retrieved"
+    - label:
+          "Commission DUT to TH (can be skipped if done in a preceding test)."
       cluster: "DelayCommands"
       command: "WaitForCommissionee"
       arguments:
@@ -31,30 +32,33 @@ tests:
               - name: "nodeId"
                 value: nodeId
 
-    - label: "TH writes LabelList attribute from the DUT"
+    - label:
+          "Step 1: TH writes LabelList attribute on the DUT with following
+          entry: 'roomName':'master bedroom 1','orientation':'east',
+          'floor':'2', 'roomType':'bedroom'"
       PICS: ULABEL.S.A0000
       command: "writeAttribute"
-      attribute: "label list"
+      attribute: "LabelList"
       arguments:
           value:
               [
-                  { label: "roomName", value: "master bedroom 1" },
-                  { label: "Orientation", value: "east" },
-                  { label: "floor", value: "2" },
-                  { label: "roomType", value: "bedroom" },
+                  { Label: "roomName", Value: "master bedroom 1" },
+                  { Label: "Orientation", Value: "east" },
+                  { Label: "floor", Value: "2" },
+                  { Label: "roomType", Value: "bedroom" },
               ]
 
-    - label: "TH reads LabelList attribute from the DUT"
+    - label: "Step 2: TH reads LabelList attribute of the DUT"
       PICS: ULABEL.S.A0000
       command: "readAttribute"
-      attribute: "label list"
+      attribute: "LabelList"
       response:
           value:
               [
-                  { label: "roomName", value: "master bedroom 1" },
-                  { label: "Orientation", value: "east" },
-                  { label: "floor", value: "2" },
-                  { label: "roomType", value: "bedroom" },
+                  { Label: "roomName", Value: "master bedroom 1" },
+                  { Label: "Orientation", Value: "east" },
+                  { Label: "floor", Value: "2" },
+                  { Label: "roomType", Value: "bedroom" },
               ]
           constraints:
               type: list

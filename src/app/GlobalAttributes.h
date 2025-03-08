@@ -1,5 +1,5 @@
 /*
- *    Copyright (c) 2022 Project CHIP Authors
+ *    Copyright (c) 2022-2023 Project CHIP Authors
  *    All rights reserved.
  *
  *    Licensed under the Apache License, Version 2.0 (the "License");
@@ -18,6 +18,12 @@
 #pragma once
 
 #include <app-common/zap-generated/ids/Attributes.h>
+#include <app/AppConfig.h>
+#include <app/AttributeValueEncoder.h>
+#include <app/ConcreteAttributePath.h>
+#include <app/data-model-provider/ActionReturnStatus.h>
+#include <app/data-model-provider/Provider.h>
+#include <lib/core/DataModelTypes.h>
 #include <lib/support/CodeUtils.h>
 
 namespace chip {
@@ -35,6 +41,18 @@ constexpr AttributeId GlobalAttributesNotInMetadata[] = {
 };
 
 static_assert(ArrayIsSorted(GlobalAttributesNotInMetadata), "Array of global attribute ids must be sorted");
+
+bool IsSupportedGlobalAttributeNotInMetadata(AttributeId attributeId);
+
+/**
+ * Reads a `IsSupportedGlobalAttributeNotInMetadata` attribute into `encoder`.
+ *
+ * Preconditions:
+ *   - `path` MUST be a valid cluster path inside `provider` and its mAttributeID
+ *     MUST be `IsSupportedGlobalAttributeNotInMetadata`
+ */
+DataModel::ActionReturnStatus ReadGlobalAttributeFromMetadata(DataModel::Provider * provider, const ConcreteAttributePath & path,
+                                                              AttributeValueEncoder & encoder);
 
 } // namespace app
 } // namespace chip

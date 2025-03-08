@@ -23,16 +23,14 @@
 
 #include "ContentAppAttributeDelegate.h"
 #include "ContentAppCommandDelegate.h"
-#include <app-common/zap-generated/attribute-id.h>
-#include <app-common/zap-generated/cluster-id.h>
 #include <app-common/zap-generated/ids/Attributes.h>
 #include <app-common/zap-generated/ids/Clusters.h>
 #include <app/CommandHandler.h>
-#include <app/InteractionModelEngine.h>
+#include <app/CommandHandlerInterfaceRegistry.h>
 #include <app/reporting/reporting.h>
 #include <app/server/Dnssd.h>
 #include <app/server/Server.h>
-#include <app/util/af.h>
+#include <app/util/endpoint-config-api.h>
 #include <cstdio>
 #include <inttypes.h>
 #include <jni.h>
@@ -45,9 +43,14 @@
 #include <lib/support/CodeUtils.h>
 #include <lib/support/ZclString.h>
 #include <platform/CHIPDeviceLayer.h>
+#include <platform/DeviceInstanceInfoProvider.h>
+
+#include <string>
 
 using namespace chip;
+using namespace chip::app::Clusters;
 using namespace chip::AppPlatform;
+using namespace chip::DeviceLayer;
 
 #if CHIP_DEVICE_CONFIG_APP_PLATFORM_ENABLED
 ContentAppFactoryImpl gFactory;
@@ -86,34 +89,36 @@ static const int kDescriptorAttributeArraySize = 254;
 
 // Declare Descriptor cluster attributes
 DECLARE_DYNAMIC_ATTRIBUTE_LIST_BEGIN(descriptorAttrs)
-DECLARE_DYNAMIC_ATTRIBUTE(ZCL_DEVICE_LIST_ATTRIBUTE_ID, ARRAY, kDescriptorAttributeArraySize, 0),     /* device list */
-    DECLARE_DYNAMIC_ATTRIBUTE(ZCL_SERVER_LIST_ATTRIBUTE_ID, ARRAY, kDescriptorAttributeArraySize, 0), /* server list */
-    DECLARE_DYNAMIC_ATTRIBUTE(ZCL_CLIENT_LIST_ATTRIBUTE_ID, ARRAY, kDescriptorAttributeArraySize, 0), /* client list */
-    DECLARE_DYNAMIC_ATTRIBUTE(ZCL_PARTS_LIST_ATTRIBUTE_ID, ARRAY, kDescriptorAttributeArraySize, 0),  /* parts list */
+DECLARE_DYNAMIC_ATTRIBUTE(Descriptor::Attributes::DeviceTypeList::Id, ARRAY, kDescriptorAttributeArraySize, 0), /* device list */
+    DECLARE_DYNAMIC_ATTRIBUTE(Descriptor::Attributes::ServerList::Id, ARRAY, kDescriptorAttributeArraySize, 0), /* server list */
+    DECLARE_DYNAMIC_ATTRIBUTE(Descriptor::Attributes::ClientList::Id, ARRAY, kDescriptorAttributeArraySize, 0), /* client list */
+    DECLARE_DYNAMIC_ATTRIBUTE(Descriptor::Attributes::PartsList::Id, ARRAY, kDescriptorAttributeArraySize, 0),  /* parts list */
     DECLARE_DYNAMIC_ATTRIBUTE_LIST_END();
 
 // Declare Application Basic information cluster attributes
 DECLARE_DYNAMIC_ATTRIBUTE_LIST_BEGIN(applicationBasicAttrs)
-DECLARE_DYNAMIC_ATTRIBUTE(ZCL_APPLICATION_VENDOR_NAME_ATTRIBUTE_ID, CHAR_STRING, kNameSize, 0), /* VendorName */
-    DECLARE_DYNAMIC_ATTRIBUTE(ZCL_APPLICATION_VENDOR_ID_ATTRIBUTE_ID, INT16U, 1, 0),            /* VendorID */
-    DECLARE_DYNAMIC_ATTRIBUTE(ZCL_APPLICATION_NAME_ATTRIBUTE_ID, CHAR_STRING, kNameSize, 0),    /* ApplicationName */
-    DECLARE_DYNAMIC_ATTRIBUTE(ZCL_APPLICATION_PRODUCT_ID_ATTRIBUTE_ID, INT16U, 1, 0),           /* ProductID */
-    DECLARE_DYNAMIC_ATTRIBUTE(ZCL_APPLICATION_STATUS_ATTRIBUTE_ID, INT8U, 1, 0),                /* ApplicationStatus */
-    DECLARE_DYNAMIC_ATTRIBUTE(ZCL_APPLICATION_VERSION_ATTRIBUTE_ID, CHAR_STRING, kNameSize, 0), /* ApplicationVersion */
-    DECLARE_DYNAMIC_ATTRIBUTE(ZCL_APPLICATION_ALLOWED_VENDOR_LIST_ATTRIBUTE_ID, ARRAY, kDescriptorAttributeArraySize,
+DECLARE_DYNAMIC_ATTRIBUTE(ApplicationBasic::Attributes::VendorName::Id, CHAR_STRING, kNameSize, 0),          /* VendorName */
+    DECLARE_DYNAMIC_ATTRIBUTE(ApplicationBasic::Attributes::VendorID::Id, INT16U, 1, 0),                     /* VendorID */
+    DECLARE_DYNAMIC_ATTRIBUTE(ApplicationBasic::Attributes::ApplicationName::Id, CHAR_STRING, kNameSize, 0), /* ApplicationName */
+    DECLARE_DYNAMIC_ATTRIBUTE(ApplicationBasic::Attributes::ProductID::Id, INT16U, 1, 0),                    /* ProductID */
+    DECLARE_DYNAMIC_ATTRIBUTE(ApplicationBasic::Attributes::Status::Id, INT8U, 1, 0),                        /* ApplicationStatus */
+    DECLARE_DYNAMIC_ATTRIBUTE(ApplicationBasic::Attributes::ApplicationVersion::Id, CHAR_STRING, kNameSize,
+                              0), /* ApplicationVersion */
+    DECLARE_DYNAMIC_ATTRIBUTE(ApplicationBasic::Attributes::AllowedVendorList::Id, ARRAY, kDescriptorAttributeArraySize,
                               0), /* AllowedVendorList */
     DECLARE_DYNAMIC_ATTRIBUTE_LIST_END();
 
 // Declare Keypad Input cluster attributes
 DECLARE_DYNAMIC_ATTRIBUTE_LIST_BEGIN(keypadInputAttrs)
-DECLARE_DYNAMIC_ATTRIBUTE(ZCL_FEATURE_MAP_SERVER_ATTRIBUTE_ID, BITMAP32, 4, 0), /* FeatureMap */
+DECLARE_DYNAMIC_ATTRIBUTE(KeypadInput::Attributes::FeatureMap::Id, BITMAP32, 4, 0), /* FeatureMap */
     DECLARE_DYNAMIC_ATTRIBUTE_LIST_END();
 
 // Declare Application Launcher cluster attributes
 // NOTE: Does not make sense for content app to be able to set the AP feature flag
 DECLARE_DYNAMIC_ATTRIBUTE_LIST_BEGIN(applicationLauncherAttrs)
-DECLARE_DYNAMIC_ATTRIBUTE(ZCL_APPLICATION_LAUNCHER_LIST_ATTRIBUTE_ID, ARRAY, kDescriptorAttributeArraySize, 0), /* catalog list */
-    DECLARE_DYNAMIC_ATTRIBUTE(ZCL_APPLICATION_LAUNCHER_CURRENT_APP_ATTRIBUTE_ID, STRUCT, 1, 0),                 /* current app */
+DECLARE_DYNAMIC_ATTRIBUTE(ApplicationLauncher::Attributes::CatalogList::Id, ARRAY, kDescriptorAttributeArraySize,
+                          0),                                                                 /* catalog list */
+    DECLARE_DYNAMIC_ATTRIBUTE(ApplicationLauncher::Attributes::CurrentApp::Id, STRUCT, 1, 0), /* current app */
     DECLARE_DYNAMIC_ATTRIBUTE_LIST_END();
 
 // Declare Account Login cluster attributes
@@ -122,37 +127,37 @@ DECLARE_DYNAMIC_ATTRIBUTE_LIST_END();
 
 // Declare Content Launcher cluster attributes
 DECLARE_DYNAMIC_ATTRIBUTE_LIST_BEGIN(contentLauncherAttrs)
-DECLARE_DYNAMIC_ATTRIBUTE(ZCL_CONTENT_LAUNCHER_ACCEPT_HEADER_ATTRIBUTE_ID, ARRAY, kDescriptorAttributeArraySize,
+DECLARE_DYNAMIC_ATTRIBUTE(ContentLauncher::Attributes::AcceptHeader::Id, ARRAY, kDescriptorAttributeArraySize,
                           0), /* accept header list */
-    DECLARE_DYNAMIC_ATTRIBUTE(ZCL_CONTENT_LAUNCHER_SUPPORTED_STREAMING_PROTOCOLS_ATTRIBUTE_ID, BITMAP32, 1,
-                              0),                                                   /* streaming protocols */
-    DECLARE_DYNAMIC_ATTRIBUTE(ZCL_FEATURE_MAP_SERVER_ATTRIBUTE_ID, BITMAP32, 4, 0), /* FeatureMap */
+    DECLARE_DYNAMIC_ATTRIBUTE(ContentLauncher::Attributes::SupportedStreamingProtocols::Id, BITMAP32, 1,
+                              0),                                                           /* streaming protocols */
+    DECLARE_DYNAMIC_ATTRIBUTE(ContentLauncher::Attributes::FeatureMap::Id, BITMAP32, 4, 0), /* FeatureMap */
     DECLARE_DYNAMIC_ATTRIBUTE_LIST_END();
 
 // Declare Media Playback cluster attributes
 DECLARE_DYNAMIC_ATTRIBUTE_LIST_BEGIN(mediaPlaybackAttrs)
-DECLARE_DYNAMIC_ATTRIBUTE(ZCL_MEDIA_PLAYBACK_STATE_ATTRIBUTE_ID, ENUM8, 1, 0),                          /* current state */
-    DECLARE_DYNAMIC_ATTRIBUTE(ZCL_MEDIA_PLAYBACK_START_TIME_ATTRIBUTE_ID, EPOCH_US, 1, 0),              /* start time */
-    DECLARE_DYNAMIC_ATTRIBUTE(ZCL_MEDIA_PLAYBACK_DURATION_ATTRIBUTE_ID, INT64U, 1, 0),                  /* duration */
-    DECLARE_DYNAMIC_ATTRIBUTE(ZCL_MEDIA_PLAYBACK_PLAYBACK_POSITION_ATTRIBUTE_ID, STRUCT, 1, 0),         /* playback speed */
-    DECLARE_DYNAMIC_ATTRIBUTE(ZCL_MEDIA_PLAYBACK_PLAYBACK_SPEED_ATTRIBUTE_ID, SINGLE, 1, 0),            /* playback speed */
-    DECLARE_DYNAMIC_ATTRIBUTE(ZCL_MEDIA_PLAYBACK_PLAYBACK_SEEK_RANGE_END_ATTRIBUTE_ID, INT64U, 1, 0),   /* seek range end */
-    DECLARE_DYNAMIC_ATTRIBUTE(ZCL_MEDIA_PLAYBACK_PLAYBACK_SEEK_RANGE_START_ATTRIBUTE_ID, INT64U, 1, 0), /* seek range start */
-    DECLARE_DYNAMIC_ATTRIBUTE(ZCL_FEATURE_MAP_SERVER_ATTRIBUTE_ID, BITMAP32, 4, 0),                     /* FeatureMap */
+DECLARE_DYNAMIC_ATTRIBUTE(MediaPlayback::Attributes::CurrentState::Id, ENUM8, 1, 0),         /* current state */
+    DECLARE_DYNAMIC_ATTRIBUTE(MediaPlayback::Attributes::StartTime::Id, EPOCH_US, 1, 0),     /* start time */
+    DECLARE_DYNAMIC_ATTRIBUTE(MediaPlayback::Attributes::Duration::Id, INT64U, 1, 0),        /* duration */
+    DECLARE_DYNAMIC_ATTRIBUTE(MediaPlayback::Attributes::SampledPosition::Id, STRUCT, 1, 0), /* SampledPosition */
+    DECLARE_DYNAMIC_ATTRIBUTE(MediaPlayback::Attributes::PlaybackSpeed::Id, SINGLE, 1, 0),   /* playback speed */
+    DECLARE_DYNAMIC_ATTRIBUTE(MediaPlayback::Attributes::SeekRangeEnd::Id, INT64U, 1, 0),    /* seek range end */
+    DECLARE_DYNAMIC_ATTRIBUTE(MediaPlayback::Attributes::SeekRangeStart::Id, INT64U, 1, 0),  /* seek range start */
+    DECLARE_DYNAMIC_ATTRIBUTE(MediaPlayback::Attributes::FeatureMap::Id, BITMAP32, 4, 0),    /* FeatureMap */
     DECLARE_DYNAMIC_ATTRIBUTE_LIST_END();
 
 // Declare Target Navigator cluster attributes
 DECLARE_DYNAMIC_ATTRIBUTE_LIST_BEGIN(targetNavigatorAttrs)
-DECLARE_DYNAMIC_ATTRIBUTE(ZCL_TARGET_NAVIGATOR_LIST_ATTRIBUTE_ID, ARRAY, kDescriptorAttributeArraySize, 0), /* target list */
-    DECLARE_DYNAMIC_ATTRIBUTE(ZCL_TARGET_NAVIGATOR_CURRENT_TARGET_ATTRIBUTE_ID, INT8U, 1, 0),               /* current target */
+DECLARE_DYNAMIC_ATTRIBUTE(TargetNavigator::Attributes::TargetList::Id, ARRAY, kDescriptorAttributeArraySize, 0), /* target list */
+    DECLARE_DYNAMIC_ATTRIBUTE(TargetNavigator::Attributes::CurrentTarget::Id, INT8U, 1, 0), /* current target */
     DECLARE_DYNAMIC_ATTRIBUTE_LIST_END();
 
 // Declare Channel cluster attributes
 DECLARE_DYNAMIC_ATTRIBUTE_LIST_BEGIN(channelAttrs)
-DECLARE_DYNAMIC_ATTRIBUTE(ZCL_CHANNEL_LIST_ATTRIBUTE_ID, ARRAY, kDescriptorAttributeArraySize, 0), /* channel list */
-    DECLARE_DYNAMIC_ATTRIBUTE(ZCL_CHANNEL_LINEUP_ATTRIBUTE_ID, STRUCT, 1, 0),                      /* lineup */
-    DECLARE_DYNAMIC_ATTRIBUTE(ZCL_CHANNEL_CURRENT_CHANNEL_ATTRIBUTE_ID, STRUCT, 1, 0),             /* current channel */
-    DECLARE_DYNAMIC_ATTRIBUTE(ZCL_FEATURE_MAP_SERVER_ATTRIBUTE_ID, BITMAP32, 4, 0),                /* FeatureMap */
+DECLARE_DYNAMIC_ATTRIBUTE(Channel::Attributes::ChannelList::Id, ARRAY, kDescriptorAttributeArraySize, 0), /* channel list */
+    DECLARE_DYNAMIC_ATTRIBUTE(Channel::Attributes::Lineup::Id, STRUCT, 1, 0),                             /* lineup */
+    DECLARE_DYNAMIC_ATTRIBUTE(Channel::Attributes::CurrentChannel::Id, STRUCT, 1, 0),                     /* current channel */
+    DECLARE_DYNAMIC_ATTRIBUTE(Channel::Attributes::FeatureMap::Id, BITMAP32, 4, 0),                       /* FeatureMap */
     DECLARE_DYNAMIC_ATTRIBUTE_LIST_END();
 
 constexpr CommandId keypadInputIncomingCommands[] = {
@@ -190,17 +195,17 @@ constexpr CommandId contentLauncherIncomingCommands[] = {
     kInvalidCommandId,
 };
 constexpr CommandId contentLauncherOutgoingCommands[] = {
-    app::Clusters::ContentLauncher::Commands::LaunchResponse::Id,
+    app::Clusters::ContentLauncher::Commands::LauncherResponse::Id,
     kInvalidCommandId,
 };
 // TODO: Sort out when the optional commands here should be listed.
 constexpr CommandId mediaPlaybackIncomingCommands[] = {
-    app::Clusters::MediaPlayback::Commands::Play::Id,         app::Clusters::MediaPlayback::Commands::Pause::Id,
-    app::Clusters::MediaPlayback::Commands::StopPlayback::Id, app::Clusters::MediaPlayback::Commands::StartOver::Id,
-    app::Clusters::MediaPlayback::Commands::Previous::Id,     app::Clusters::MediaPlayback::Commands::Next::Id,
-    app::Clusters::MediaPlayback::Commands::Rewind::Id,       app::Clusters::MediaPlayback::Commands::FastForward::Id,
-    app::Clusters::MediaPlayback::Commands::SkipForward::Id,  app::Clusters::MediaPlayback::Commands::SkipBackward::Id,
-    app::Clusters::MediaPlayback::Commands::Seek::Id,         kInvalidCommandId,
+    app::Clusters::MediaPlayback::Commands::Play::Id,        app::Clusters::MediaPlayback::Commands::Pause::Id,
+    app::Clusters::MediaPlayback::Commands::Stop::Id,        app::Clusters::MediaPlayback::Commands::StartOver::Id,
+    app::Clusters::MediaPlayback::Commands::Previous::Id,    app::Clusters::MediaPlayback::Commands::Next::Id,
+    app::Clusters::MediaPlayback::Commands::Rewind::Id,      app::Clusters::MediaPlayback::Commands::FastForward::Id,
+    app::Clusters::MediaPlayback::Commands::SkipForward::Id, app::Clusters::MediaPlayback::Commands::SkipBackward::Id,
+    app::Clusters::MediaPlayback::Commands::Seek::Id,        kInvalidCommandId,
 };
 constexpr CommandId mediaPlaybackOutgoingCommands[] = {
     app::Clusters::MediaPlayback::Commands::PlaybackResponse::Id,
@@ -227,21 +232,22 @@ constexpr CommandId channelOutgoingCommands[] = {
 };
 // Declare Cluster List for Content App endpoint
 DECLARE_DYNAMIC_CLUSTER_LIST_BEGIN(contentAppClusters)
-DECLARE_DYNAMIC_CLUSTER(ZCL_DESCRIPTOR_CLUSTER_ID, descriptorAttrs, nullptr, nullptr),
-    DECLARE_DYNAMIC_CLUSTER(ZCL_APPLICATION_BASIC_CLUSTER_ID, applicationBasicAttrs, nullptr, nullptr),
-    DECLARE_DYNAMIC_CLUSTER(ZCL_KEYPAD_INPUT_CLUSTER_ID, keypadInputAttrs, keypadInputIncomingCommands,
+DECLARE_DYNAMIC_CLUSTER(app::Clusters::Descriptor::Id, descriptorAttrs, ZAP_CLUSTER_MASK(SERVER), nullptr, nullptr),
+    DECLARE_DYNAMIC_CLUSTER(app::Clusters::ApplicationBasic::Id, applicationBasicAttrs, ZAP_CLUSTER_MASK(SERVER), nullptr, nullptr),
+    DECLARE_DYNAMIC_CLUSTER(app::Clusters::KeypadInput::Id, keypadInputAttrs, ZAP_CLUSTER_MASK(SERVER), keypadInputIncomingCommands,
                             keypadInputOutgoingCommands),
-    DECLARE_DYNAMIC_CLUSTER(ZCL_APPLICATION_LAUNCHER_CLUSTER_ID, applicationLauncherAttrs, applicationLauncherIncomingCommands,
-                            applicationLauncherOutgoingCommands),
-    DECLARE_DYNAMIC_CLUSTER(ZCL_ACCOUNT_LOGIN_CLUSTER_ID, accountLoginAttrs, accountLoginIncomingCommands,
-                            accountLoginOutgoingCommands),
-    DECLARE_DYNAMIC_CLUSTER(ZCL_CONTENT_LAUNCH_CLUSTER_ID, contentLauncherAttrs, contentLauncherIncomingCommands,
-                            contentLauncherOutgoingCommands),
-    DECLARE_DYNAMIC_CLUSTER(ZCL_MEDIA_PLAYBACK_CLUSTER_ID, mediaPlaybackAttrs, mediaPlaybackIncomingCommands,
-                            mediaPlaybackOutgoingCommands),
-    DECLARE_DYNAMIC_CLUSTER(ZCL_TARGET_NAVIGATOR_CLUSTER_ID, targetNavigatorAttrs, targetNavigatorIncomingCommands,
-                            targetNavigatorOutgoingCommands),
-    DECLARE_DYNAMIC_CLUSTER(ZCL_CHANNEL_CLUSTER_ID, channelAttrs, channelIncomingCommands, channelOutgoingCommands),
+    DECLARE_DYNAMIC_CLUSTER(app::Clusters::ApplicationLauncher::Id, applicationLauncherAttrs, ZAP_CLUSTER_MASK(SERVER),
+                            applicationLauncherIncomingCommands, applicationLauncherOutgoingCommands),
+    DECLARE_DYNAMIC_CLUSTER(app::Clusters::AccountLogin::Id, accountLoginAttrs, ZAP_CLUSTER_MASK(SERVER),
+                            accountLoginIncomingCommands, accountLoginOutgoingCommands),
+    DECLARE_DYNAMIC_CLUSTER(app::Clusters::ContentLauncher::Id, contentLauncherAttrs, ZAP_CLUSTER_MASK(SERVER),
+                            contentLauncherIncomingCommands, contentLauncherOutgoingCommands),
+    DECLARE_DYNAMIC_CLUSTER(app::Clusters::MediaPlayback::Id, mediaPlaybackAttrs, ZAP_CLUSTER_MASK(SERVER),
+                            mediaPlaybackIncomingCommands, mediaPlaybackOutgoingCommands),
+    DECLARE_DYNAMIC_CLUSTER(app::Clusters::TargetNavigator::Id, targetNavigatorAttrs, ZAP_CLUSTER_MASK(SERVER),
+                            targetNavigatorIncomingCommands, targetNavigatorOutgoingCommands),
+    DECLARE_DYNAMIC_CLUSTER(app::Clusters::Channel::Id, channelAttrs, ZAP_CLUSTER_MASK(SERVER), channelIncomingCommands,
+                            channelOutgoingCommands),
     DECLARE_DYNAMIC_CLUSTER_LIST_END;
 
 // Declare Content App endpoint
@@ -249,13 +255,30 @@ DECLARE_DYNAMIC_ENDPOINT(contentAppEndpoint, contentAppClusters);
 
 namespace {
 
-DataVersion gDataVersions[APP_LIBRARY_SIZE][ArraySize(contentAppClusters)];
+DataVersion gDataVersions[APP_LIBRARY_SIZE][MATTER_ARRAY_SIZE(contentAppClusters)];
 
 EmberAfDeviceType gContentAppDeviceType[] = { { DEVICE_TYPE_CONTENT_APP, 1 } };
 
+std::vector<SupportedCluster> make_default_supported_clusters()
+{
+    return std::vector<ContentApp::SupportedCluster>{ { Descriptor::Id },      { ApplicationBasic::Id },
+                                                      { KeypadInput::Id },     { ApplicationLauncher::Id },
+                                                      { AccountLogin::Id },    { ContentLauncher::Id },
+                                                      { TargetNavigator::Id }, { Channel::Id } };
+}
+
 } // anonymous namespace
 
-ContentAppFactoryImpl::ContentAppFactoryImpl() {}
+ContentAppFactoryImpl::ContentAppFactoryImpl() :
+    mContentApps{ new ContentAppImpl("Vendor1", 1, "exampleid", 11, "Version1", "20202021", make_default_supported_clusters(),
+                                     nullptr, nullptr),
+                  new ContentAppImpl("Vendor2", 65521, "exampleString", 32768, "Version2", "20202021",
+                                     make_default_supported_clusters(), nullptr, nullptr),
+                  new ContentAppImpl("Vendor3", 9050, "App3", 22, "Version3", "20202021", make_default_supported_clusters(),
+                                     nullptr, nullptr),
+                  new ContentAppImpl("TestSuiteVendor", 1111, "applicationId", 22, "v2", "20202021",
+                                     make_default_supported_clusters(), nullptr, nullptr) }
+{}
 
 uint16_t ContentAppFactoryImpl::GetPlatformCatalogVendorId()
 {
@@ -265,6 +288,11 @@ uint16_t ContentAppFactoryImpl::GetPlatformCatalogVendorId()
 void ContentAppFactoryImpl::setContentAppAttributeDelegate(ContentAppAttributeDelegate * attributeDelegate)
 {
     mAttributeDelegate = attributeDelegate;
+}
+
+void ContentAppFactoryImpl::setContentAppCommandDelegate(ContentAppCommandDelegate * commandDelegate)
+{
+    mCommandDelegate = commandDelegate;
 }
 
 CHIP_ERROR ContentAppFactoryImpl::LookupCatalogVendorApp(uint16_t vendorId, uint16_t productId, CatalogVendorApp * destinationApp)
@@ -315,6 +343,7 @@ ContentApp * ContentAppFactoryImpl::LoadContentApp(const CatalogVendorApp & vend
         ChipLogProgress(DeviceLayer, " Looking next=%s ", app->GetApplicationBasicDelegate()->GetCatalogVendorApp()->applicationId);
         if (app->GetApplicationBasicDelegate()->GetCatalogVendorApp()->Matches(vendorApp))
         {
+            // need to think about loading apk here?
             ContentAppPlatform::GetInstance().AddContentApp(app, &contentAppEndpoint, Span<DataVersion>(gDataVersions[i]),
                                                             Span<const EmberAfDeviceType>(gContentAppDeviceType));
             return app;
@@ -326,36 +355,125 @@ ContentApp * ContentAppFactoryImpl::LoadContentApp(const CatalogVendorApp & vend
     return nullptr;
 }
 
-EndpointId ContentAppFactoryImpl::AddContentApp(const char * szVendorName, uint16_t vendorId, const char * szApplicationName,
-                                                uint16_t productId, const char * szApplicationVersion, jobject manager)
+class DevicePairedCommand : public Controller::DevicePairingDelegate
 {
-    DataVersion * dataVersionBuf = new DataVersion[ArraySize(contentAppClusters)];
-    ContentAppImpl * app         = new ContentAppImpl(szVendorName, vendorId, szApplicationName, productId, szApplicationVersion,
-                                              "20202021", mAttributeDelegate);
-    EndpointId epId              = ContentAppPlatform::GetInstance().AddContentApp(
-        app, &contentAppEndpoint, Span<DataVersion>(dataVersionBuf, ArraySize(contentAppClusters)),
+public:
+    struct CallbackContext
+    {
+        uint16_t vendorId;
+        uint16_t productId;
+        chip::NodeId nodeId;
+
+        CallbackContext(uint16_t vId, uint16_t pId, chip::NodeId nId) : vendorId(vId), productId(pId), nodeId(nId) {}
+    };
+    DevicePairedCommand(uint16_t vendorId, uint16_t productId, chip::NodeId nodeId) :
+        mOnDeviceConnectedCallback(OnDeviceConnectedFn, this), mOnDeviceConnectionFailureCallback(OnDeviceConnectionFailureFn, this)
+    {
+        mContext = std::make_shared<CallbackContext>(vendorId, productId, nodeId);
+    }
+
+    static void OnDeviceConnectedFn(void * context, chip::Messaging::ExchangeManager & exchangeMgr,
+                                    const chip::SessionHandle & sessionHandle)
+    {
+        auto * pairingCommand = static_cast<DevicePairedCommand *>(context);
+        auto cbContext        = pairingCommand->mContext;
+
+        if (pairingCommand)
+        {
+            ChipLogProgress(DeviceLayer,
+                            "OnDeviceConnectedFn - Updating ACL for node id: " ChipLogFormatX64
+                            " and vendor id: %d and product id: %d",
+                            ChipLogValueX64(cbContext->nodeId), cbContext->vendorId, cbContext->productId);
+
+            GetCommissionerDiscoveryController()->CommissioningSucceeded(cbContext->vendorId, cbContext->productId,
+                                                                         cbContext->nodeId, exchangeMgr, sessionHandle);
+        }
+    }
+
+    static void OnDeviceConnectionFailureFn(void * context, const ScopedNodeId & peerId, CHIP_ERROR error)
+    {
+        auto * pairingCommand = static_cast<DevicePairedCommand *>(context);
+        auto cbContext        = pairingCommand->mContext;
+
+        if (pairingCommand)
+        {
+            ChipLogProgress(DeviceLayer,
+                            "OnDeviceConnectionFailureFn - Not updating ACL for node id: " ChipLogFormatX64
+                            " and vendor id: %d and product id: %d",
+                            ChipLogValueX64(cbContext->nodeId), cbContext->vendorId, cbContext->productId);
+            // TODO: Remove Node Id
+        }
+    }
+
+    chip::Callback::Callback<chip::OnDeviceConnected> mOnDeviceConnectedCallback;
+    chip::Callback::Callback<chip::OnDeviceConnectionFailure> mOnDeviceConnectionFailureCallback;
+    std::shared_ptr<CallbackContext> mContext;
+};
+
+void refreshConnectedClientsAcl(uint16_t vendorId, uint16_t productId, ContentAppImpl * app)
+{
+
+    std::set<NodeId> nodeIds = ContentAppPlatform::GetInstance().GetNodeIdsForContentApp(vendorId, productId);
+
+    for (const auto & allowedVendor : app->GetApplicationBasicDelegate()->GetAllowedVendorList())
+    {
+        std::set<NodeId> tempNodeIds = ContentAppPlatform::GetInstance().GetNodeIdsForAllowedVendorId(allowedVendor);
+
+        nodeIds.insert(tempNodeIds.begin(), tempNodeIds.end());
+    }
+
+    for (const auto & nodeId : nodeIds)
+    {
+
+        ChipLogProgress(DeviceLayer,
+                        "Creating Pairing Command with node id: " ChipLogFormatX64 " and vendor id: %d and product id: %d",
+                        ChipLogValueX64(nodeId), vendorId, productId);
+
+        std::shared_ptr<DevicePairedCommand> pairingCommand = std::make_shared<DevicePairedCommand>(vendorId, productId, nodeId);
+
+        GetDeviceCommissioner()->GetConnectedDevice(nodeId, &pairingCommand->mOnDeviceConnectedCallback,
+                                                    &pairingCommand->mOnDeviceConnectionFailureCallback);
+    }
+}
+
+EndpointId ContentAppFactoryImpl::AddContentApp(const char * szVendorName, uint16_t vendorId, const char * szApplicationName,
+                                                uint16_t productId, const char * szApplicationVersion,
+                                                std::vector<SupportedCluster> supportedClusters, jobject manager)
+{
+    DataVersion * dataVersionBuf = new DataVersion[MATTER_ARRAY_SIZE(contentAppClusters)];
+    ContentAppImpl * app = new ContentAppImpl(szVendorName, vendorId, szApplicationName, productId, szApplicationVersion, "",
+                                              std::move(supportedClusters), mAttributeDelegate, mCommandDelegate);
+    EndpointId epId      = ContentAppPlatform::GetInstance().AddContentApp(
+        app, &contentAppEndpoint, Span<DataVersion>(dataVersionBuf, MATTER_ARRAY_SIZE(contentAppClusters)),
         Span<const EmberAfDeviceType>(gContentAppDeviceType));
     ChipLogProgress(DeviceLayer, "ContentAppFactoryImpl AddContentApp endpoint returned %d. Endpoint set %d", epId,
                     app->GetEndpointId());
     mContentApps.push_back(app);
     mDataVersions.push_back(dataVersionBuf);
+
+    refreshConnectedClientsAcl(vendorId, productId, app);
+
     return epId;
 }
 
 EndpointId ContentAppFactoryImpl::AddContentApp(const char * szVendorName, uint16_t vendorId, const char * szApplicationName,
-                                                uint16_t productId, const char * szApplicationVersion, jobject manager,
-                                                EndpointId desiredEndpointId)
+                                                uint16_t productId, const char * szApplicationVersion,
+                                                std::vector<SupportedCluster> supportedClusters, EndpointId desiredEndpointId,
+                                                jobject manager)
 {
-    DataVersion * dataVersionBuf = new DataVersion[ArraySize(contentAppClusters)];
-    ContentAppImpl * app         = new ContentAppImpl(szVendorName, vendorId, szApplicationName, productId, szApplicationVersion,
-                                              "20202021", mAttributeDelegate);
-    EndpointId epId              = ContentAppPlatform::GetInstance().AddContentApp(
-        app, &contentAppEndpoint, Span<DataVersion>(dataVersionBuf, ArraySize(contentAppClusters)),
+    DataVersion * dataVersionBuf = new DataVersion[MATTER_ARRAY_SIZE(contentAppClusters)];
+    ContentAppImpl * app = new ContentAppImpl(szVendorName, vendorId, szApplicationName, productId, szApplicationVersion, "",
+                                              std::move(supportedClusters), mAttributeDelegate, mCommandDelegate);
+    EndpointId epId      = ContentAppPlatform::GetInstance().AddContentApp(
+        app, &contentAppEndpoint, Span<DataVersion>(dataVersionBuf, MATTER_ARRAY_SIZE(contentAppClusters)),
         Span<const EmberAfDeviceType>(gContentAppDeviceType), desiredEndpointId);
     ChipLogProgress(DeviceLayer, "ContentAppFactoryImpl AddContentApp endpoint returned %d. Endpoint set %d", epId,
                     app->GetEndpointId());
     mContentApps.push_back(app);
     mDataVersions.push_back(dataVersionBuf);
+
+    refreshConnectedClientsAcl(vendorId, productId, app);
+
     return epId;
 }
 
@@ -385,6 +503,18 @@ EndpointId ContentAppFactoryImpl::RemoveContentApp(EndpointId epId)
     return kInvalidEndpointId;
 }
 
+void ContentAppFactoryImpl::LogInstalledApps()
+{
+    for (auto & contentApp : mContentApps)
+    {
+        ChipLogProgress(DeviceLayer, "Content app vid=%d pid=%d id=%s is on ep=%d",
+                        contentApp->GetApplicationBasicDelegate()->HandleGetVendorId(),
+                        contentApp->GetApplicationBasicDelegate()->HandleGetProductId(),
+                        contentApp->GetApplicationBasicDelegate()->GetCatalogVendorApp()->GetApplicationId(),
+                        contentApp->GetEndpointId());
+    }
+}
+
 void ContentAppFactoryImpl::AddAdminVendorId(uint16_t vendorId)
 {
     mAdminVendorIds.push_back(vendorId);
@@ -403,6 +533,39 @@ Access::Privilege ContentAppFactoryImpl::GetVendorPrivilege(uint16_t vendorId)
     return Access::Privilege::kOperate;
 }
 
+std::list<ClusterId> ContentAppFactoryImpl::GetAllowedClusterListForStaticEndpoint(EndpointId endpointId, uint16_t vendorId,
+                                                                                   uint16_t productId)
+{
+    if (endpointId == kLocalVideoPlayerEndpointId)
+    {
+        if (GetVendorPrivilege(vendorId) == Access::Privilege::kAdminister)
+        {
+            ChipLogProgress(DeviceLayer,
+                            "ContentAppFactoryImpl GetAllowedClusterListForStaticEndpoint priviledged vendor accessible clusters "
+                            "being returned.");
+            return { chip::app::Clusters::Descriptor::Id,
+                     chip::app::Clusters::OnOff::Id,
+                     chip::app::Clusters::WakeOnLan::Id,
+                     chip::app::Clusters::MediaPlayback::Id,
+                     chip::app::Clusters::LowPower::Id,
+                     chip::app::Clusters::KeypadInput::Id,
+                     chip::app::Clusters::ContentLauncher::Id,
+                     chip::app::Clusters::AudioOutput::Id,
+                     chip::app::Clusters::ApplicationLauncher::Id,
+                     chip::app::Clusters::Messages::Id };
+        }
+        ChipLogProgress(
+            DeviceLayer,
+            "ContentAppFactoryImpl GetAllowedClusterListForStaticEndpoint operator vendor accessible clusters being returned.");
+        return { chip::app::Clusters::Descriptor::Id,      chip::app::Clusters::OnOff::Id,
+                 chip::app::Clusters::WakeOnLan::Id,       chip::app::Clusters::MediaPlayback::Id,
+                 chip::app::Clusters::LowPower::Id,        chip::app::Clusters::KeypadInput::Id,
+                 chip::app::Clusters::ContentLauncher::Id, chip::app::Clusters::AudioOutput::Id,
+                 chip::app::Clusters::Messages::Id };
+    }
+    return {};
+}
+
 } // namespace AppPlatform
 } // namespace chip
 
@@ -414,13 +577,14 @@ CHIP_ERROR InitVideoPlayerPlatform(jobject contentAppEndpointManager)
     ContentAppPlatform::GetInstance().SetupAppPlatform();
     ContentAppPlatform::GetInstance().SetContentAppFactory(&gFactory);
     gFactory.setContentAppAttributeDelegate(new ContentAppAttributeDelegate(contentAppEndpointManager));
+    gFactory.setContentAppCommandDelegate(new ContentAppCommandDelegate(contentAppEndpointManager));
 
     ChipLogProgress(AppServer, "Starting registration of command handler delegates");
-    for (size_t i = 0; i < ArraySize(contentAppClusters); i++)
+    for (size_t i = 0; i < MATTER_ARRAY_SIZE(contentAppClusters); i++)
     {
         ContentAppCommandDelegate * delegate =
             new ContentAppCommandDelegate(contentAppEndpointManager, contentAppClusters[i].clusterId);
-        chip::app::InteractionModelEngine::GetInstance()->RegisterCommandHandler(delegate);
+        app::CommandHandlerInterfaceRegistry::Instance().RegisterCommandHandler(delegate);
         ChipLogProgress(AppServer, "Registered command handler delegate for cluster %d", contentAppClusters[i].clusterId);
     }
 
@@ -434,21 +598,24 @@ CHIP_ERROR InitVideoPlayerPlatform(jobject contentAppEndpointManager)
 }
 
 EndpointId AddContentApp(const char * szVendorName, uint16_t vendorId, const char * szApplicationName, uint16_t productId,
-                         const char * szApplicationVersion, jobject manager)
+                         const char * szApplicationVersion, std::vector<SupportedCluster> supportedClusters, jobject manager)
 {
 #if CHIP_DEVICE_CONFIG_APP_PLATFORM_ENABLED
     ChipLogProgress(DeviceLayer, "AppImpl: AddContentApp vendorId=%d applicationName=%s ", vendorId, szApplicationName);
-    return gFactory.AddContentApp(szVendorName, vendorId, szApplicationName, productId, szApplicationVersion, manager);
+    return gFactory.AddContentApp(szVendorName, vendorId, szApplicationName, productId, szApplicationVersion,
+                                  std::move(supportedClusters), manager);
 #endif // CHIP_DEVICE_CONFIG_APP_PLATFORM_ENABLED
     return kInvalidEndpointId;
 }
 
 EndpointId AddContentApp(const char * szVendorName, uint16_t vendorId, const char * szApplicationName, uint16_t productId,
-                         const char * szApplicationVersion, EndpointId endpointId, jobject manager)
+                         const char * szApplicationVersion, std::vector<SupportedCluster> supportedClusters, EndpointId endpointId,
+                         jobject manager)
 {
 #if CHIP_DEVICE_CONFIG_APP_PLATFORM_ENABLED
     ChipLogProgress(DeviceLayer, "AppImpl: AddContentApp vendorId=%d applicationName=%s ", vendorId, szApplicationName);
-    return gFactory.AddContentApp(szVendorName, vendorId, szApplicationName, productId, szApplicationVersion, manager, endpointId);
+    return gFactory.AddContentApp(szVendorName, vendorId, szApplicationName, productId, szApplicationVersion,
+                                  std::move(supportedClusters), endpointId, manager);
 #endif // CHIP_DEVICE_CONFIG_APP_PLATFORM_ENABLED
     return kInvalidEndpointId;
 }
@@ -465,4 +632,17 @@ EndpointId RemoveContentApp(EndpointId epId)
 void ReportAttributeChange(EndpointId epId, chip::ClusterId clusterId, chip::AttributeId attributeId)
 {
     MatterReportingAttributeChangeCallback(epId, clusterId, attributeId);
+}
+
+void AddSelfVendorAsAdmin()
+{
+    uint16_t value;
+    if (DeviceLayer::GetDeviceInstanceInfoProvider()->GetVendorId(value) != CHIP_NO_ERROR)
+    {
+        ChipLogDetail(Discovery, "AppImpl addSelfVendorAsAdmin Vendor ID not known");
+    }
+    else
+    {
+        gFactory.AddAdminVendorId(value);
+    }
 }

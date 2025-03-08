@@ -15,6 +15,8 @@
  *    limitations under the License.
  */
 
+#import <Matter/MTRDefines.h>
+
 #import "MTRBaseDevice.h"
 #import "MTRCluster.h" // For MTRSubscriptionEstablishedHandler
 #import "MTRDeviceControllerXPCConnection.h"

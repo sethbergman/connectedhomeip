@@ -20,16 +20,20 @@
 #include <app-common/zap-generated/ids/Attributes.h>
 #include <app-common/zap-generated/ids/Clusters.h>
 #include <app/AttributeAccessInterface.h>
+#include <app/AttributeAccessInterfaceRegistry.h>
 #include <app/CommandHandler.h>
 #include <app/ConcreteCommandPath.h>
-#include <app/util/af.h>
+#include <app/EventLogging.h>
+#include <app/clusters/thread-network-diagnostics-server/thread-network-diagnostics-provider.h>
 #include <app/util/attribute-storage.h>
 #include <lib/core/CHIPEncoding.h>
-#include <lib/core/CHIPTLVTypes.h>
 #include <lib/core/Optional.h>
+#include <lib/core/TLVTypes.h>
 #include <lib/support/CHIPPlatformMemory.h>
 #include <platform/CHIPDeviceLayer.h>
-#include <platform/ConnectivityManager.h>
+#include <platform/DiagnosticDataProvider.h>
+#include <tracing/macros.h>
+#include <tracing/metric_event.h>
 
 using namespace chip;
 using namespace chip::app;
@@ -37,21 +41,22 @@ using namespace chip::app::Clusters;
 using namespace chip::app::Clusters::ThreadNetworkDiagnostics;
 using namespace chip::app::Clusters::ThreadNetworkDiagnostics::Attributes;
 using namespace chip::DeviceLayer;
+using chip::Protocols::InteractionModel::Status;
 
 namespace {
 
-class ThreadDiagosticsAttrAccess : public AttributeAccessInterface
+class ThreadDiagnosticsAttrAccess : public AttributeAccessInterface
 {
 public:
     // Register for the ThreadNetworkDiagnostics cluster on all endpoints.
-    ThreadDiagosticsAttrAccess() : AttributeAccessInterface(Optional<EndpointId>::Missing(), ThreadNetworkDiagnostics::Id) {}
+    ThreadDiagnosticsAttrAccess() : AttributeAccessInterface(Optional<EndpointId>::Missing(), ThreadNetworkDiagnostics::Id) {}
 
     CHIP_ERROR Read(const ConcreteReadAttributePath & aPath, AttributeValueEncoder & aEncoder) override;
 };
 
-ThreadDiagosticsAttrAccess gAttrAccess;
+ThreadDiagnosticsAttrAccess gAttrAccess;
 
-CHIP_ERROR ThreadDiagosticsAttrAccess::Read(const ConcreteReadAttributePath & aPath, AttributeValueEncoder & aEncoder)
+CHIP_ERROR ThreadDiagnosticsAttrAccess::Read(const ConcreteReadAttributePath & aPath, AttributeValueEncoder & aEncoder)
 {
     if (aPath.mClusterId != ThreadNetworkDiagnostics::Id)
     {
@@ -61,8 +66,8 @@ CHIP_ERROR ThreadDiagosticsAttrAccess::Read(const ConcreteReadAttributePath & aP
 
     switch (aPath.mAttributeId)
     {
-    case ThreadNetworkDiagnostics::Attributes::NeighborTableList::Id:
-    case ThreadNetworkDiagnostics::Attributes::RouteTableList::Id:
+    case ThreadNetworkDiagnostics::Attributes::NeighborTable::Id:
+    case ThreadNetworkDiagnostics::Attributes::RouteTable::Id:
     case ThreadNetworkDiagnostics::Attributes::SecurityPolicy::Id:
     case ThreadNetworkDiagnostics::Attributes::OperationalDatasetComponents::Id:
     case ThreadNetworkDiagnostics::Attributes::ActiveNetworkFaultsList::Id:
@@ -124,13 +129,67 @@ CHIP_ERROR ThreadDiagosticsAttrAccess::Read(const ConcreteReadAttributePath & aP
     case ThreadNetworkDiagnostics::Attributes::PendingTimestamp::Id:
     case ThreadNetworkDiagnostics::Attributes::Delay::Id:
     case ThreadNetworkDiagnostics::Attributes::ChannelPage0Mask::Id:
-        return ConnectivityMgr().WriteThreadNetworkDiagnosticAttributeToTlv(aPath.mAttributeId, aEncoder);
+        return WriteThreadNetworkDiagnosticAttributeToTlv(aPath.mAttributeId, aEncoder);
     default:
         break;
     }
 
     return CHIP_NO_ERROR;
 }
+
+class ThreadDiagnosticsDelegate : public DeviceLayer::ThreadDiagnosticsDelegate
+{
+    // Notified when the Node’s connection status to a Thread network has changed.
+    void OnConnectionStatusChanged(ConnectionStatusEnum newConnectionStatus) override
+    {
+        ChipLogProgress(Zcl, "ThreadDiagnosticsDelegate: OnConnectionStatusChanged");
+
+        Events::ConnectionStatus::Type event{ newConnectionStatus };
+
+        // ThreadNetworkDiagnostics cluster should exist only for endpoint 0.
+        if (emberAfContainsServer(kRootEndpointId, ThreadNetworkDiagnostics::Id))
+        {
+            // If Thread Network Diagnostics cluster is implemented on this endpoint
+            EventNumber eventNumber;
+
+            if (CHIP_NO_ERROR != LogEvent(event, kRootEndpointId, eventNumber))
+            {
+                ChipLogError(Zcl, "ThreadDiagnosticsDelegate: Failed to record ConnectionStatus event");
+            }
+        }
+    }
+
+    // Notified when the Node’s faults related to a Thread network have changed.
+    void OnNetworkFaultChanged(const GeneralFaults<kMaxNetworkFaults> & previous,
+                               const GeneralFaults<kMaxNetworkFaults> & current) override
+    {
+        ChipLogProgress(Zcl, "ThreadDiagnosticsDelegate: OnNetworkFaultChanged");
+
+        /* Verify that the data size matches the expected one. */
+        static_assert(sizeof(*current.data()) == sizeof(NetworkFaultEnum));
+
+        DataModel::List<const NetworkFaultEnum> currentList(reinterpret_cast<const NetworkFaultEnum *>(current.data()),
+                                                            current.size());
+        DataModel::List<const NetworkFaultEnum> previousList(reinterpret_cast<const NetworkFaultEnum *>(previous.data()),
+                                                             previous.size());
+
+        Events::NetworkFaultChange::Type event{ currentList, previousList };
+
+        // ThreadNetworkDiagnostics cluster should exist only for endpoint 0.
+        if (emberAfContainsServer(kRootEndpointId, ThreadNetworkDiagnostics::Id))
+        {
+            // If Thread Network Diagnostics cluster is implemented on this endpoint
+            EventNumber eventNumber;
+
+            if (CHIP_NO_ERROR != LogEvent(event, kRootEndpointId, eventNumber))
+            {
+                ChipLogError(Zcl, "ThreadDiagnosticsDelegate: Failed to record NetworkFaultChange event");
+            }
+        }
+    }
+};
+
+ThreadDiagnosticsDelegate gDiagnosticDelegate;
 
 } // anonymous namespace
 
@@ -139,11 +198,12 @@ bool emberAfThreadNetworkDiagnosticsClusterResetCountsCallback(app::CommandHandl
                                                                const Commands::ResetCounts::DecodableType & commandData)
 {
     ConnectivityMgr().ResetThreadNetworkDiagnosticsCounts();
-    emberAfSendImmediateDefaultResponse(EMBER_ZCL_STATUS_SUCCESS);
+    commandObj->AddStatus(commandPath, Status::Success);
     return true;
 }
 
 void MatterThreadNetworkDiagnosticsPluginServerInitCallback()
 {
-    registerAttributeAccessOverride(&gAttrAccess);
+    AttributeAccessInterfaceRegistry::Instance().Register(&gAttrAccess);
+    GetDiagnosticDataProvider().SetThreadDiagnosticsDelegate(&gDiagnosticDelegate);
 }

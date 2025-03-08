@@ -1,11 +1,10 @@
 import typing
 import unittest
-
 from dataclasses import dataclass
 
+import chip.ChipUtility
 from chip.clusters import ClusterObjects
 from chip.tlv import TLVReader, TLVWriter, uint
-import chip.ChipUtility
 
 '''
 This file contains tests for checking if the cluster object can generate correct TLV data.
@@ -28,7 +27,9 @@ def _encode_attribute_and_then_decode_to_native(data, type: ClusterObjects.Clust
     return TLVReader(type.ToTLV(None, data)).get()['Any']
 
 
-def _encode_from_native_and_then_decode(data, cls: typing.Union[ClusterObjects.ClusterObject, ClusterObjects.ClusterAttributeDescriptor]):
+def _encode_from_native_and_then_decode(data,
+                                        cls: typing.Union[ClusterObjects.ClusterObject,
+                                                          ClusterObjects.ClusterAttributeDescriptor]):
     tlv = TLVWriter()
     tlv.put(None, data)
     return cls.FromTLV(bytes(tlv.encoding))
@@ -192,6 +193,14 @@ class TestAttributeDescriptor(unittest.TestCase):
         def attribute_type(cls) -> ClusterObjects.ClusterObjectFieldDescriptor:
             return ClusterObjects.ClusterObjectFieldDescriptor(Type=int)
 
+        @chip.ChipUtility.classproperty
+        def cluster_id(cls) -> int:
+            return 0x00000000
+
+        @chip.ChipUtility.classproperty
+        def attribute_id(cls) -> int:
+            return 0x00000000
+
     def test_basic_encode(self):
         res = _encode_attribute_and_then_decode_to_native(
             42, TestAttributeDescriptor.IntAttribute)
@@ -207,6 +216,14 @@ class TestAttributeDescriptor(unittest.TestCase):
         def attribute_type(cls) -> ClusterObjects.ClusterObjectFieldDescriptor:
             return ClusterObjects.ClusterObjectFieldDescriptor(Type=TestClusterObjects.C)
 
+        @chip.ChipUtility.classproperty
+        def cluster_id(cls) -> int:
+            return 0x00000000
+
+        @chip.ChipUtility.classproperty
+        def attribute_id(cls) -> int:
+            return 0x00000000
+
     def test_struct_encode(self):
         res = _encode_attribute_and_then_decode_to_native(
             TestClusterObjects.C(X=42, Y=24), TestAttributeDescriptor.StructAttribute)
@@ -221,6 +238,14 @@ class TestAttributeDescriptor(unittest.TestCase):
         @chip.ChipUtility.classproperty
         def attribute_type(cls) -> ClusterObjects.ClusterObjectFieldDescriptor:
             return ClusterObjects.ClusterObjectFieldDescriptor(Type=typing.List[int])
+
+        @chip.ChipUtility.classproperty
+        def cluster_id(cls) -> int:
+            return 0x00000000
+
+        @chip.ChipUtility.classproperty
+        def attribute_id(cls) -> int:
+            return 0x00000000
 
     def test_array_encode(self):
         res = _encode_attribute_and_then_decode_to_native(

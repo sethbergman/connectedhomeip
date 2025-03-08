@@ -18,20 +18,14 @@
 # Needed to use types in type hints before they are fully defined.
 from __future__ import annotations
 
-import ctypes
-from dataclasses import dataclass, field
-from typing import *
-from ctypes import *
-from rich.pretty import pprint
-import json
 import logging
-import builtins
-import base64
-import chip.exceptions
-from chip import ChipDeviceCtrl
-import copy
-from .storage import PersistentStorage
-from chip.CertificateAuthority import CertificateAuthority
+from typing import List, Optional
+
+from chip import CertificateAuthority, ChipDeviceCtrl
+from chip.crypto import p256keypair
+from chip.native import GetLibraryHandle
+
+LOGGER = logging.getLogger(__name__)
 
 
 class FabricAdmin:
@@ -40,13 +34,9 @@ class FabricAdmin:
     '''
     @classmethod
     def _Handle(cls):
-        return chip.native.GetLibraryHandle()
+        return GetLibraryHandle()
 
-    @classmethod
-    def logger(cls):
-        return logging.getLogger('FabricAdmin')
-
-    def __init__(self, certificateAuthority: CertificateAuthority, vendorId: int, fabricId: int = 1):
+    def __init__(self, certificateAuthority: CertificateAuthority.CertificateAuthority, vendorId: int, fabricId: int = 1):
         ''' Initializes the object.
 
             certificateAuthority:       CertificateAuthority instance that will be used to vend NOCs for both
@@ -54,7 +44,7 @@ class FabricAdmin:
             vendorId:                   Valid operational Vendor ID associated with this fabric.
             fabricId:                   Fabric ID to be associated with this fabric.
         '''
-        self._handle = chip.native.GetLibraryHandle()
+        self._handle = GetLibraryHandle()
 
         if (vendorId is None or vendorId == 0):
             raise ValueError(
@@ -68,28 +58,32 @@ class FabricAdmin:
         self._fabricId = fabricId
         self._certificateAuthority = certificateAuthority
 
-        self.logger().warning(f"New FabricAdmin: FabricId: 0x{self._fabricId:016X}, VendorId = 0x{self.vendorId:04X}")
+        LOGGER.info(f"New FabricAdmin: FabricId: 0x{self._fabricId:016X}, VendorId = 0x{self.vendorId:04X}")
 
         self._isActive = True
-        self._activeControllers = []
+        self._activeControllers: List[ChipDeviceCtrl.ChipDeviceController] = []
 
-    def NewController(self, nodeId: int = None, paaTrustStorePath: str = "", useTestCommissioner: bool = False, catTags: List[int] = []):
+    def NewController(self, nodeId: Optional[int] = None, paaTrustStorePath: str = "",
+                      useTestCommissioner: bool = False, catTags: List[int] = [], keypair: p256keypair.P256Keypair = None,
+                      dacRevocationSetPath: str = ""):
         ''' Create a new chip.ChipDeviceCtrl.ChipDeviceController instance on this fabric.
 
             When vending ChipDeviceController instances on a given fabric, each controller instance
             is associated with a unique fabric index local to the running process. In the underlying FabricTable, each FabricInfo
             instance can be treated as unique identities that can collide on the same logical fabric.
 
-            nodeId:                 NodeID to be assigned to the controller. Automatically allocates one starting from 112233 if one
-                                    is not provided.
+            nodeId:         NodeID to be assigned to the controller. Automatically allocates one starting from 112233 if one
+                            is not provided.
 
             paaTrustStorePath:      Path to the PAA trust store. If one isn't provided, a suitable default is selected.
             useTestCommissioner:    If a test commmisioner is to be created.
             catTags:			    A list of 32-bit CAT tags that will added to the NOC generated for this controller.
+            keypair:                A keypair to be used for the controller. If one isn't provided, a new one is generated.
+            dacRevocationSetPath:   Path to the device attestation revocation set JSON file.
         '''
-        if (not(self._isActive)):
+        if (not (self._isActive)):
             raise RuntimeError(
-                f"FabricAdmin object was previously shutdown and is no longer valid!")
+                "FabricAdmin object was previously shutdown and is no longer valid!")
 
         nodeIdList = [controller.nodeId for controller in self._activeControllers if controller.isActive]
         if (nodeId is None):
@@ -101,11 +95,23 @@ class FabricAdmin:
             if (nodeId in nodeIdList):
                 raise RuntimeError(f"Provided NodeId {nodeId} collides with an existing controller instance!")
 
-        self.logger().warning(
-            f"Allocating new controller with CaIndex: {self._certificateAuthority.caIndex}, FabricId: 0x{self._fabricId:016X}, NodeId: 0x{nodeId:016X}, CatTags: {catTags}")
+        LOGGER.info(
+            f"Allocating new controller with CaIndex: {self._certificateAuthority.caIndex}, "
+            f"FabricId: 0x{self._fabricId:016X}, NodeId: 0x{nodeId:016X}, CatTags: {catTags}")
 
-        controller = ChipDeviceCtrl.ChipDeviceController(opCredsContext=self._certificateAuthority.GetOpCredsContext(), fabricId=self._fabricId, nodeId=nodeId,
-                                                         adminVendorId=self._vendorId, paaTrustStorePath=paaTrustStorePath, useTestCommissioner=useTestCommissioner, fabricAdmin=self, catTags=catTags)
+        controller = ChipDeviceCtrl.ChipDeviceController(
+            opCredsContext=self._certificateAuthority.GetOpCredsContext(),
+            fabricId=self._fabricId,
+            nodeId=nodeId,
+            adminVendorId=self._vendorId,
+            paaTrustStorePath=paaTrustStorePath,
+            useTestCommissioner=useTestCommissioner,
+            fabricAdmin=self,
+            catTags=catTags,
+            keypair=keypair)
+
+        if dacRevocationSetPath and len(dacRevocationSetPath) > 0:
+            controller.SetDACRevocationSetPath(dacRevocationSetPath)
 
         self._activeControllers.append(controller)
         return controller
@@ -137,5 +143,5 @@ class FabricAdmin:
         return self._certificateAuthority.caIndex
 
     @property
-    def certificateAuthority(self) -> CertificateAuthority:
+    def certificateAuthority(self) -> CertificateAuthority.CertificateAuthority:
         return self._certificateAuthority

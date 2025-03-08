@@ -58,9 +58,9 @@ binary's directory. This file has the form:
           {"section": ".data", "size": 1648},
           {"section": ".text", "size": 740236}
         ],
-        "wr": [
-          {"wr": 0, "size": 262144},
-          {"wr": 1, "size": 74023}
+        "region": [
+          {"region": "FLASH", "size": 262144},
+          {"region": "RAM", "size": 74023}
         ]
     }
   }
@@ -73,14 +73,11 @@ import os
 import pathlib
 import sys
 
-import numpy as np  # type: ignore
-
 import memdf.collect
 import memdf.report
 import memdf.select
 import memdf.util
-
-from memdf import Config, ConfigDescription, DFs, SectionDF, SegmentDF
+from memdf import Config, ConfigDescription, DFs, SectionDF
 
 PLATFORM_CONFIG_DIR = pathlib.Path('scripts/tools/memory/platform')
 
@@ -156,13 +153,18 @@ def main(argv):
         else:
             output = pathlib.Path(binary).parent / output_base
 
-        config = Config().init({
+        config_desc = {
             **memdf.util.config.CONFIG,
             **memdf.collect.CONFIG,
             **memdf.select.CONFIG,
             **memdf.report.OUTPUT_CONFIG,
             **CONFIG,
-        })
+        }
+        # In case there is no platform configuration file, default to using a popular set of section names.
+        config_desc['section.select']['default'] = [
+            '.text', '.rodata', '.data', '.bss']
+
+        config = Config().init(config_desc)
         config.put('output.file', output)
         config.put('output.format', 'json_records')
         if config_file.is_file():
@@ -181,31 +183,32 @@ def main(argv):
             if value := config[key]:
                 config.putl(['output', 'metadata', key], value)
 
+        # In case there is no platform configuration file or it does not define regions,
+        # try to find reasonable groups.
+        if not config.get('region.sections'):
+            sections = {'FLASH': [], 'RAM': []}
+            for section in config.get('section.select'):
+                print('section:', section)
+                for substring, region in [('text', 'FLASH'), ('rodata', 'FLASH'), ('data', 'RAM'), ('bss', 'RAM')]:
+                    if substring in section:
+                        sections[region].append(section)
+                        break
+            config.put('region.sections', sections)
+
         collected: DFs = memdf.collect.collect_files(config, [binary])
 
-        # Aggregate loaded segments, by writable (flash) or not (RAM).
-        segments = collected[SegmentDF.name]
-        segments['segment'] = segments.index
-        segments['wr'] = ((segments['flags'] & 2) != 0).convert_dtypes(
-            convert_boolean=False, convert_integer=True)
-        segment_summary = segments[segments['type'] == 'PT_LOAD'][[
-            'wr', 'size'
-        ]].groupby('wr').aggregate(np.sum).reset_index().astype(
-            {'size': np.int64})
-        segment_summary.attrs['name'] = "wr"
-
         sections = collected[SectionDF.name]
-        sections = sections.join(on='segment',
-                                 how='left',
-                                 other=segments,
-                                 rsuffix='-segment')
-        section_summary = sections[['section', 'size',
-                                    'wr']].sort_values(by='section')
+        section_summary = sections[['section',
+                                    'size']].sort_values(by='section')
         section_summary.attrs['name'] = "section"
+
+        region_summary = memdf.select.groupby(
+            config, collected['section'], 'region')
+        region_summary.attrs['name'] = "region"
 
         summaries = {
             'section': section_summary,
-            'memory': segment_summary,
+            'region': region_summary,
         }
 
         # Write configured (json) report to the output file.

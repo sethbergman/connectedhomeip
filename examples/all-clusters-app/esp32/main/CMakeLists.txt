@@ -14,128 +14,76 @@
 #    See the License for the specific language governing permissions and
 #    limitations under the License.
 #
-
 # (Uses default behaviour of compiling all source files in directory, adding 'include' to include path.)
 # The list of src and include dirs must be in sync with that in all-clusters-app/esp32/main/component.mk
-set(PRIV_INCLUDE_DIRS_LIST
-                      "${CMAKE_SOURCE_DIR}/third_party/connectedhomeip/zzz_generated/all-clusters-app"
-                      "${CMAKE_SOURCE_DIR}/third_party/connectedhomeip/examples/all-clusters-app/all-clusters-common/include"
-                      "${CMAKE_CURRENT_LIST_DIR}/include"
-                      "${CMAKE_SOURCE_DIR}/third_party/connectedhomeip/examples/lock-app/linux/include"
-                      "${CMAKE_SOURCE_DIR}/third_party/connectedhomeip/examples/providers"
-                      "${CMAKE_SOURCE_DIR}/third_party/connectedhomeip/examples/platform/esp32"
-                      "${CMAKE_SOURCE_DIR}/third_party/connectedhomeip/third_party/nlfaultinjection/repo/include"                      
+
+get_filename_component(CHIP_ROOT ${CMAKE_SOURCE_DIR}/third_party/connectedhomeip REALPATH)
+get_filename_component(ALL_CLUSTERS_COMMON_DIR ${CHIP_ROOT}/examples/all-clusters-app/all-clusters-common REALPATH)
+get_filename_component(ENERGY_MANAGEMENT_COMMON_DIR ${CHIP_ROOT}/examples/energy-management-app/energy-management-common/ REALPATH)
+get_filename_component(APP_COMMON_GEN_DIR ${CHIP_ROOT}/zzz_generated/app-common/app-common/zap-generated REALPATH)
+
+set(PRIV_INCLUDE_DIRS_LIST "${ALL_CLUSTERS_COMMON_DIR}/include"
+                           "${ENERGY_MANAGEMENT_COMMON_DIR}/common/include"
+                           "${ENERGY_MANAGEMENT_COMMON_DIR}/device-energy-management/include"
+                           "${ENERGY_MANAGEMENT_COMMON_DIR}/energy-evse/include"
+                           "${ENERGY_MANAGEMENT_COMMON_DIR}/energy-reporting/include"
+                           "${ENERGY_MANAGEMENT_COMMON_DIR}/water-heater/include"
+                           "${CMAKE_CURRENT_LIST_DIR}/include"
+                           "${CHIP_ROOT}/examples/providers"
+                           "${CHIP_ROOT}/examples/platform/esp32"
+                           "${CHIP_ROOT}/third_party/nlfaultinjection/include"
 )
-set(SRC_DIRS_LIST
-                      "${CMAKE_CURRENT_LIST_DIR}"
-                      "${CMAKE_SOURCE_DIR}/third_party/connectedhomeip/zzz_generated/all-clusters-app/zap-generated"
-                      "${CMAKE_SOURCE_DIR}/third_party/connectedhomeip/zzz_generated/app-common/app-common/zap-generated/attributes"
-                      "${CMAKE_SOURCE_DIR}/third_party/connectedhomeip/zzz_generated/app-common/app-common/zap-generated"
-                      "${CMAKE_SOURCE_DIR}/third_party/connectedhomeip/examples/lock-app/linux/src"
-                      "${CMAKE_SOURCE_DIR}/third_party/connectedhomeip/examples/providers"
-                      "${CMAKE_SOURCE_DIR}/third_party/connectedhomeip/examples/platform/esp32/route_hook"
-                      "${CMAKE_SOURCE_DIR}/third_party/connectedhomeip/examples/platform/esp32/ota"
-                      "${CMAKE_SOURCE_DIR}/third_party/connectedhomeip/examples/platform/esp32/common"
-                      "${CMAKE_SOURCE_DIR}/third_party/connectedhomeip/examples/platform/esp32/shell_extension"
-                      "${CMAKE_SOURCE_DIR}/third_party/connectedhomeip/src/app/server"
-                      "${CMAKE_SOURCE_DIR}/third_party/connectedhomeip/src/app/util"
-                      "${CMAKE_SOURCE_DIR}/third_party/connectedhomeip/src/app/reporting"
-                      "${CMAKE_SOURCE_DIR}/third_party/connectedhomeip/src/app/clusters/administrator-commissioning-server"
-                      "${CMAKE_SOURCE_DIR}/third_party/connectedhomeip/src/app/clusters/application-basic-server"
-                      "${CMAKE_SOURCE_DIR}/third_party/connectedhomeip/src/app/clusters/test-cluster-server"
-                      "${CMAKE_SOURCE_DIR}/third_party/connectedhomeip/src/app/clusters/descriptor"
-                      "${CMAKE_SOURCE_DIR}/third_party/connectedhomeip/src/app/clusters/fault-injection-server"
-                      "${CMAKE_SOURCE_DIR}/third_party/connectedhomeip/src/app/clusters/fan-control-server"                      
-                      "${CMAKE_SOURCE_DIR}/third_party/connectedhomeip/src/app/clusters/fixed-label-server"
-                      "${CMAKE_SOURCE_DIR}/third_party/connectedhomeip/src/app/clusters/user-label-server"                           
-                      "${CMAKE_SOURCE_DIR}/third_party/connectedhomeip/src/app/clusters/on-off-server"
-                      "${CMAKE_SOURCE_DIR}/third_party/connectedhomeip/src/app/clusters/level-control"
-                      "${CMAKE_SOURCE_DIR}/third_party/connectedhomeip/src/app/clusters/identify-server"
-                      "${CMAKE_SOURCE_DIR}/third_party/connectedhomeip/src/app/clusters/access-control-server"
-                      "${CMAKE_SOURCE_DIR}/third_party/connectedhomeip/src/app/clusters/account-login-server"
-                      "${CMAKE_SOURCE_DIR}/third_party/connectedhomeip/src/app/clusters/application-launcher-server"
-                      "${CMAKE_SOURCE_DIR}/third_party/connectedhomeip/src/app/clusters/audio-output-server"
-                      "${CMAKE_SOURCE_DIR}/third_party/connectedhomeip/src/app/clusters/barrier-control-server"
-                      "${CMAKE_SOURCE_DIR}/third_party/connectedhomeip/src/app/clusters/window-covering-server"
-                      "${CMAKE_SOURCE_DIR}/third_party/connectedhomeip/src/app/clusters/general-commissioning-server"
-                      "${CMAKE_SOURCE_DIR}/third_party/connectedhomeip/src/app/clusters/network-commissioning"
-                      "${CMAKE_SOURCE_DIR}/third_party/connectedhomeip/src/app/clusters/groups-server"
-                      "${CMAKE_SOURCE_DIR}/third_party/connectedhomeip/src/app/clusters/color-control-server"
-                      "${CMAKE_SOURCE_DIR}/third_party/connectedhomeip/src/app/clusters/content-launch-server"
-                      "${CMAKE_SOURCE_DIR}/third_party/connectedhomeip/src/app/clusters/operational-credentials-server"
-                      "${CMAKE_SOURCE_DIR}/third_party/connectedhomeip/src/app/clusters/media-input-server"
-                      "${CMAKE_SOURCE_DIR}/third_party/connectedhomeip/src/app/clusters/mode-select-server"
-                      "${CMAKE_SOURCE_DIR}/third_party/connectedhomeip/src/app/clusters/low-power-server"
-                      "${CMAKE_SOURCE_DIR}/third_party/connectedhomeip/src/app/clusters/keypad-input-server"
-                      "${CMAKE_SOURCE_DIR}/third_party/connectedhomeip/src/app/clusters/media-playback-server"
-                      "${CMAKE_SOURCE_DIR}/third_party/connectedhomeip/src/app/clusters/ota-requestor"
-                      "${CMAKE_SOURCE_DIR}/third_party/connectedhomeip/src/app/clusters/target-navigator-server"
-                      "${CMAKE_SOURCE_DIR}/third_party/connectedhomeip/src/app/clusters/thermostat-server"
-                      "${CMAKE_SOURCE_DIR}/third_party/connectedhomeip/src/app/clusters/thermostat-user-interface-configuration-server"
-                      "${CMAKE_SOURCE_DIR}/third_party/connectedhomeip/src/app/clusters/thread-network-diagnostics-server" 
-                      "${CMAKE_SOURCE_DIR}/third_party/connectedhomeip/src/app/clusters/channel-server"
-                      "${CMAKE_SOURCE_DIR}/third_party/connectedhomeip/src/app/clusters/scenes"
-                      "${CMAKE_SOURCE_DIR}/third_party/connectedhomeip/src/app/clusters/software-diagnostics-server"
-                      "${CMAKE_SOURCE_DIR}/third_party/connectedhomeip/src/app/clusters/switch-server"
-                      "${CMAKE_SOURCE_DIR}/third_party/connectedhomeip/src/app/clusters/general-diagnostics-server"
-                      "${CMAKE_SOURCE_DIR}/third_party/connectedhomeip/src/app/clusters/group-key-mgmt-server"
-                      "${CMAKE_SOURCE_DIR}/third_party/connectedhomeip/src/app/clusters/basic"
-                      "${CMAKE_SOURCE_DIR}/third_party/connectedhomeip/src/app/clusters/bindings"
-                      "${CMAKE_SOURCE_DIR}/third_party/connectedhomeip/src/app/clusters/diagnostic-logs-server"
-                      "${CMAKE_SOURCE_DIR}/third_party/connectedhomeip/src/app/clusters/door-lock-server"
-                      "${CMAKE_SOURCE_DIR}/third_party/connectedhomeip/src/app/clusters/occupancy-sensor-server"
-                      "${CMAKE_SOURCE_DIR}/third_party/connectedhomeip/src/app/clusters/ethernet-network-diagnostics-server"
-                      "${CMAKE_SOURCE_DIR}/third_party/connectedhomeip/src/app/clusters/localization-configuration-server"
-                      "${CMAKE_SOURCE_DIR}/third_party/connectedhomeip/src/app/clusters/time-format-localization-server"
-                      "${CMAKE_SOURCE_DIR}/third_party/connectedhomeip/src/app/clusters/wifi-network-diagnostics-server"                      
-                      "${CMAKE_SOURCE_DIR}/third_party/connectedhomeip/src/app/clusters/wake-on-lan-server"                      
-                      "${CMAKE_SOURCE_DIR}/third_party/connectedhomeip/src/app/clusters/pump-configuration-and-control-server"
-                      "${CMAKE_SOURCE_DIR}/third_party/connectedhomeip/src/app/clusters/power-source-configuration-server"
-                      "${CMAKE_SOURCE_DIR}/third_party/connectedhomeip/src/app/clusters/power-source-server"
-                      "${CMAKE_SOURCE_DIR}/third_party/connectedhomeip/examples/all-clusters-app/all-clusters-common/src"
+set(SRC_DIRS_LIST     "${CMAKE_CURRENT_LIST_DIR}"
+                      "${APP_COMMON_GEN_DIR}/attributes"
+                      "${APP_COMMON_GEN_DIR}"
+                      "${ALL_CLUSTERS_COMMON_DIR}/src"
+                      "${ENERGY_MANAGEMENT_COMMON_DIR}/common/src"
+                      "${ENERGY_MANAGEMENT_COMMON_DIR}/device-energy-management/src"
+                      "${ENERGY_MANAGEMENT_COMMON_DIR}/energy-evse/src"
+                      "${ENERGY_MANAGEMENT_COMMON_DIR}/energy-reporting/src"
+                      "${ENERGY_MANAGEMENT_COMMON_DIR}/water-heater/src"
+                      "${CHIP_ROOT}/examples/providers"
+                      "${CHIP_ROOT}/examples/platform/esp32/ota"
+                      "${CHIP_ROOT}/examples/platform/esp32/common"
+                      "${CHIP_ROOT}/examples/platform/esp32/shell_extension"
 )
 
-set(EXCLUDE_SRCS_LIST
-                      "${CMAKE_SOURCE_DIR}/third_party/connectedhomeip/examples/lock-app/linux/src/LockAppCommandDelegate.cpp"
-)
 
 if (CONFIG_ENABLE_PW_RPC)
 # Append additional directories for RPC build
 set(PRIV_INCLUDE_DIRS_LIST  "${PRIV_INCLUDE_DIRS_LIST}"
-                     "${CMAKE_SOURCE_DIR}/third_party/connectedhomeip/examples/platform/esp32/pw_sys_io/public"
-                     "${CMAKE_SOURCE_DIR}/third_party/connectedhomeip/examples/common"
-                     "${CMAKE_SOURCE_DIR}/third_party/connectedhomeip/examples/common/pigweed"
-                     "${CMAKE_SOURCE_DIR}/third_party/connectedhomeip/examples/common/pigweed/esp32"
-                     "${CMAKE_SOURCE_DIR}/third_party/connectedhomeip/src/lib/support"
-                     "${IDF_PATH}/components/freertos/include/freertos"
+                     "${CHIP_ROOT}/examples/platform/esp32/pw_sys_io/public"
+                     "${CHIP_ROOT}/examples/common"
+                     "${CHIP_ROOT}/examples/common/pigweed"
+                     "${CHIP_ROOT}/examples/common/pigweed/esp32"
+                     "${CHIP_ROOT}/src/lib/support"
 )
+
+if (${IDF_VERSION_MAJOR} LESS 5)
+    list(APPEND PRIV_INCLUDE_DIRS_LIST "${IDF_PATH}/components/freertos/include/freertos")
+else()
+    list(APPEND PRIV_INCLUDE_DIRS_LIST "${IDF_PATH}/components/freertos/FreeRTOS-Kernel/include/freertos")
+endif()
+
 set(SRC_DIRS_LIST  "${SRC_DIRS_LIST}"
-                     "${CMAKE_SOURCE_DIR}/third_party/connectedhomeip/examples/platform/esp32"
-                     "${CMAKE_SOURCE_DIR}/third_party/connectedhomeip/examples/common/pigweed"
-                     "${CMAKE_SOURCE_DIR}/third_party/connectedhomeip/examples/common/pigweed/esp32"
+                     "${CHIP_ROOT}/examples/platform/esp32"
+                     "${CHIP_ROOT}/examples/common/pigweed"
+                     "${CHIP_ROOT}/examples/common/pigweed/esp32"
 )
 endif (CONFIG_ENABLE_PW_RPC)
 
-if(("${CONFIG_DEVICE_TYPE_ESP32_DEVKITC}" STREQUAL "y") OR ("${CONFIG_DEVICE_TYPE_ESP32_C3_DEVKITM}" STREQUAL "y"))
-    list(APPEND PRIV_INCLUDE_DIRS_LIST
-                "${CMAKE_SOURCE_DIR}/third_party/connectedhomeip/examples/common/screen-framework/include")
-    set(PRIV_REQUIRES_LIST chip QRCode bt)
-elseif(("${CONFIG_DEVICE_TYPE_M5STACK}" STREQUAL "y") OR ("${CONFIG_DEVICE_TYPE_ESP32_WROVER_KIT}" STREQUAL "y"))
-    set(PRIV_REQUIRES_LIST chip QRCode bt tft spidrier screen-framework)
-endif()
-
-if("${CONFIG_DEVICE_TYPE_ESP32_C3_DEVKITM}" STREQUAL "y")
-    list(APPEND PRIV_REQUIRES_LIST led_strip)
-endif()
-
-if (CONFIG_OPENTHREAD_ENABLED)
-    list(APPEND PRIV_REQUIRES_LIST openthread)
+if (CONFIG_ENABLE_ICD_SERVER)
+    list(APPEND PRIV_INCLUDE_DIRS_LIST "${CHIP_ROOT}/examples/platform/esp32/icd")
+    list(APPEND SRC_DIRS_LIST "${CHIP_ROOT}/examples/platform/esp32/icd")
 endif()
 
 idf_component_register(PRIV_INCLUDE_DIRS ${PRIV_INCLUDE_DIRS_LIST}
-                       SRC_DIRS ${SRC_DIRS_LIST}
-                       EXCLUDE_SRCS ${EXCLUDE_SRCS_LIST}
-                       PRIV_REQUIRES ${PRIV_REQUIRES_LIST})
+                       SRC_DIRS ${SRC_DIRS_LIST})
+
+include(${CHIP_ROOT}/src/app/chip_data_model.cmake)
+chip_configure_data_model(${COMPONENT_LIB}
+    ZAP_FILE ${ALL_CLUSTERS_COMMON_DIR}/all-clusters-app.zap
+)
 
 set_property(TARGET ${COMPONENT_LIB} PROPERTY CXX_STANDARD 17)
 target_compile_options(${COMPONENT_LIB} PRIVATE "-DCHIP_HAVE_CONFIG_H")
@@ -145,7 +93,6 @@ target_compile_options(${COMPONENT_LIB} PUBLIC
 
 if (CONFIG_ENABLE_PW_RPC)
 
-get_filename_component(CHIP_ROOT ${CMAKE_SOURCE_DIR}/third_party/connectedhomeip REALPATH)
 
 set(PIGWEED_ROOT "${CHIP_ROOT}/third_party/pigweed/repo")
 include(${PIGWEED_ROOT}/pw_build/pigweed.cmake)
@@ -247,6 +194,8 @@ target_link_libraries(${COMPONENT_LIB} PUBLIC
   pw_hdlc
   pw_log
   pw_rpc.server
+  pw_sys_io
+  pw_trace
   pw_trace_tokenized
   pw_trace_tokenized.trace_buffer
   pw_trace_tokenized.rpc_service
@@ -256,6 +205,7 @@ target_link_libraries(${COMPONENT_LIB} PUBLIC
 target_link_options(${COMPONENT_LIB}
   PUBLIC
     "-T${PIGWEED_ROOT}/pw_tokenizer/pw_tokenizer_linker_sections.ld"
+    "-L${PIGWEED_ROOT}/pw_tokenizer"
 )
 
 target_compile_options(${COMPONENT_LIB} PRIVATE

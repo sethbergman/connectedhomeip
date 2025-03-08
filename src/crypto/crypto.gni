@@ -13,8 +13,24 @@
 # limitations under the License.
 
 declare_args() {
-  # Crypto implementation: mbedtls, openssl, tinycrypt, boringssl, platform.
+  # Crypto implementation: mbedtls, openssl, boringssl, platform.
   chip_crypto = ""
   chip_with_se05x = 0
-  chip_with_se05x_da = 0
+
+  # Compile mbedtls externally. Only used if chip_crypto == "mbedtls"
+  chip_external_mbedtls = false
+
+  # Use PSA Spake2+ implementation. Only used if chip_crypto == "psa"
+  chip_crypto_psa_spake2p = false
+
+  # Crypto storage: psa, raw, app.
+  #   app: includes zero new files and disables the unit tests for the keystore.
+  chip_crypto_keystore = ""
 }
+
+assert(
+    !chip_external_mbedtls || chip_crypto == "mbedtls" || chip_crypto == "psa",
+    "Use of external mbedtls requires the mbedtls or psa crypto impl")
+
+assert(!chip_crypto_psa_spake2p || chip_crypto == "psa",
+       "Use of psa spake2+ requires the psa crypto impl")

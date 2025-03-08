@@ -21,7 +21,7 @@
 
 #include <lib/core/CHIPConfig.h>
 #include <lib/core/CHIPPersistentStorageDelegate.h>
-#include <lib/core/CHIPTLV.h>
+#include <lib/core/TLV.h>
 #include <lib/support/DefaultStorageKeyAllocator.h>
 
 #include <limits>
@@ -40,7 +40,6 @@ constexpr size_t kProviderListMaxSerializedSize = kProviderMaxSerializedSize * C
 
 CHIP_ERROR DefaultOTARequestorStorage::StoreDefaultProviders(const ProviderLocationList & providers)
 {
-    DefaultStorageKeyAllocator key;
     uint8_t buffer[kProviderListMaxSerializedSize];
     TLV::TLVWriter writer;
     TLV::TLVType outerType;
@@ -56,16 +55,34 @@ CHIP_ERROR DefaultOTARequestorStorage::StoreDefaultProviders(const ProviderLocat
 
     ReturnErrorOnFailure(writer.EndContainer(outerType));
 
-    return mPersistentStorage->SyncSetKeyValue(key.OTADefaultProviders(), buffer, static_cast<uint16_t>(writer.GetLengthWritten()));
+    return mPersistentStorage->SyncSetKeyValue(DefaultStorageKeyAllocator::OTADefaultProviders().KeyName(), buffer,
+                                               static_cast<uint16_t>(writer.GetLengthWritten()));
+}
+
+bool DefaultOTARequestorStorage::ProviderAlreadyInList(ProviderLocationList & listProviders, ProviderLocationType provider)
+{
+    auto iterator = listProviders.Begin();
+
+    while (iterator.Next())
+    {
+        ProviderLocationType pl = iterator.GetValue();
+
+        if ((pl.providerNodeID == provider.providerNodeID) && (pl.fabricIndex == provider.fabricIndex) &&
+            (pl.endpoint == provider.endpoint))
+        {
+            return true;
+        }
+    }
+
+    return false;
 }
 
 CHIP_ERROR DefaultOTARequestorStorage::LoadDefaultProviders(ProviderLocationList & providers)
 {
-    DefaultStorageKeyAllocator key;
     uint8_t buffer[kProviderListMaxSerializedSize];
     MutableByteSpan bufferSpan(buffer);
 
-    ReturnErrorOnFailure(Load(key.OTADefaultProviders(), bufferSpan));
+    ReturnErrorOnFailure(Load(DefaultStorageKeyAllocator::OTADefaultProviders().KeyName(), bufferSpan));
 
     TLV::TLVReader reader;
     TLV::TLVType outerType;
@@ -78,7 +95,10 @@ CHIP_ERROR DefaultOTARequestorStorage::LoadDefaultProviders(ProviderLocationList
     {
         ProviderLocationType provider;
         ReturnErrorOnFailure(provider.Decode(reader));
-        providers.Add(provider);
+        if (!ProviderAlreadyInList(providers, provider))
+        {
+            providers.Add(provider);
+        }
     }
 
     ReturnErrorOnFailure(reader.ExitContainer(outerType));
@@ -88,30 +108,27 @@ CHIP_ERROR DefaultOTARequestorStorage::LoadDefaultProviders(ProviderLocationList
 
 CHIP_ERROR DefaultOTARequestorStorage::StoreCurrentProviderLocation(const ProviderLocationType & provider)
 {
-    DefaultStorageKeyAllocator key;
     uint8_t buffer[kProviderMaxSerializedSize];
     TLV::TLVWriter writer;
 
     writer.Init(buffer);
     ReturnErrorOnFailure(provider.EncodeForRead(writer, TLV::AnonymousTag(), provider.fabricIndex));
 
-    return mPersistentStorage->SyncSetKeyValue(key.OTACurrentProvider(), buffer, static_cast<uint16_t>(writer.GetLengthWritten()));
+    return mPersistentStorage->SyncSetKeyValue(DefaultStorageKeyAllocator::OTACurrentProvider().KeyName(), buffer,
+                                               static_cast<uint16_t>(writer.GetLengthWritten()));
 }
 
 CHIP_ERROR DefaultOTARequestorStorage::ClearCurrentProviderLocation()
 {
-    DefaultStorageKeyAllocator key;
-
-    return mPersistentStorage->SyncDeleteKeyValue(key.OTACurrentProvider());
+    return mPersistentStorage->SyncDeleteKeyValue(DefaultStorageKeyAllocator::OTACurrentProvider().KeyName());
 }
 
 CHIP_ERROR DefaultOTARequestorStorage::LoadCurrentProviderLocation(ProviderLocationType & provider)
 {
-    DefaultStorageKeyAllocator key;
     uint8_t buffer[kProviderMaxSerializedSize];
     MutableByteSpan bufferSpan(buffer);
 
-    ReturnErrorOnFailure(Load(key.OTACurrentProvider(), bufferSpan));
+    ReturnErrorOnFailure(Load(DefaultStorageKeyAllocator::OTACurrentProvider().KeyName(), bufferSpan));
 
     TLV::TLVReader reader;
 
@@ -124,67 +141,55 @@ CHIP_ERROR DefaultOTARequestorStorage::LoadCurrentProviderLocation(ProviderLocat
 
 CHIP_ERROR DefaultOTARequestorStorage::StoreUpdateToken(ByteSpan updateToken)
 {
-    DefaultStorageKeyAllocator key;
-
-    return mPersistentStorage->SyncSetKeyValue(key.OTAUpdateToken(), updateToken.data(), static_cast<uint16_t>(updateToken.size()));
+    return mPersistentStorage->SyncSetKeyValue(DefaultStorageKeyAllocator::OTAUpdateToken().KeyName(), updateToken.data(),
+                                               static_cast<uint16_t>(updateToken.size()));
 }
 
 CHIP_ERROR DefaultOTARequestorStorage::ClearUpdateToken()
 {
-    DefaultStorageKeyAllocator key;
-
-    return mPersistentStorage->SyncDeleteKeyValue(key.OTAUpdateToken());
+    return mPersistentStorage->SyncDeleteKeyValue(DefaultStorageKeyAllocator::OTAUpdateToken().KeyName());
 }
 
 CHIP_ERROR DefaultOTARequestorStorage::LoadUpdateToken(MutableByteSpan & updateToken)
 {
-    DefaultStorageKeyAllocator key;
-
-    return Load(key.OTAUpdateToken(), updateToken);
+    return Load(DefaultStorageKeyAllocator::OTAUpdateToken().KeyName(), updateToken);
 }
 
 CHIP_ERROR DefaultOTARequestorStorage::StoreCurrentUpdateState(OTAUpdateStateEnum currentUpdateState)
 {
-    DefaultStorageKeyAllocator key;
-
-    return mPersistentStorage->SyncSetKeyValue(key.OTACurrentUpdateState(), &currentUpdateState, sizeof(currentUpdateState));
+    return mPersistentStorage->SyncSetKeyValue(DefaultStorageKeyAllocator::OTACurrentUpdateState().KeyName(), &currentUpdateState,
+                                               sizeof(currentUpdateState));
 }
 
 CHIP_ERROR DefaultOTARequestorStorage::LoadCurrentUpdateState(OTAUpdateStateEnum & currentUpdateState)
 {
-    DefaultStorageKeyAllocator key;
     uint16_t size = static_cast<uint16_t>(sizeof(currentUpdateState));
 
-    return mPersistentStorage->SyncGetKeyValue(key.OTACurrentUpdateState(), &currentUpdateState, size);
+    return mPersistentStorage->SyncGetKeyValue(DefaultStorageKeyAllocator::OTACurrentUpdateState().KeyName(), &currentUpdateState,
+                                               size);
 }
 
 CHIP_ERROR DefaultOTARequestorStorage::ClearCurrentUpdateState()
 {
-    DefaultStorageKeyAllocator key;
-
-    return mPersistentStorage->SyncDeleteKeyValue(key.OTACurrentUpdateState());
+    return mPersistentStorage->SyncDeleteKeyValue(DefaultStorageKeyAllocator::OTACurrentUpdateState().KeyName());
 }
 
 CHIP_ERROR DefaultOTARequestorStorage::StoreTargetVersion(uint32_t targetVersion)
 {
-    DefaultStorageKeyAllocator key;
-
-    return mPersistentStorage->SyncSetKeyValue(key.OTATargetVersion(), &targetVersion, sizeof(targetVersion));
+    return mPersistentStorage->SyncSetKeyValue(DefaultStorageKeyAllocator::OTATargetVersion().KeyName(), &targetVersion,
+                                               sizeof(targetVersion));
 }
 
 CHIP_ERROR DefaultOTARequestorStorage::LoadTargetVersion(uint32_t & targetVersion)
 {
-    DefaultStorageKeyAllocator key;
     uint16_t size = static_cast<uint16_t>(sizeof(targetVersion));
 
-    return mPersistentStorage->SyncGetKeyValue(key.OTATargetVersion(), &targetVersion, size);
+    return mPersistentStorage->SyncGetKeyValue(DefaultStorageKeyAllocator::OTATargetVersion().KeyName(), &targetVersion, size);
 }
 
 CHIP_ERROR DefaultOTARequestorStorage::ClearTargetVersion()
 {
-    DefaultStorageKeyAllocator key;
-
-    return mPersistentStorage->SyncDeleteKeyValue(key.OTATargetVersion());
+    return mPersistentStorage->SyncDeleteKeyValue(DefaultStorageKeyAllocator::OTATargetVersion().KeyName());
 }
 
 CHIP_ERROR DefaultOTARequestorStorage::Load(const char * key, MutableByteSpan & buffer)

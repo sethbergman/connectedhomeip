@@ -23,10 +23,6 @@
  *
  */
 
-#ifndef __STDC_LIMIT_MACROS
-#define __STDC_LIMIT_MACROS
-#endif
-
 #include "chip-cert.h"
 
 #include <credentials/CertificationDeclaration.h>
@@ -281,7 +277,7 @@ public:
 
     bool IsErrorTestCaseEnabled() { return mEnabled; }
     bool IsFormatVersionPresent() { return (!mEnabled || !mFlags.Has(CDConfigFlags::kFormatVersionMissing)); }
-    int GetFormatVersion() { return (mEnabled && mFlags.Has(CDConfigFlags::kFormatVersionWrong)) ? 2 : 1; }
+    uint8_t GetFormatVersion() { return (mEnabled && mFlags.Has(CDConfigFlags::kFormatVersionWrong)) ? 2 : 1; }
     bool IsVIDPresent() { return (!mEnabled || !mFlags.Has(CDConfigFlags::kVIDMissing)); }
     bool IsVIDCorrect() { return (!mEnabled || !mFlags.Has(CDConfigFlags::kVIDWrong)); }
     bool IsPIDArrayPresent() { return (!mEnabled || !mFlags.Has(CDConfigFlags::kPIDArrayMissing)); }
@@ -304,7 +300,7 @@ public:
     bool IsDACOriginPIDCorrect() { return (!mEnabled || !mFlags.Has(CDConfigFlags::kDACOriginPID)); }
     bool IsDACOriginVIDPresent() { return (mEnabled && mFlags.Has(CDConfigFlags::kDACOriginVIDPresent)); }
     bool IsDACOriginPIDPresent() { return (mEnabled && mFlags.Has(CDConfigFlags::kDACOriginPIDPresent)); }
-    bool IsAuthPAAListPresent() { return (mEnabled || mFlags.Has(CDConfigFlags::kAuthPAAListPresent)); }
+    bool IsAuthPAAListPresent() { return (mFlags.Has(CDConfigFlags::kAuthPAAListPresent)); }
     bool IsAuthPAAListCorrect() { return (!mEnabled || !mFlags.Has(CDConfigFlags::kAuthPAAListWrong)); }
     uint8_t GetAuthPAAListCount() const { return mAuthPAAListCount; }
     bool IsSignerInfoVersionCorrect() { return (!mEnabled || !mFlags.Has(CDConfigFlags::kSignerInfoVersion)); }
@@ -404,7 +400,7 @@ bool HandleOption(const char * progName, OptionSet * optSet, int id, const char 
         }
         break;
     case 'p':
-        if (gCertElements.ProductIdsCount == ArraySize(gCertElements.ProductIds))
+        if (gCertElements.ProductIdsCount == MATTER_ARRAY_SIZE(gCertElements.ProductIds))
         {
             PrintArgError("%s: Too many Product Ids are specified: %s\n", progName, arg);
             return false;
@@ -478,15 +474,15 @@ bool HandleOption(const char * progName, OptionSet * optSet, int id, const char 
         gCertElements.DACOriginVIDandPIDPresent = true;
         break;
     case 'a':
-        if (gCertElements.AuthorizedPAAListCount >= ArraySize(gCertElements.AuthorizedPAAList))
+        if (gCertElements.AuthorizedPAAListCount >= MATTER_ARRAY_SIZE(gCertElements.AuthorizedPAAList))
         {
             PrintArgError("%s: Too many Authorized PAA Certificates are specified: %s\n", progName, arg);
             return false;
         }
         {
             const char * fileNameOrStr = arg;
-            std::unique_ptr<X509, void (*)(X509 *)> cert(X509_new(), &X509_free);
-            VerifyOrReturnError(ReadCert(fileNameOrStr, cert.get()), false);
+            std::unique_ptr<X509, void (*)(X509 *)> cert(nullptr, &X509_free);
+            VerifyOrReturnError(ReadCert(fileNameOrStr, cert), false);
 
             ByteSpan skid;
             VerifyOrReturnError(ExtractSKIDFromX509Cert(cert.get(), skid), false);
@@ -625,6 +621,11 @@ bool HandleOption(const char * progName, OptionSet * optSet, int id, const char 
             gCDConfig.SetDACOriginVIDPresent();
             gCDConfig.SetDACOriginPIDPresent();
             gCDConfig.SetDACOriginPIDWrong();
+        }
+        else if (strcmp(arg, "different-origin") == 0)
+        {
+            gCDConfig.SetDACOriginVIDPresent();
+            gCDConfig.SetDACOriginPIDPresent();
         }
         else if (strcmp(arg, "authorized-paa-list-count0") == 0)
         {
@@ -995,7 +996,7 @@ CHIP_ERROR EncodeSignerInfo_Ignor_Error(const ByteSpan & signerKeyId, const P256
 
             uint8_t asn1SignatureBuf[kMax_ECDSA_Signature_Length_Der];
             MutableByteSpan asn1Signature(asn1SignatureBuf);
-            ReturnErrorOnFailure(EcdsaRawSignatureToAsn1(kP256_FE_Length, ByteSpan(signature, signature.Length()), asn1Signature));
+            ReturnErrorOnFailure(ConvertECDSASignatureRawToDER(P256ECDSASignatureSpan(signature.ConstBytes()), asn1Signature));
 
             if (!cdConfig.IsCMSSignatureCorrect())
             {
@@ -1144,10 +1145,10 @@ bool Cmd_GenCD(int argc, char * argv[])
     }
 
     {
-        std::unique_ptr<X509, void (*)(X509 *)> cert(X509_new(), &X509_free);
+        std::unique_ptr<X509, void (*)(X509 *)> cert(nullptr, &X509_free);
         std::unique_ptr<EVP_PKEY, void (*)(EVP_PKEY *)> key(EVP_PKEY_new(), &EVP_PKEY_free);
 
-        VerifyOrReturnError(ReadCert(gCertFileNameOrStr, cert.get()), false);
+        VerifyOrReturnError(ReadCert(gCertFileNameOrStr, cert), false);
         VerifyOrReturnError(ReadKey(gKeyFileNameOrStr, key), false);
 
         // Extract the subject key id from the X509 certificate.

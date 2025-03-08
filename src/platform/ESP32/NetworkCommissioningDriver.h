@@ -19,45 +19,73 @@
 #include <esp_wifi.h>
 #include <platform/NetworkCommissioning.h>
 
+using chip::BitFlags;
+using chip::app::Clusters::NetworkCommissioning::WiFiSecurityBitmap;
+
 namespace chip {
 namespace DeviceLayer {
 namespace NetworkCommissioning {
 namespace {
-constexpr uint8_t kMaxWiFiNetworks                  = 1;
-constexpr uint8_t kWiFiScanNetworksTimeOutSeconds   = 10;
-constexpr uint8_t kWiFiConnectNetworkTimeoutSeconds = 30;
+inline constexpr uint8_t kMaxWiFiNetworks                  = 1;
+inline constexpr uint8_t kWiFiScanNetworksTimeOutSeconds   = 10;
+inline constexpr uint8_t kWiFiConnectNetworkTimeoutSeconds = 30;
 } // namespace
+
+BitFlags<WiFiSecurityBitmap> ConvertSecurityType(wifi_auth_mode_t authMode);
 
 class ESPScanResponseIterator : public Iterator<WiFiScanResponse>
 {
 public:
+#if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(5, 1, 3)
+    ESPScanResponseIterator(const size_t size) : mSize(size) {}
+#else
     ESPScanResponseIterator(const size_t size, const wifi_ap_record_t * scanResults) : mSize(size), mpScanResults(scanResults) {}
+#endif // ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(5, 1, 3)
     size_t Count() override { return mSize; }
+
     bool Next(WiFiScanResponse & item) override
     {
+#if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(5, 1, 3)
+        wifi_ap_record_t ap_record;
+        VerifyOrReturnValue(esp_wifi_scan_get_ap_record(&ap_record) == ESP_OK, false);
+        SetApData(item, ap_record);
+#else
         if (mIternum >= mSize)
         {
             return false;
         }
-
-        item.security.SetRaw(mpScanResults[mIternum].authmode);
-        item.ssidLen =
-            strnlen(reinterpret_cast<const char *>(mpScanResults[mIternum].ssid), chip::DeviceLayer::Internal::kMaxWiFiSSIDLength);
-        item.channel  = mpScanResults[mIternum].primary;
-        item.wiFiBand = chip::DeviceLayer::NetworkCommissioning::WiFiBand::k2g4;
-        item.rssi     = mpScanResults[mIternum].rssi;
-        memcpy(item.ssid, mpScanResults[mIternum].ssid, item.ssidLen);
-        memcpy(item.bssid, mpScanResults[mIternum].bssid, 6);
-
+        SetApData(item, mpScanResults[mIternum]);
         mIternum++;
+#endif // ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(5, 1, 3)
         return true;
     }
-    void Release() override {}
+
+    void Release() override
+    {
+#if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(5, 1, 3)
+        esp_wifi_clear_ap_list();
+#endif // ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(5, 1, 3)
+    }
 
 private:
     const size_t mSize;
+#if ESP_IDF_VERSION < ESP_IDF_VERSION_VAL(5, 1, 3)
     const wifi_ap_record_t * mpScanResults;
     size_t mIternum = 0;
+#endif // ESP_IDF_VERSION < ESP_IDF_VERSION_VAL(5, 1, 3)
+
+    void SetApData(WiFiScanResponse & item, wifi_ap_record_t ap_record)
+    {
+        item.security = ConvertSecurityType(ap_record.authmode);
+        static_assert(chip::DeviceLayer::Internal::kMaxWiFiSSIDLength <= UINT8_MAX, "SSID length might not fit in item.ssidLen");
+        item.ssidLen = static_cast<uint8_t>(
+            strnlen(reinterpret_cast<const char *>(ap_record.ssid), chip::DeviceLayer::Internal::kMaxWiFiSSIDLength));
+        item.channel  = ap_record.primary;
+        item.wiFiBand = chip::DeviceLayer::NetworkCommissioning::WiFiBand::k2g4;
+        item.rssi     = ap_record.rssi;
+        memcpy(item.ssid, ap_record.ssid, item.ssidLen);
+        memcpy(item.bssid, ap_record.bssid, sizeof(item.bssid));
+    }
 };
 
 class ESPWiFiDriver final : public WiFiDriver
@@ -101,11 +129,15 @@ public:
     Status RemoveNetwork(ByteSpan networkId, MutableCharSpan & outDebugText, uint8_t & outNetworkIndex) override;
     Status ReorderNetwork(ByteSpan networkId, uint8_t index, MutableCharSpan & outDebugText) override;
     void ConnectNetwork(ByteSpan networkId, ConnectCallback * callback) override;
+#if CHIP_DEVICE_CONFIG_SUPPORTS_CONCURRENT_CONNECTION
+    CHIP_ERROR DisconnectFromNetwork() override;
+#endif
 
     // WiFiDriver
     Status AddOrUpdateNetwork(ByteSpan ssid, ByteSpan credentials, MutableCharSpan & outDebugText,
                               uint8_t & outNetworkIndex) override;
     void ScanNetworks(ByteSpan ssid, ScanCallback * callback) override;
+    uint32_t GetSupportedWiFiBandsMask() const override;
 
     CHIP_ERROR ConnectWiFiNetwork(const char * ssid, uint8_t ssidLen, const char * key, uint8_t keyLen);
     void OnConnectWiFiNetwork();
@@ -115,7 +147,7 @@ public:
     void OnNetworkStatusChange();
 
     CHIP_ERROR SetLastDisconnectReason(const ChipDeviceEvent * event);
-    int32_t GetLastDisconnectReason();
+    uint16_t GetLastDisconnectReason();
 
     static ESPWiFiDriver & GetInstance()
     {
@@ -126,13 +158,60 @@ public:
 private:
     bool NetworkMatch(const WiFiNetwork & network, ByteSpan networkId);
     CHIP_ERROR StartScanWiFiNetworks(ByteSpan ssid);
+    CHIP_ERROR BackupConfiguration();
 
-    WiFiNetwork mSavedNetwork;
     WiFiNetwork mStagingNetwork;
     ScanCallback * mpScanCallback;
     ConnectCallback * mpConnectCallback;
     NetworkStatusChangeCallback * mpStatusChangeCallback = nullptr;
-    int32_t mLastDisconnectedReason;
+    uint16_t mLastDisconnectedReason;
+};
+
+class ESPEthernetDriver : public EthernetDriver
+{
+public:
+    class EthernetNetworkIterator final : public NetworkIterator
+    {
+    public:
+        EthernetNetworkIterator(ESPEthernetDriver * aDriver) : mDriver(aDriver) {}
+        size_t Count() { return 1; }
+        bool Next(Network & item) override
+        {
+            if (exhausted)
+            {
+                return false;
+            }
+            exhausted = true;
+            memcpy(item.networkID, interfaceName, interfaceNameLen);
+            item.networkIDLen = interfaceNameLen;
+            item.connected    = true;
+            return true;
+        }
+        void Release() override { delete this; }
+        ~EthernetNetworkIterator() = default;
+
+        uint8_t interfaceName[kMaxNetworkIDLen];
+        uint8_t interfaceNameLen = 0;
+        bool exhausted           = false;
+
+    private:
+        ESPEthernetDriver * mDriver;
+    };
+
+    // BaseDriver
+    NetworkIterator * GetNetworks() override { return new EthernetNetworkIterator(this); }
+    uint8_t GetMaxNetworks() { return 1; }
+    CHIP_ERROR Init(NetworkStatusChangeCallback * networkStatusChangeCallback) override;
+    void Shutdown()
+    {
+        // TODO: This method can be implemented if Ethernet is used along with Wifi/Thread.
+    }
+
+    static ESPEthernetDriver & GetInstance()
+    {
+        static ESPEthernetDriver instance;
+        return instance;
+    }
 };
 
 } // namespace NetworkCommissioning

@@ -10,11 +10,13 @@
 
 # Build System
 out/
+/examples/virtual-device-app/android/App/buildSrc/build/
 /src/test_driver/nrfconnect/build/
 /src/darwin/Framework/build/
+/src/python_testing/matter_testing_infrastructure/build/
 
 # Pigweed Environment
-.environment/
+.environment*/
 build_overrides/pigweed_environment.gni
 
 # Temporary Directories
@@ -50,6 +52,12 @@ __pycache__
 # Doxygen outputs
 docs/html
 
+# Python venv
+.venv
+
+# Documentation
+docs/_build
+
 # VSCode java extensions
 .project
 
@@ -65,3 +73,15 @@ compile_commands.json
 # log files
 *.log
 examples/thermostat/ameba/build
+
+# Downloaded zap without a pigweed root (via zap_download.py)
+.zap
+
+# When building esp-idf application, if any component is fetched using idf-component-manager then they are stored in
+# managed_component directory. Along with that dependencies.lock file is generated.
+# https://github.com/espressif/idf-component-manager#using-with-a-project
+examples/*/esp32/managed_components
+examples/*/esp32/dependencies.lock
+
+# jupyter temporary files
+.ipynb_checkpoints

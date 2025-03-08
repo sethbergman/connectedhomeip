@@ -16,20 +16,21 @@
  *    limitations under the License.
  */
 
+#include <pw_unit_test/framework.h>
+
 #include <app-common/zap-generated/ids/Attributes.h>
 #include <app/AttributePathExpandIterator.h>
 #include <app/ConcreteAttributePath.h>
 #include <app/EventManagement.h>
-#include <app/ObjectList.h>
 #include <app/util/mock/Constants.h>
+#include <data-model-providers/codegen/Instance.h>
 #include <lib/core/CHIPCore.h>
-#include <lib/core/CHIPTLVDebug.hpp>
+#include <lib/core/StringBuilderAdapters.h>
+#include <lib/core/TLVDebug.h>
 #include <lib/support/CodeUtils.h>
 #include <lib/support/DLLUtil.h>
-#include <lib/support/UnitTestRegistration.h>
+#include <lib/support/LinkedList.h>
 #include <lib/support/logging/CHIPLogging.h>
-
-#include <nlunit-test.h>
 
 using namespace chip;
 using namespace chip::Test;
@@ -39,9 +40,15 @@ namespace {
 
 using P = app::ConcreteAttributePath;
 
-void TestAllWildcard(nlTestSuite * apSuite, void * apContext)
+struct TestAttributePathExpandIterator : public ::testing::Test
 {
-    app::ObjectList<app::AttributePathParams> clusInfo;
+    static void SetUpTestSuite() { ASSERT_EQ(chip::Platform::MemoryInit(), CHIP_NO_ERROR); }
+    static void TearDownTestSuite() { chip::Platform::MemoryShutdown(); }
+};
+
+TEST_F(TestAttributePathExpandIterator, TestAllWildcard)
+{
+    SingleLinkedListNode<app::AttributePathParams> clusInfo;
 
     app::ConcreteAttributePath path;
     P paths[] = {
@@ -105,21 +112,32 @@ void TestAllWildcard(nlTestSuite * apSuite, void * apContext)
 
     size_t index = 0;
 
-    for (app::AttributePathExpandIterator iter(&clusInfo); iter.Get(path); iter.Next())
+    auto position = AttributePathExpandIterator::Position::StartIterating(&clusInfo);
+
+    while (true)
     {
+        // re-create the iterator
+        app::AttributePathExpandIterator iter(CodegenDataModelProviderInstance(nullptr /* delegate */), position);
+
+        if (!iter.Next(path))
+        {
+            break;
+        }
+
         ChipLogDetail(AppServer, "Visited Attribute: 0x%04X / " ChipLogFormatMEI " / " ChipLogFormatMEI, path.mEndpointId,
                       ChipLogValueMEI(path.mClusterId), ChipLogValueMEI(path.mAttributeId));
-        NL_TEST_ASSERT(apSuite, index < ArraySize(paths) && paths[index] == path);
+        EXPECT_LT(index, MATTER_ARRAY_SIZE(paths));
+        EXPECT_EQ(paths[index], path);
         index++;
     }
-    NL_TEST_ASSERT(apSuite, index == ArraySize(paths));
+    EXPECT_EQ(index, MATTER_ARRAY_SIZE(paths));
 }
 
-void TestWildcardEndpoint(nlTestSuite * apSuite, void * apContext)
+TEST_F(TestAttributePathExpandIterator, TestWildcardEndpoint)
 {
-    app::ObjectList<app::AttributePathParams> clusInfo;
-    clusInfo.mValue.mClusterId   = Test::MockClusterId(3);
-    clusInfo.mValue.mAttributeId = Test::MockAttributeId(3);
+    SingleLinkedListNode<app::AttributePathParams> clusInfo;
+    clusInfo.mValue.mClusterId   = chip::Test::MockClusterId(3);
+    clusInfo.mValue.mAttributeId = chip::Test::MockAttributeId(3);
 
     app::ConcreteAttributePath path;
     P paths[] = {
@@ -128,20 +146,29 @@ void TestWildcardEndpoint(nlTestSuite * apSuite, void * apContext)
 
     size_t index = 0;
 
-    for (app::AttributePathExpandIterator iter(&clusInfo); iter.Get(path); iter.Next())
+    auto position = AttributePathExpandIterator::Position::StartIterating(&clusInfo);
+    while (true)
     {
+        // re-create the iterator
+        app::AttributePathExpandIterator iter(CodegenDataModelProviderInstance(nullptr /* delegate */), position);
+
+        if (!iter.Next(path))
+        {
+            break;
+        }
         ChipLogDetail(AppServer, "Visited Attribute: 0x%04X / " ChipLogFormatMEI " / " ChipLogFormatMEI, path.mEndpointId,
                       ChipLogValueMEI(path.mClusterId), ChipLogValueMEI(path.mAttributeId));
-        NL_TEST_ASSERT(apSuite, index < ArraySize(paths) && paths[index] == path);
+        EXPECT_LT(index, MATTER_ARRAY_SIZE(paths));
+        EXPECT_EQ(paths[index], path);
         index++;
     }
-    NL_TEST_ASSERT(apSuite, index == ArraySize(paths));
+    EXPECT_EQ(index, MATTER_ARRAY_SIZE(paths));
 }
 
-void TestWildcardCluster(nlTestSuite * apSuite, void * apContext)
+TEST_F(TestAttributePathExpandIterator, TestWildcardCluster)
 {
-    app::ObjectList<app::AttributePathParams> clusInfo;
-    clusInfo.mValue.mEndpointId  = Test::kMockEndpoint3;
+    SingleLinkedListNode<app::AttributePathParams> clusInfo;
+    clusInfo.mValue.mEndpointId  = chip::Test::kMockEndpoint3;
     clusInfo.mValue.mAttributeId = app::Clusters::Globals::Attributes::ClusterRevision::Id;
 
     app::ConcreteAttributePath path;
@@ -154,20 +181,29 @@ void TestWildcardCluster(nlTestSuite * apSuite, void * apContext)
 
     size_t index = 0;
 
-    for (app::AttributePathExpandIterator iter(&clusInfo); iter.Get(path); iter.Next())
+    auto position = AttributePathExpandIterator::Position::StartIterating(&clusInfo);
+    while (true)
     {
+        // re-create the iterator
+        app::AttributePathExpandIterator iter(CodegenDataModelProviderInstance(nullptr /* delegate */), position);
+
+        if (!iter.Next(path))
+        {
+            break;
+        }
         ChipLogDetail(AppServer, "Visited Attribute: 0x%04X / " ChipLogFormatMEI " / " ChipLogFormatMEI, path.mEndpointId,
                       ChipLogValueMEI(path.mClusterId), ChipLogValueMEI(path.mAttributeId));
-        NL_TEST_ASSERT(apSuite, index < ArraySize(paths) && paths[index] == path);
+        EXPECT_LT(index, MATTER_ARRAY_SIZE(paths));
+        EXPECT_EQ(paths[index], path);
         index++;
     }
-    NL_TEST_ASSERT(apSuite, index == ArraySize(paths));
+    EXPECT_EQ(index, MATTER_ARRAY_SIZE(paths));
 }
 
-void TestWildcardClusterGlobalAttributeNotInMetadata(nlTestSuite * apSuite, void * apContext)
+TEST_F(TestAttributePathExpandIterator, TestWildcardClusterGlobalAttributeNotInMetadata)
 {
-    app::ObjectList<app::AttributePathParams> clusInfo;
-    clusInfo.mValue.mEndpointId  = Test::kMockEndpoint3;
+    SingleLinkedListNode<app::AttributePathParams> clusInfo;
+    clusInfo.mValue.mEndpointId  = chip::Test::kMockEndpoint3;
     clusInfo.mValue.mAttributeId = app::Clusters::Globals::Attributes::AttributeList::Id;
 
     app::ConcreteAttributePath path;
@@ -180,21 +216,31 @@ void TestWildcardClusterGlobalAttributeNotInMetadata(nlTestSuite * apSuite, void
 
     size_t index = 0;
 
-    for (app::AttributePathExpandIterator iter(&clusInfo); iter.Get(path); iter.Next())
+    auto position = AttributePathExpandIterator::Position::StartIterating(&clusInfo);
+
+    while (true)
     {
+        // re-create the iterator
+        app::AttributePathExpandIterator iter(CodegenDataModelProviderInstance(nullptr /* delegate */), position);
+
+        if (!iter.Next(path))
+        {
+            break;
+        }
         ChipLogDetail(AppServer, "Visited Attribute: 0x%04X / " ChipLogFormatMEI " / " ChipLogFormatMEI, path.mEndpointId,
                       ChipLogValueMEI(path.mClusterId), ChipLogValueMEI(path.mAttributeId));
-        NL_TEST_ASSERT(apSuite, index < ArraySize(paths) && paths[index] == path);
+        EXPECT_LT(index, MATTER_ARRAY_SIZE(paths));
+        EXPECT_EQ(paths[index], path);
         index++;
     }
-    NL_TEST_ASSERT(apSuite, index == ArraySize(paths));
+    EXPECT_EQ(index, MATTER_ARRAY_SIZE(paths));
 }
 
-void TestWildcardAttribute(nlTestSuite * apSuite, void * apContext)
+TEST_F(TestAttributePathExpandIterator, TestWildcardAttribute)
 {
-    app::ObjectList<app::AttributePathParams> clusInfo;
-    clusInfo.mValue.mEndpointId = Test::kMockEndpoint2;
-    clusInfo.mValue.mClusterId  = Test::MockClusterId(3);
+    SingleLinkedListNode<app::AttributePathParams> clusInfo;
+    clusInfo.mValue.mEndpointId = chip::Test::kMockEndpoint2;
+    clusInfo.mValue.mClusterId  = chip::Test::MockClusterId(3);
 
     app::ConcreteAttributePath path;
     P paths[] = {
@@ -210,22 +256,32 @@ void TestWildcardAttribute(nlTestSuite * apSuite, void * apContext)
 
     size_t index = 0;
 
-    for (app::AttributePathExpandIterator iter(&clusInfo); iter.Get(path); iter.Next())
+    auto position = AttributePathExpandIterator::Position::StartIterating(&clusInfo);
+
+    while (true)
     {
+        // re-create the iterator
+        app::AttributePathExpandIterator iter(CodegenDataModelProviderInstance(nullptr /* delegate */), position);
+
+        if (!iter.Next(path))
+        {
+            break;
+        }
         ChipLogDetail(AppServer, "Visited Attribute: 0x%04X / " ChipLogFormatMEI " / " ChipLogFormatMEI, path.mEndpointId,
                       ChipLogValueMEI(path.mClusterId), ChipLogValueMEI(path.mAttributeId));
-        NL_TEST_ASSERT(apSuite, index < ArraySize(paths) && paths[index] == path);
+        EXPECT_LT(index, MATTER_ARRAY_SIZE(paths));
+        EXPECT_EQ(paths[index], path);
         index++;
     }
-    NL_TEST_ASSERT(apSuite, index == ArraySize(paths));
+    EXPECT_EQ(index, MATTER_ARRAY_SIZE(paths));
 }
 
-void TestNoWildcard(nlTestSuite * apSuite, void * apContext)
+TEST_F(TestAttributePathExpandIterator, TestNoWildcard)
 {
-    app::ObjectList<app::AttributePathParams> clusInfo;
-    clusInfo.mValue.mEndpointId  = Test::kMockEndpoint2;
-    clusInfo.mValue.mClusterId   = Test::MockClusterId(3);
-    clusInfo.mValue.mAttributeId = Test::MockAttributeId(3);
+    SingleLinkedListNode<app::AttributePathParams> clusInfo;
+    clusInfo.mValue.mEndpointId  = chip::Test::kMockEndpoint2;
+    clusInfo.mValue.mClusterId   = chip::Test::MockClusterId(3);
+    clusInfo.mValue.mAttributeId = chip::Test::MockAttributeId(3);
 
     app::ConcreteAttributePath path;
     P paths[] = {
@@ -234,37 +290,109 @@ void TestNoWildcard(nlTestSuite * apSuite, void * apContext)
 
     size_t index = 0;
 
-    for (app::AttributePathExpandIterator iter(&clusInfo); iter.Get(path); iter.Next())
+    auto position = AttributePathExpandIterator::Position::StartIterating(&clusInfo);
+    while (true)
     {
+        // re-create the iterator
+        app::AttributePathExpandIterator iter(CodegenDataModelProviderInstance(nullptr /* delegate */), position);
+
+        if (!iter.Next(path))
+        {
+            break;
+        }
         ChipLogDetail(AppServer, "Visited Attribute: 0x%04X / " ChipLogFormatMEI " / " ChipLogFormatMEI, path.mEndpointId,
                       ChipLogValueMEI(path.mClusterId), ChipLogValueMEI(path.mAttributeId));
-        NL_TEST_ASSERT(apSuite, index < ArraySize(paths) && paths[index] == path);
+        EXPECT_LT(index, MATTER_ARRAY_SIZE(paths));
+        EXPECT_EQ(paths[index], path);
         index++;
     }
-    NL_TEST_ASSERT(apSuite, index == ArraySize(paths));
+    EXPECT_EQ(index, MATTER_ARRAY_SIZE(paths));
 }
 
-void TestMultipleClusInfo(nlTestSuite * apSuite, void * apContext)
+TEST_F(TestAttributePathExpandIterator, TestFixedPathExpansion)
+{
+    // expansion logic requires that:
+    //   - paths for wildcard expansion ARE VALIDATED
+    //   - path WITHOUT wildcard expansion ARE NOT VALIDATED
+
+    // invalid attribute across all clusters returns empty
+    {
+        SingleLinkedListNode<app::AttributePathParams> clusInfo;
+        clusInfo.mValue.mAttributeId = 122333;
+
+        auto position = AttributePathExpandIterator::Position::StartIterating(&clusInfo);
+        app::AttributePathExpandIterator iter(CodegenDataModelProviderInstance(nullptr /* delegate */), position);
+        ConcreteAttributePath path;
+
+        EXPECT_FALSE(iter.Next(path));
+    }
+
+    // invalid cluster with a valid attribute (featuremap) returns empty
+    {
+        SingleLinkedListNode<app::AttributePathParams> clusInfo;
+        clusInfo.mValue.mClusterId   = 122344;
+        clusInfo.mValue.mAttributeId = Clusters::Globals::Attributes::FeatureMap::Id;
+
+        auto position = AttributePathExpandIterator::Position::StartIterating(&clusInfo);
+        app::AttributePathExpandIterator iter(CodegenDataModelProviderInstance(nullptr /* delegate */), position);
+        ConcreteAttributePath path;
+
+        EXPECT_FALSE(iter.Next(path));
+    }
+
+    // invalid cluster with wildcard attribute returns empty
+    {
+        SingleLinkedListNode<app::AttributePathParams> clusInfo;
+        clusInfo.mValue.mClusterId = 122333;
+
+        auto position = AttributePathExpandIterator::Position::StartIterating(&clusInfo);
+        app::AttributePathExpandIterator iter(CodegenDataModelProviderInstance(nullptr /* delegate */), position);
+        ConcreteAttributePath path;
+
+        EXPECT_FALSE(iter.Next(path));
+    }
+
+    // even though all above WERE invalid, if we specify a non-wildcard path it is returned as-is
+    {
+        SingleLinkedListNode<app::AttributePathParams> clusInfo;
+        clusInfo.mValue.mEndpointId  = 1;
+        clusInfo.mValue.mClusterId   = 122344;
+        clusInfo.mValue.mAttributeId = 122333;
+
+        auto position = AttributePathExpandIterator::Position::StartIterating(&clusInfo);
+        app::AttributePathExpandIterator iter(CodegenDataModelProviderInstance(nullptr /* delegate */), position);
+        ConcreteAttributePath path;
+
+        EXPECT_TRUE(iter.Next(path));
+        EXPECT_EQ(path.mEndpointId, clusInfo.mValue.mEndpointId);
+        EXPECT_EQ(path.mClusterId, clusInfo.mValue.mClusterId);
+        EXPECT_EQ(path.mAttributeId, clusInfo.mValue.mAttributeId);
+
+        EXPECT_FALSE(iter.Next(path));
+    }
+}
+
+TEST_F(TestAttributePathExpandIterator, TestMultipleClusInfo)
 {
 
-    app::ObjectList<app::AttributePathParams> clusInfo1;
+    SingleLinkedListNode<app::AttributePathParams> clusInfo1;
 
-    app::ObjectList<app::AttributePathParams> clusInfo2;
-    clusInfo2.mValue.mClusterId   = Test::MockClusterId(3);
-    clusInfo2.mValue.mAttributeId = Test::MockAttributeId(3);
+    SingleLinkedListNode<app::AttributePathParams> clusInfo2;
+    clusInfo2.mValue.mClusterId   = chip::Test::MockClusterId(3);
+    clusInfo2.mValue.mAttributeId = chip::Test::MockAttributeId(3);
 
-    app::ObjectList<app::AttributePathParams> clusInfo3;
-    clusInfo3.mValue.mEndpointId  = Test::kMockEndpoint3;
+    SingleLinkedListNode<app::AttributePathParams> clusInfo3;
+    clusInfo3.mValue.mEndpointId  = chip::Test::kMockEndpoint3;
     clusInfo3.mValue.mAttributeId = app::Clusters::Globals::Attributes::ClusterRevision::Id;
 
-    app::ObjectList<app::AttributePathParams> clusInfo4;
-    clusInfo4.mValue.mEndpointId = Test::kMockEndpoint2;
-    clusInfo4.mValue.mClusterId  = Test::MockClusterId(3);
+    SingleLinkedListNode<app::AttributePathParams> clusInfo4;
+    clusInfo4.mValue.mEndpointId = chip::Test::kMockEndpoint2;
+    clusInfo4.mValue.mClusterId  = chip::Test::MockClusterId(3);
 
-    app::ObjectList<app::AttributePathParams> clusInfo5;
-    clusInfo5.mValue.mEndpointId  = Test::kMockEndpoint2;
-    clusInfo5.mValue.mClusterId   = Test::MockClusterId(3);
-    clusInfo5.mValue.mAttributeId = Test::MockAttributeId(3);
+    SingleLinkedListNode<app::AttributePathParams> clusInfo5;
+    clusInfo5.mValue.mEndpointId  = chip::Test::kMockEndpoint2;
+    clusInfo5.mValue.mClusterId   = chip::Test::MockClusterId(3);
+    clusInfo5.mValue.mAttributeId = chip::Test::MockAttributeId(3);
 
     clusInfo1.mpNext = &clusInfo2;
     clusInfo2.mpNext = &clusInfo3;
@@ -345,66 +473,47 @@ void TestMultipleClusInfo(nlTestSuite * apSuite, void * apContext)
         { kMockEndpoint2, MockClusterId(3), MockAttributeId(3) },
     };
 
-    size_t index = 0;
-
-    for (app::AttributePathExpandIterator iter(&clusInfo1); iter.Get(path); iter.Next())
+    // Test that a one-shot iterate through all works
     {
-        ChipLogDetail(AppServer, "Visited Attribute: 0x%04X / " ChipLogFormatMEI " / " ChipLogFormatMEI, path.mEndpointId,
-                      ChipLogValueMEI(path.mClusterId), ChipLogValueMEI(path.mAttributeId));
-        NL_TEST_ASSERT(apSuite, index < ArraySize(paths) && paths[index] == path);
-        index++;
+        size_t index = 0;
+
+        auto position = AttributePathExpandIterator::Position::StartIterating(&clusInfo1);
+        app::AttributePathExpandIterator iter(CodegenDataModelProviderInstance(nullptr /* delegate */), position);
+
+        while (iter.Next(path))
+        {
+            ChipLogDetail(AppServer, "Visited Attribute: 0x%04X / " ChipLogFormatMEI " / " ChipLogFormatMEI, path.mEndpointId,
+                          ChipLogValueMEI(path.mClusterId), ChipLogValueMEI(path.mAttributeId));
+            EXPECT_LT(index, MATTER_ARRAY_SIZE(paths));
+            EXPECT_EQ(paths[index], path);
+            index++;
+        }
+        EXPECT_EQ(index, MATTER_ARRAY_SIZE(paths));
     }
-    NL_TEST_ASSERT(apSuite, index == ArraySize(paths));
+
+    // identical test, however this checks that position re-use works
+    // the same as a one-shot iteration.
+    {
+        size_t index = 0;
+
+        auto position = AttributePathExpandIterator::Position::StartIterating(&clusInfo1);
+        while (true)
+        {
+            // re-create the iterator
+            app::AttributePathExpandIterator iter(CodegenDataModelProviderInstance(nullptr /* delegate */), position);
+
+            if (!iter.Next(path))
+            {
+                break;
+            }
+            ChipLogDetail(AppServer, "Visited Attribute: 0x%04X / " ChipLogFormatMEI " / " ChipLogFormatMEI, path.mEndpointId,
+                          ChipLogValueMEI(path.mClusterId), ChipLogValueMEI(path.mAttributeId));
+            EXPECT_LT(index, MATTER_ARRAY_SIZE(paths));
+            EXPECT_EQ(paths[index], path);
+            index++;
+        }
+        EXPECT_EQ(index, MATTER_ARRAY_SIZE(paths));
+    }
 }
-
-static int TestSetup(void * inContext)
-{
-    return SUCCESS;
-}
-
-/**
- *  Tear down the test suite.
- */
-static int TestTeardown(void * inContext)
-{
-    return SUCCESS;
-}
-
-/**
- *   Test Suite. It lists all the test functions.
- */
-
-// clang-format off
-const nlTest sTests[] =
-{
-        NL_TEST_DEF("TestAllWildcard", TestAllWildcard),
-        NL_TEST_DEF("TestWildcardEndpoint", TestWildcardEndpoint),
-        NL_TEST_DEF("TestWildcardCluster", TestWildcardCluster),
-        NL_TEST_DEF("TestWildcardClusterGlobalAttributeNotInMetadata",
-                    TestWildcardClusterGlobalAttributeNotInMetadata),
-        NL_TEST_DEF("TestWildcardAttribute", TestWildcardAttribute),
-        NL_TEST_DEF("TestNoWildcard", TestNoWildcard),
-        NL_TEST_DEF("TestMultipleClusInfo", TestMultipleClusInfo),
-        NL_TEST_SENTINEL()
-};
-// clang-format on
-
-// clang-format off
-nlTestSuite sSuite =
-{
-    "TestAttributePathExpandIterator",
-    &sTests[0],
-    TestSetup,
-    TestTeardown,
-};
-// clang-format on
 
 } // namespace
-
-int TestAttributePathExpandIterator()
-{
-    nlTestRunner(&sSuite, nullptr);
-    return (nlTestRunnerStats(&sSuite));
-}
-
-CHIP_REGISTER_TEST_SUITE(TestAttributePathExpandIterator)

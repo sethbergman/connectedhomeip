@@ -19,20 +19,22 @@
 #include "DeviceCallbacks.h"
 #include <common/CHIPDeviceManager.h>
 #include <common/Esp32AppServer.h>
+#include <common/Esp32ThreadInit.h>
 
 #include "AppTask.h"
 #include "BindingHandler.h"
+#include "esp_idf_version.h"
 #include "esp_log.h"
-#include "esp_spi_flash.h"
 #include "esp_system.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "nvs_flash.h"
 #include "shell_extension/launch.h"
 
-#include <app/server/OnboardingCodesUtil.h>
 #include <credentials/DeviceAttestationCredsProvider.h>
 #include <credentials/examples/DeviceAttestationCredsExample.h>
+#include <platform/ESP32/ESP32Utils.h>
+#include <setup_payload/OnboardingCodesUtil.h>
 
 #if CONFIG_ENABLE_ESP32_FACTORY_DATA_PROVIDER
 #include <platform/ESP32/ESP32FactoryDataProvider.h>
@@ -44,9 +46,17 @@
 #include <DeviceInfoProviderImpl.h>
 #endif // CONFIG_ENABLE_ESP32_DEVICE_INFO_PROVIDER
 
+#if ESP_IDF_VERSION < ESP_IDF_VERSION_VAL(5, 0, 0)
+#include "esp_spi_flash.h"
+#else
+#include "esp_chip_info.h"
+#include "esp_flash.h"
+#endif
+
 using namespace ::chip;
 using namespace ::chip::Credentials;
 using namespace ::chip::DeviceManager;
+using namespace ::chip::DeviceLayer;
 
 namespace {
 #if CONFIG_ENABLE_ESP32_FACTORY_DATA_PROVIDER
@@ -60,9 +70,10 @@ DeviceLayer::DeviceInfoProviderImpl gExampleDeviceInfoProvider;
 #endif // CONFIG_ENABLE_ESP32_DEVICE_INFO_PROVIDER
 } // namespace
 
-static const char * TAG = "light-switch-app";
+static const char TAG[] = "light-switch-app";
 
 static AppDeviceCallbacks EchoCallbacks;
+static AppDeviceCallbacksDelegate sAppDeviceCallbacksDelegate;
 
 static void InitServer(intptr_t context)
 {
@@ -70,8 +81,6 @@ static void InitServer(intptr_t context)
     PrintOnboardingCodes(chip::RendezvousInformationFlags(CONFIG_RENDEZVOUS_MODE));
 
     Esp32AppServer::Init(); // Init ZCL Data Model and CHIP App Server AND Initialize device attestation config
-
-    InitBindingHandler();
 }
 
 extern "C" void app_main()
@@ -83,10 +92,24 @@ extern "C" void app_main()
         ESP_LOGE(TAG, "nvs_flash_init() failed: %s", esp_err_to_name(err));
         return;
     }
+    err = esp_event_loop_create_default();
+    if (err != ESP_OK)
+    {
+        ESP_LOGE(TAG, "esp_event_loop_create_default() failed: %s", esp_err_to_name(err));
+        return;
+    }
 
     ESP_LOGI(TAG, "==================================================");
     ESP_LOGI(TAG, "chip-esp32-light-switch-example starting");
     ESP_LOGI(TAG, "==================================================");
+
+#if CHIP_DEVICE_CONFIG_ENABLE_WIFI
+    if (DeviceLayer::Internal::ESP32Utils::InitWiFiStack() != CHIP_NO_ERROR)
+    {
+        ESP_LOGE(TAG, "Failed to initialize the Wi-Fi stack");
+        return;
+    }
+#endif
 
 #if CONFIG_ENABLE_CHIP_SHELL
     chip::LaunchShell();
@@ -96,9 +119,10 @@ extern "C" void app_main()
 
     CHIPDeviceManager & deviceMgr = CHIPDeviceManager::GetInstance();
     CHIP_ERROR error              = deviceMgr.Init(&EchoCallbacks);
+    DeviceCallbacksDelegate::Instance().SetAppDelegate(&sAppDeviceCallbacksDelegate);
     if (error != CHIP_NO_ERROR)
     {
-        ESP_LOGE(TAG, "device.Init() failed: %s", ErrorStr(error));
+        ESP_LOGE(TAG, "device.Init() failed: %" CHIP_ERROR_FORMAT, error.Format());
         return;
     }
 
@@ -112,24 +136,11 @@ extern "C" void app_main()
     SetDeviceAttestationCredentialsProvider(Examples::GetExampleDACProvider());
 #endif // CONFIG_ENABLE_ESP32_FACTORY_DATA_PROVIDER
 
-#if CHIP_DEVICE_CONFIG_ENABLE_THREAD
-    if (ThreadStackMgr().InitThreadStack() != CHIP_NO_ERROR)
-    {
-        ESP_LOGE(TAG, "Failed to initialize Thread stack");
-        return;
-    }
-    if (ThreadStackMgr().StartThreadTask() != CHIP_NO_ERROR)
-    {
-        ESP_LOGE(TAG, "Failed to launch Thread task");
-        return;
-    }
-#endif
-
     chip::DeviceLayer::PlatformMgr().ScheduleWork(InitServer, reinterpret_cast<intptr_t>(nullptr));
 
     error = GetAppTask().StartAppTask();
     if (error != CHIP_NO_ERROR)
     {
-        ESP_LOGE(TAG, "GetAppTask().StartAppTask() failed : %s", ErrorStr(error));
+        ESP_LOGE(TAG, "GetAppTask().StartAppTask() failed : %" CHIP_ERROR_FORMAT, error.Format());
     }
 }

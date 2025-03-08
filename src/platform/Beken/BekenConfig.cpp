@@ -71,7 +71,6 @@ const BekenConfig::Key BekenConfig::kConfigKey_ServiceId                   = { k
 const BekenConfig::Key BekenConfig::kConfigKey_GroupKeyIndex               = { kConfigNamespace_ChipConfig, "group-key-index" };
 const BekenConfig::Key BekenConfig::kConfigKey_LastUsedEpochKeyId          = { kConfigNamespace_ChipConfig, "last-ek-id" };
 const BekenConfig::Key BekenConfig::kConfigKey_FailSafeArmed               = { kConfigNamespace_ChipConfig, "fail-safe-armed" };
-const BekenConfig::Key BekenConfig::kConfigKey_WiFiStationSecType          = { kConfigNamespace_ChipConfig, "sta-sec-type" };
 const BekenConfig::Key BekenConfig::kConfigKey_OperationalDeviceId         = { kConfigNamespace_ChipConfig, "op-device-id" };
 const BekenConfig::Key BekenConfig::kConfigKey_OperationalDeviceCert       = { kConfigNamespace_ChipConfig, "op-device-cert" };
 const BekenConfig::Key BekenConfig::kConfigKey_OperationalDeviceICACerts   = { kConfigNamespace_ChipConfig, "op-device-ca-certs" };
@@ -94,7 +93,8 @@ CHIP_ERROR BekenConfig::ReadConfigValue(Key key, bool & val)
     success             = bk_read_data(key.Namespace, key.Name, (char *) &intval, 1, &out_length);
 
     if (kNoErr != success)
-        ChipLogProgress(DeviceLayer, "bk_read_data: %s  %s failed\n", (char *) key.Namespace, (char *) key.Name);
+        ChipLogProgress(DeviceLayer, "bk_read_data: %s  %s failed\n", StringOrNullMarker(key.Namespace),
+                        StringOrNullMarker(key.Name));
 
     val = (intval != 0);
     if (kNoErr == success)
@@ -112,7 +112,8 @@ CHIP_ERROR BekenConfig::ReadConfigValue(Key key, uint32_t & val)
     success = bk_read_data(key.Namespace, key.Name, (char *) &temp_data, sizeof(uint32_t), &out_length);
 
     if (kNoErr != success)
-        ChipLogProgress(DeviceLayer, "bk_read_data: %s  %s failed\n", (char *) key.Namespace, (char *) key.Name);
+        ChipLogProgress(DeviceLayer, "bk_read_data: %s  %s failed\n", StringOrNullMarker(key.Namespace),
+                        StringOrNullMarker(key.Name));
     val = temp_data;
 
     if (kNoErr == success)
@@ -130,7 +131,8 @@ CHIP_ERROR BekenConfig::ReadConfigValue(Key key, uint64_t & val)
     success = bk_read_data(key.Namespace, key.Name, (char *) &temp_data, sizeof(uint64_t), &out_length);
 
     if (kNoErr != success)
-        ChipLogProgress(DeviceLayer, "bk_read_data: %s  %s failed\n", (char *) key.Namespace, (char *) key.Name);
+        ChipLogProgress(DeviceLayer, "bk_read_data: %s  %s failed\n", StringOrNullMarker(key.Namespace),
+                        StringOrNullMarker(key.Name));
     val = temp_data;
 
     if (kNoErr == success)
@@ -148,7 +150,8 @@ CHIP_ERROR BekenConfig::ReadConfigValueStr(Key key, char * buf, size_t bufSize, 
     outLen  = out_length;
 
     if (kNoErr != success)
-        ChipLogProgress(DeviceLayer, "bk_read_data: %s  %s failed\n", (char *) key.Namespace, (char *) key.Name);
+        ChipLogProgress(DeviceLayer, "bk_read_data: %s  %s failed\n", StringOrNullMarker(key.Namespace),
+                        StringOrNullMarker(key.Name));
 
     if (kNoErr == success)
     {
@@ -170,7 +173,8 @@ CHIP_ERROR BekenConfig::ReadConfigValueBin(Key key, uint8_t * buf, size_t bufSiz
     outLen  = out_length;
 
     if (kNoErr != success)
-        ChipLogProgress(DeviceLayer, "bk_read_data: %s  %s failed\n", (char *) key.Namespace, (char *) key.Name);
+        ChipLogProgress(DeviceLayer, "bk_read_data: %s  %s failed\n", StringOrNullMarker(key.Namespace),
+                        StringOrNullMarker(key.Name));
 
     if (kNoErr == success)
     {
@@ -199,8 +203,8 @@ CHIP_ERROR BekenConfig::WriteConfigValue(Key key, bool val)
 
     success = bk_write_data(key.Namespace, key.Name, (char *) &value, 1);
     if (kNoErr != success)
-        ChipLogError(DeviceLayer, "bk_write_data: %s  %s  %s failed\n", (char *) key.Namespace, (char *) key.Name,
-                     value ? "true" : "false");
+        ChipLogError(DeviceLayer, "bk_write_data: %s  %s  %s failed\n", StringOrNullMarker(key.Namespace),
+                     StringOrNullMarker(key.Name), value ? "true" : "false");
 
     return CHIP_NO_ERROR;
 }
@@ -211,8 +215,8 @@ CHIP_ERROR BekenConfig::WriteConfigValue(Key key, uint32_t val)
 
     success = bk_write_data(key.Namespace, key.Name, (char *) &val, sizeof(val));
     if (kNoErr != success)
-        ChipLogError(DeviceLayer, "bk_write_data: %s  %s = %lu(0x%lx) failed\n", (char *) key.Namespace, (char *) key.Name, val,
-                     val);
+        ChipLogError(DeviceLayer, "bk_write_data: %s  %s = %lu(0x%lx) failed\n", StringOrNullMarker(key.Namespace),
+                     StringOrNullMarker(key.Name), val, val);
 
     return CHIP_NO_ERROR;
 }
@@ -223,8 +227,8 @@ CHIP_ERROR BekenConfig::WriteConfigValue(Key key, uint64_t val)
 
     success = bk_write_data(key.Namespace, key.Name, (char *) &val, sizeof(val));
     if (kNoErr != success)
-        ChipLogError(DeviceLayer, "bk_write_data: %s  %s = %llu(0x%llx) failed\n", (char *) key.Namespace, (char *) key.Name, val,
-                     val);
+        ChipLogError(DeviceLayer, "bk_write_data: %s  %s = %llu(0x%llx) failed\n", StringOrNullMarker(key.Namespace),
+                     StringOrNullMarker(key.Name), val, val);
 
     return CHIP_NO_ERROR;
 }
@@ -235,7 +239,8 @@ CHIP_ERROR BekenConfig::WriteConfigValueStr(Key key, const char * str)
 
     success = bk_write_data(key.Namespace, key.Name, (char *) str, strlen(str));
     if (kNoErr != success)
-        ChipLogError(DeviceLayer, "bk_write_data: %s %s %s failed\n", (char *) key.Namespace, (char *) key.Name, (char *) str);
+        ChipLogError(DeviceLayer, "bk_write_data: %s %s %s failed\n", StringOrNullMarker(key.Namespace),
+                     StringOrNullMarker(key.Name), StringOrNullMarker(str));
 
     return CHIP_NO_ERROR;
 }
@@ -247,7 +252,8 @@ CHIP_ERROR BekenConfig::WriteConfigValueStr(Key key, const char * str, size_t st
 
     success = bk_write_data(key.Namespace, key.Name, (char *) str, strLen);
     if (kNoErr != success)
-        ChipLogError(DeviceLayer, "bk_write_data: %s %s %s failed\n", (char *) key.Namespace, (char *) key.Name, (char *) str);
+        ChipLogError(DeviceLayer, "bk_write_data: %s %s %s failed\n", StringOrNullMarker(key.Namespace),
+                     StringOrNullMarker(key.Name), StringOrNullMarker(str));
 
     return CHIP_NO_ERROR;
 }
@@ -258,7 +264,8 @@ CHIP_ERROR BekenConfig::WriteConfigValueBin(Key key, const uint8_t * data, size_
 
     success = bk_write_data(key.Namespace, key.Name, (char *) data, dataLen);
     if (kNoErr != success)
-        ChipLogError(DeviceLayer, "bk_write_data: %s  %s failed \r\n", key.Namespace, key.Name);
+        ChipLogError(DeviceLayer, "bk_write_data: %s  %s failed \r\n", StringOrNullMarker(key.Namespace),
+                     StringOrNullMarker(key.Name));
 
     return CHIP_NO_ERROR;
 }
@@ -269,7 +276,8 @@ CHIP_ERROR BekenConfig::ClearConfigValue(Key key)
 
     success = bk_clean_data(key.Namespace, key.Name);
     if (kNoErr != success)
-        ChipLogProgress(DeviceLayer, "%s : %s  %s failed\n", __FUNCTION__, key.Namespace, key.Name);
+        ChipLogProgress(DeviceLayer, "%s : %s  %s failed\n", __FUNCTION__, StringOrNullMarker(key.Namespace),
+                        StringOrNullMarker(key.Name));
     return CHIP_NO_ERROR;
 }
 

@@ -24,6 +24,7 @@
 #include "StatusIB.h"
 
 #include "MessageDefHelper.h"
+#include "protocols/interaction_model/StatusCode.h"
 
 #include <inttypes.h>
 #include <stdarg.h>
@@ -62,12 +63,10 @@ CHIP_ERROR StatusIB::Parser::DecodeStatusIB(StatusIB & aStatusIB) const
     }
     return CHIP_NO_ERROR;
 }
-
-#if CHIP_CONFIG_IM_ENABLE_SCHEMA_CHECK
-CHIP_ERROR StatusIB::Parser::CheckSchemaValidity() const
+#if CHIP_CONFIG_IM_PRETTY_PRINT
+CHIP_ERROR StatusIB::Parser::PrettyPrint() const
 {
-    CHIP_ERROR err      = CHIP_NO_ERROR;
-    int tagPresenceMask = 0;
+    CHIP_ERROR err = CHIP_NO_ERROR;
     TLV::TLVReader reader;
 
     PRETTY_PRINT("StatusIB =");
@@ -81,33 +80,30 @@ CHIP_ERROR StatusIB::Parser::CheckSchemaValidity() const
         {
             continue;
         }
-        if (!(tagPresenceMask & (1 << to_underlying(Tag::kStatus))))
+        uint32_t tagNum = TLV::TagNumFromTag(reader.GetTag());
+        switch (tagNum)
         {
-            tagPresenceMask |= (1 << to_underlying(Tag::kStatus));
-
+        case to_underlying(Tag::kStatus):
 #if CHIP_DETAIL_LOGGING
-            {
-                uint8_t status;
-                ReturnErrorOnFailure(reader.Get(status));
-                PRETTY_PRINT("\tstatus = " ChipLogFormatIMStatus ",", ChipLogValueIMStatus(static_cast<Status>(status)));
-            }
-#endif // CHIP_DETAIL_LOGGING
-        }
-        else if (!(tagPresenceMask & (1 << to_underlying(Tag::kClusterStatus))))
         {
-            tagPresenceMask |= (1 << to_underlying(Tag::kClusterStatus));
-
+            uint8_t status;
+            ReturnErrorOnFailure(reader.Get(status));
+            PRETTY_PRINT("\tstatus = " ChipLogFormatIMStatus ",", ChipLogValueIMStatus(static_cast<Status>(status)));
+        }
+#endif // CHIP_DETAIL_LOGGING
+        break;
+        case to_underlying(Tag::kClusterStatus):
 #if CHIP_DETAIL_LOGGING
-            {
-                ClusterStatus clusterStatus;
-                ReturnErrorOnFailure(reader.Get(clusterStatus));
-                PRETTY_PRINT("\tcluster-status = 0x%x,", clusterStatus);
-            }
-#endif // CHIP_DETAIL_LOGGING
-        }
-        else
         {
-            PRETTY_PRINT("\tExtra element in StatusIB");
+            ClusterStatus clusterStatus;
+            ReturnErrorOnFailure(reader.Get(clusterStatus));
+            PRETTY_PRINT("\tcluster-status = 0x%x,", clusterStatus);
+        }
+#endif // CHIP_DETAIL_LOGGING
+        break;
+        default:
+            PRETTY_PRINT("Unknown tag num %" PRIu32, tagNum);
+            break;
         }
     }
 
@@ -116,23 +112,21 @@ CHIP_ERROR StatusIB::Parser::CheckSchemaValidity() const
     // if we have exhausted this container
     if (CHIP_END_OF_TLV == err)
     {
-        // check for required fields:
-        const int requiredFields = (1 << to_underlying(Tag::kStatus));
-        err = (tagPresenceMask & requiredFields) == requiredFields ? CHIP_NO_ERROR : CHIP_ERROR_IM_MALFORMED_STATUS_IB;
+        err = CHIP_NO_ERROR;
     }
     ReturnErrorOnFailure(err);
     return reader.ExitContainer(mOuterContainerType);
 }
-#endif // CHIP_CONFIG_IM_ENABLE_SCHEMA_CHECK
+#endif // CHIP_CONFIG_IM_PRETTY_PRINT
 
 StatusIB::Builder & StatusIB::Builder::EncodeStatusIB(const StatusIB & aStatusIB)
 {
-    mError = mpWriter->Put(TLV::ContextTag(to_underlying(Tag::kStatus)), aStatusIB.mStatus);
+    mError = mpWriter->Put(TLV::ContextTag(Tag::kStatus), aStatusIB.mStatus);
     SuccessOrExit(mError);
 
     if (aStatusIB.mClusterStatus.HasValue())
     {
-        mError = mpWriter->Put(TLV::ContextTag(to_underlying(Tag::kClusterStatus)), aStatusIB.mClusterStatus.Value());
+        mError = mpWriter->Put(TLV::ContextTag(Tag::kClusterStatus), aStatusIB.mClusterStatus.Value());
         SuccessOrExit(mError);
     }
 
@@ -156,31 +150,6 @@ CHIP_ERROR StatusIB::ToChipError() const
     return ChipError(ChipError::SdkPart::kIMGlobalStatus, to_underlying(mStatus));
 }
 
-void StatusIB::InitFromChipError(CHIP_ERROR aError)
-{
-    if (aError.IsPart(ChipError::SdkPart::kIMClusterStatus))
-    {
-        mStatus        = Status::Failure;
-        mClusterStatus = MakeOptional(aError.GetSdkCode());
-        return;
-    }
-
-    mClusterStatus = NullOptional;
-    if (aError == CHIP_NO_ERROR)
-    {
-        mStatus = Status::Success;
-        return;
-    }
-
-    if (aError.IsPart(ChipError::SdkPart::kIMGlobalStatus))
-    {
-        mStatus = static_cast<Status>(aError.GetSdkCode());
-        return;
-    }
-
-    mStatus = Status::Failure;
-}
-
 namespace {
 bool FormatStatusIBError(char * buf, uint16_t bufSize, CHIP_ERROR err)
 {
@@ -191,15 +160,15 @@ bool FormatStatusIBError(char * buf, uint16_t bufSize, CHIP_ERROR err)
 
     const char * desc = nullptr;
 #if !CHIP_CONFIG_SHORT_ERROR_STR
-    constexpr char generalFormat[] = "General error: " ChipLogFormatIMStatus;
-    constexpr char clusterFormat[] = "Cluster-specific error: 0x%02x";
+    static constexpr char generalFormat[] = "General error: " ChipLogFormatIMStatus;
+    static constexpr char clusterFormat[] = "Cluster-specific error: 0x%02x";
 
     // Formatting an 8-bit int will take at most 2 chars, and replace the '%02x'
     // so a buffer big enough to hold our format string will also hold our
     // formatted string, as long as we account for the possible string formats.
     constexpr size_t statusNameMaxLength =
 #define CHIP_IM_STATUS_CODE(name, spec_name, value)                                                                                \
-        max(sizeof(#spec_name),
+        std::max(sizeof(#spec_name),
 #include <protocols/interaction_model/StatusCodeList.h>
 #undef CHIP_IM_STATUS_CODE
         static_cast<size_t>(0)
@@ -208,11 +177,10 @@ bool FormatStatusIBError(char * buf, uint16_t bufSize, CHIP_ERROR err)
 #include <protocols/interaction_model/StatusCodeList.h>
 #undef CHIP_IM_STATUS_CODE
         ;
-    constexpr size_t formattedSize = max(sizeof(generalFormat) + statusNameMaxLength, sizeof(clusterFormat));
+    constexpr size_t formattedSize = std::max(sizeof(generalFormat) + statusNameMaxLength, sizeof(clusterFormat));
     char formattedString[formattedSize];
 
-    StatusIB status;
-    status.InitFromChipError(err);
+    StatusIB status(err);
     if (status.mClusterStatus.HasValue())
     {
         snprintf(formattedString, formattedSize, clusterFormat, status.mClusterStatus.Value());

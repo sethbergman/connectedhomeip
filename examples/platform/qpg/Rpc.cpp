@@ -63,10 +63,21 @@ public:
 class QpgDevice final : public Device
 {
 public:
-    pw::Status Reboot(const pw_protobuf_Empty & request, pw_protobuf_Empty & response)
+    pw::Status Reboot(const chip_rpc_RebootRequest & request, pw_protobuf_Empty & response)
     {
-        qvCHIP_ResetSystem();
-        // WILL NOT RETURN
+        Clock::Timeout delay;
+
+        if (request.delay_ms != 0)
+        {
+            delay = System::Clock::Milliseconds64(request.delay_ms);
+        }
+        else
+        {
+            delay = System::Clock::Seconds32(1);
+            ChipLogProgress(NotSpecified, "Did not receive a reboot delay. Defaulting to 1s");
+        }
+
+        DeviceLayer::SystemLayer().StartTimer(delay, RebootImpl, nullptr);
         return pw::OkStatus();
     }
     pw::Status TriggerOta(const pw_protobuf_Empty & request, pw_protobuf_Empty & response)
@@ -74,6 +85,9 @@ public:
         TriggerOTAQuery();
         return pw::OkStatus();
     }
+
+private:
+    static void RebootImpl(System::Layer *, void *) { qvCHIP_ResetSystem(); }
 };
 #endif // defined(PW_RPC_DEVICE_SERVICE) && PW_RPC_DEVICE_SERVICE
 
@@ -142,7 +156,7 @@ bool Init(void)
     PigweedLogger::init();
 
     // Start App task.
-    sRpcTaskHandle = xTaskCreateStatic(RunRpcService, "RPC_TASK", ArraySize(sRpcTaskStack), nullptr, RPC_TASK_PRIORITY,
+    sRpcTaskHandle = xTaskCreateStatic(RunRpcService, "RPC_TASK", MATTER_ARRAY_SIZE(sRpcTaskStack), nullptr, RPC_TASK_PRIORITY,
                                        sRpcTaskStack, &sRpcTaskBuffer);
     return (sRpcTaskHandle == nullptr);
 }

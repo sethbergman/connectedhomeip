@@ -1,7 +1,7 @@
 import os
-
 from enum import Enum, auto
 
+from .builder import BuilderOutput
 from .gn import GnBuilder
 
 
@@ -19,16 +19,16 @@ class GenioApp(Enum):
 
     def AppNamePrefix(self):
         if self == GenioApp.LIGHT:
-            return 'chip-genio-lighting-app-example'
+            return 'chip-mt793x-lighting-app-example'
         elif self == GenioApp.SHELL:
-            return 'chip-genio-shell-example'
+            return 'chip-mt793x-shell-example'
         else:
             raise Exception('Unknown app type: %r' % self)
 
     def FlashBundleName(self):
         if self == GenioApp.LIGHT:
             return 'lighting_app.flashbundle.txt'
-        elif self == GEnioApp.SHELL:
+        elif self == GenioApp.SHELL:
             return 'shell.flashbundle.txt'
         else:
             raise Exception('Unknown app type: %r' % self)
@@ -49,9 +49,9 @@ class GenioBuilder(GnBuilder):
         self.app = app
 
     def build_outputs(self):
-        items = {}
-        for extension in ['out', 'out.map', 'bin']:
-            name = '%s.%s' % (self.app.AppNamePrefix(), extension)
-            items[name] = os.path.join(self.output_dir, name)
-
-        return items
+        extensions = ['out', 'bin']
+        if self.options.enable_link_map_file:
+            extensions.append('out.map')
+        for ext in extensions:
+            name = f"{self.app.AppNamePrefix()}.{ext}"
+            yield BuilderOutput(os.path.join(self.output_dir, name), name)

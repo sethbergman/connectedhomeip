@@ -31,7 +31,7 @@
 #include <zephyr/usb/usb_device.h>
 #endif
 
-LOG_MODULE_REGISTER(app, CONFIG_MATTER_LOG_LEVEL);
+LOG_MODULE_REGISTER(app, CONFIG_CHIP_APP_LOG_LEVEL);
 
 using namespace ::chip;
 
@@ -40,9 +40,9 @@ static int InitUSB()
 {
     int err = usb_enable(nullptr);
 
-    if (err)
+    if ((err != 0) && (err != -EALREADY))
     {
-        LOG_ERR("Failed to initialize USB device");
+        LOG_ERR("Failed to initialize USB device %d", err);
         return err;
     }
 
@@ -73,7 +73,7 @@ int main()
 
     if (err == CHIP_NO_ERROR)
     {
-        err = GetAppTask().StartApp();
+        err = AppTask::Instance().StartApp();
     }
 
     LOG_ERR("Exited with code %" CHIP_ERROR_FORMAT, err.Format());

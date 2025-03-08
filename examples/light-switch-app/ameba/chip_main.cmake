@@ -13,6 +13,10 @@ set(pigweed_dir "${chip_dir}/third_party/pigweed/repo")
 
 include(${pigweed_dir}/pw_build/pigweed.cmake)
 include(${pigweed_dir}/pw_protobuf_compiler/proto.cmake)
+include(${pigweed_dir}/pw_assert/backend.cmake)
+include(${pigweed_dir}/pw_log/backend.cmake)
+include(${pigweed_dir}/pw_sys_io/backend.cmake)
+include(${pigweed_dir}/pw_trace/backend.cmake)
 
 set(dir_pw_third_party_nanopb "${chip_dir}/third_party/nanopb/repo" CACHE STRING "" FORCE)
 
@@ -149,16 +153,15 @@ endif (matter_enable_ota_requestor)
 list(
     APPEND ${list_chip_main_sources}
 
-    ${chip_dir}/zzz_generated/light-switch-app/zap-generated/callback-stub.cpp
-    ${chip_dir}/zzz_generated/light-switch-app/zap-generated/IMClusterCommandHandler.cpp
-
     ${chip_dir}/examples/light-switch-app/ameba/main/chipinterface.cpp
     ${chip_dir}/examples/light-switch-app/ameba/main/BindingHandler.cpp
     ${chip_dir}/examples/light-switch-app/ameba/main/DeviceCallbacks.cpp
     ${chip_dir}/examples/light-switch-app/ameba/main/CHIPDeviceManager.cpp
     ${chip_dir}/examples/light-switch-app/ameba/main/Globals.cpp
     ${chip_dir}/examples/light-switch-app/ameba/main/LEDWidget.cpp
-    ${chip_dir}/examples/light-switch-app/ameba/main/DsoHack.cpp
+
+    ${chip_dir}/examples/platform/ameba/route_hook/ameba_route_hook.c
+    ${chip_dir}/examples/platform/ameba/route_hook/ameba_route_table.c
 
     ${chip_dir}/examples/providers/DeviceInfoProviderImpl.cpp
 )
@@ -170,7 +173,6 @@ add_library(
 )
 
 chip_configure_data_model(chip_main
-    INCLUDE_SERVER
     ZAP_FILE ${matter_example_path}/../light-switch-common/light-switch-app.zap
 )
 
@@ -199,6 +201,7 @@ target_include_directories(
     ${chip_dir}/zzz_generated/app-common
     ${chip_dir}/examples/light-switch-app/ameba/main/include
     ${chip_dir}/examples/platform/ameba
+    ${chip_dir}/examples/platform/ameba/observer
     ${chip_dir}/examples/providers
     ${chip_dir_output}/gen/include
     ${chip_dir}/src/include/
@@ -210,7 +213,6 @@ target_include_directories(
     ${chip_dir}/src/app/server/
     ${chip_dir}/src/controller/data_model
     ${chip_dir}/third_party/nlio/repo/include/
-    ${chip_dir}/third_party/nlunit-test/repo/src
 )
 
 if (matter_enable_rpc)
@@ -226,6 +228,7 @@ target_link_libraries(${chip_main} PUBLIC
     pw_hdlc
     pw_log
     pw_rpc.server
+    pw_sys_io
     pw_trace_tokenized
     pw_trace_tokenized.trace_buffer
     pw_trace_tokenized.rpc_service
@@ -244,7 +247,6 @@ list(
     -DINET_CONFIG_ENABLE_IPV4=0
     -DCHIP_PROJECT=1
     -DCHIP_DEVICE_LAYER_TARGET=Ameba
-    -DUSE_ZAP_CONFIG
     -DCHIP_HAVE_CONFIG_H
     -DMBEDTLS_CONFIG_FILE=<mbedtls_config.h>
 )
@@ -283,8 +285,7 @@ list(
     APPEND chip_main_cpp_flags
 
 	-Wno-unused-parameter
-	-std=gnu++11
-	-std=c++14
+	-std=c++17
 	-fno-rtti
 )
 target_compile_definitions(${chip_main} PRIVATE ${chip_main_flags} )

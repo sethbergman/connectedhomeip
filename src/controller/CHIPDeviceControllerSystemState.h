@@ -31,9 +31,12 @@
 
 #include <app/CASEClientPool.h>
 #include <app/CASESessionManager.h>
+#include <app/reporting/ReportScheduler.h>
 #include <credentials/FabricTable.h>
 #include <credentials/GroupDataProvider.h>
+#include <crypto/SessionKeystore.h>
 #include <lib/core/CHIPConfig.h>
+#include <protocols/bdx/BdxTransferServer.h>
 #include <protocols/secure_channel/CASEServer.h>
 #include <protocols/secure_channel/MessageCounterManager.h>
 #include <protocols/secure_channel/SimpleSessionResumptionStorage.h>
@@ -46,24 +49,45 @@
 #endif
 
 #if CONFIG_NETWORK_LAYER_BLE
-#include <ble/BleLayer.h>
+#include <ble/Ble.h>
 #include <transport/raw/BLE.h>
+#endif
+#if CHIP_DEVICE_CONFIG_ENABLE_WIFIPAF
+#include <transport/raw/WiFiPAF.h>
 #endif
 
 namespace chip {
 
-constexpr size_t kMaxDeviceTransportBlePendingPackets = 1;
+inline constexpr size_t kMaxDeviceTransportBlePendingPackets = 1;
+#if CHIP_DEVICE_CONFIG_ENABLE_WIFIPAF
+inline constexpr size_t kMaxDeviceTransportWiFiPAFPendingPackets = 1;
+#endif
 
-using DeviceTransportMgr = TransportMgr<Transport::UDP /* IPv6 */
+#if INET_CONFIG_ENABLE_TCP_ENDPOINT
+inline constexpr size_t kMaxDeviceTransportTcpActiveConnectionCount = CHIP_CONFIG_MAX_ACTIVE_TCP_CONNECTIONS;
+
+inline constexpr size_t kMaxDeviceTransportTcpPendingPackets = CHIP_CONFIG_MAX_TCP_PENDING_PACKETS;
+#endif // INET_CONFIG_ENABLE_TCP_ENDPOINT
+
+using DeviceTransportMgr =
+    TransportMgr<Transport::UDP /* IPv6 */
 #if INET_CONFIG_ENABLE_IPV4
-                                        ,
-                                        Transport::UDP /* IPv4 */
+                 ,
+                 Transport::UDP /* IPv4 */
 #endif
 #if CONFIG_NETWORK_LAYER_BLE
-                                        ,
-                                        Transport::BLE<kMaxDeviceTransportBlePendingPackets> /* BLE */
+                 ,
+                 Transport::BLE<kMaxDeviceTransportBlePendingPackets> /* BLE */
 #endif
-                                        >;
+#if INET_CONFIG_ENABLE_TCP_ENDPOINT
+                 ,
+                 Transport::TCP<kMaxDeviceTransportTcpActiveConnectionCount, kMaxDeviceTransportTcpPendingPackets>
+#endif
+#if CHIP_DEVICE_CONFIG_ENABLE_WIFIPAF
+                 ,
+                 Transport::WiFiPAF<kMaxDeviceTransportWiFiPAFPendingPackets> /* WiFiPAF */
+#endif
+                 >;
 
 namespace Controller {
 
@@ -80,22 +104,37 @@ struct DeviceControllerSystemStateParams
 #if CONFIG_NETWORK_LAYER_BLE
     Ble::BleLayer * bleLayer = nullptr;
 #endif
+#if CHIP_DEVICE_CONFIG_ENABLE_WIFIPAF
+    Transport::WiFiPAFLayer * wifipaf_layer = nullptr;
+#endif
     Credentials::GroupDataProvider * groupDataProvider = nullptr;
+    Crypto::SessionKeystore * sessionKeystore          = nullptr;
+
+    // NOTE: Exactly one of externalSessionResumptionStorage (externally provided,
+    // externally owned) or ownedSessionResumptionStorage (managed by the system
+    // state) must be non-null.
+    SessionResumptionStorage * externalSessionResumptionStorage = nullptr;
 
     // Params that will be deallocated via Platform::Delete in
     // DeviceControllerSystemState::Shutdown.
     DeviceTransportMgr * transportMgr = nullptr;
-    Platform::UniquePtr<SimpleSessionResumptionStorage> sessionResumptionStorage;
+    // NOTE: Exactly one of externalSessionResumptionStorage (externally provided,
+    // externally owned) or ownedSessionResumptionStorage (managed by the system
+    // state) must be non-null.
+    Platform::UniquePtr<SimpleSessionResumptionStorage> ownedSessionResumptionStorage;
     Credentials::CertificateValidityPolicy * certificateValidityPolicy            = nullptr;
     SessionManager * sessionMgr                                                   = nullptr;
     Protocols::SecureChannel::UnsolicitedStatusHandler * unsolicitedStatusHandler = nullptr;
     Messaging::ExchangeManager * exchangeMgr                                      = nullptr;
     secure_channel::MessageCounterManager * messageCounterManager                 = nullptr;
+    bdx::BDXTransferServer * bdxTransferServer                                    = nullptr;
     CASEServer * caseServer                                                       = nullptr;
     CASESessionManager * caseSessionManager                                       = nullptr;
     SessionSetupPool * sessionSetupPool                                           = nullptr;
     CASEClientPool * caseClientPool                                               = nullptr;
     FabricTable::Delegate * fabricTableDelegate                                   = nullptr;
+    chip::app::reporting::ReportScheduler::TimerDelegate * timerDelegate          = nullptr;
+    chip::app::reporting::ReportScheduler * reportScheduler                       = nullptr;
 };
 
 // A representation of the internal state maintained by the DeviceControllerFactory.
@@ -123,11 +162,23 @@ public:
         mSystemLayer(params.systemLayer), mTCPEndPointManager(params.tcpEndPointManager),
         mUDPEndPointManager(params.udpEndPointManager), mTransportMgr(params.transportMgr), mSessionMgr(params.sessionMgr),
         mUnsolicitedStatusHandler(params.unsolicitedStatusHandler), mExchangeMgr(params.exchangeMgr),
-        mMessageCounterManager(params.messageCounterManager), mFabrics(params.fabricTable), mCASEServer(params.caseServer),
+        mMessageCounterManager(params.messageCounterManager), mFabrics(params.fabricTable),
+        mBDXTransferServer(params.bdxTransferServer), mCASEServer(params.caseServer),
         mCASESessionManager(params.caseSessionManager), mSessionSetupPool(params.sessionSetupPool),
-        mCASEClientPool(params.caseClientPool), mGroupDataProvider(params.groupDataProvider),
-        mFabricTableDelegate(params.fabricTableDelegate), mSessionResumptionStorage(std::move(params.sessionResumptionStorage))
+        mCASEClientPool(params.caseClientPool), mGroupDataProvider(params.groupDataProvider), mTimerDelegate(params.timerDelegate),
+        mReportScheduler(params.reportScheduler), mSessionKeystore(params.sessionKeystore),
+        mFabricTableDelegate(params.fabricTableDelegate),
+        mOwnedSessionResumptionStorage(std::move(params.ownedSessionResumptionStorage))
     {
+        if (mOwnedSessionResumptionStorage)
+        {
+            mSessionResumptionStorage = mOwnedSessionResumptionStorage.get();
+        }
+        else
+        {
+            mSessionResumptionStorage = params.externalSessionResumptionStorage;
+        }
+
 #if CONFIG_NETWORK_LAYER_BLE
         mBleLayer = params.bleLayer;
 #endif
@@ -140,8 +191,9 @@ public:
     // should be called to release the reference once it is no longer needed.
     DeviceControllerSystemState * Retain()
     {
-        VerifyOrDie(mRefCount < std::numeric_limits<uint32_t>::max());
-        ++mRefCount;
+        auto count = mRefCount++;
+        VerifyOrDie(count < std::numeric_limits<decltype(count)>::max()); // overflow
+        VerifyOrDie(!IsShutDown());                                       // avoid zombie
         return this;
     };
 
@@ -149,24 +201,27 @@ public:
     //
     // The stack will shut down when all references are released.
     //
-    // NB: The system state is owned by the factory; Relase() will not free it
+    // NB: The system state is owned by the factory; Release() will not free it
     // but will free its members (Shutdown()).
-    void Release()
+    //
+    // Returns true if the system state was shut down in response to this call.
+    bool Release()
     {
-        VerifyOrDie(mRefCount > 0);
-
-        if (--mRefCount == 0)
-        {
-            Shutdown();
-        }
+        auto count = mRefCount--;
+        VerifyOrDie(count > 0); // underflow
+        VerifyOrReturnValue(count == 1, false);
+        Shutdown();
+        return true;
     };
     bool IsInitialized()
     {
         return mSystemLayer != nullptr && mUDPEndPointManager != nullptr && mTransportMgr != nullptr && mSessionMgr != nullptr &&
             mUnsolicitedStatusHandler != nullptr && mExchangeMgr != nullptr && mMessageCounterManager != nullptr &&
             mFabrics != nullptr && mCASESessionManager != nullptr && mSessionSetupPool != nullptr && mCASEClientPool != nullptr &&
-            mGroupDataProvider != nullptr;
+            mGroupDataProvider != nullptr && mReportScheduler != nullptr && mTimerDelegate != nullptr &&
+            mSessionKeystore != nullptr && mSessionResumptionStorage != nullptr && mBDXTransferServer != nullptr;
     };
+    bool IsShutDown() const { return mHaveShutDown; }
 
     System::Layer * SystemLayer() const { return mSystemLayer; };
     Inet::EndPointManager<Inet::TCPEndPoint> * TCPEndPointManager() const { return mTCPEndPointManager; };
@@ -181,7 +236,15 @@ public:
 #endif
     CASESessionManager * CASESessionMgr() const { return mCASESessionManager; }
     Credentials::GroupDataProvider * GetGroupDataProvider() const { return mGroupDataProvider; }
-    void SetTempFabricTable(FabricTable * tempFabricTable) { mTempFabricTable = tempFabricTable; }
+    chip::app::reporting::ReportScheduler * GetReportScheduler() const { return mReportScheduler; }
+
+    Crypto::SessionKeystore * GetSessionKeystore() const { return mSessionKeystore; }
+    void SetTempFabricTable(FabricTable * tempFabricTable, bool enableServerInteractions)
+    {
+        mTempFabricTable          = tempFabricTable;
+        mEnableServerInteractions = enableServerInteractions;
+    }
+    bdx::BDXTransferServer * BDXTransferServer() const { return mBDXTransferServer; }
 
 private:
     DeviceControllerSystemState() {}
@@ -198,13 +261,18 @@ private:
     Messaging::ExchangeManager * mExchangeMgr                                      = nullptr;
     secure_channel::MessageCounterManager * mMessageCounterManager                 = nullptr;
     FabricTable * mFabrics                                                         = nullptr;
+    bdx::BDXTransferServer * mBDXTransferServer                                    = nullptr;
     CASEServer * mCASEServer                                                       = nullptr;
     CASESessionManager * mCASESessionManager                                       = nullptr;
     SessionSetupPool * mSessionSetupPool                                           = nullptr;
     CASEClientPool * mCASEClientPool                                               = nullptr;
     Credentials::GroupDataProvider * mGroupDataProvider                            = nullptr;
+    app::reporting::ReportScheduler::TimerDelegate * mTimerDelegate                = nullptr;
+    app::reporting::ReportScheduler * mReportScheduler                             = nullptr;
+    Crypto::SessionKeystore * mSessionKeystore                                     = nullptr;
     FabricTable::Delegate * mFabricTableDelegate                                   = nullptr;
-    Platform::UniquePtr<SimpleSessionResumptionStorage> mSessionResumptionStorage;
+    SessionResumptionStorage * mSessionResumptionStorage                           = nullptr;
+    Platform::UniquePtr<SimpleSessionResumptionStorage> mOwnedSessionResumptionStorage;
 
     // If mTempFabricTable is not null, it was created during
     // DeviceControllerFactory::InitSystemState and needs to be
@@ -214,6 +282,8 @@ private:
     std::atomic<uint32_t> mRefCount{ 0 };
 
     bool mHaveShutDown = false;
+
+    bool mEnableServerInteractions = false;
 
     void Shutdown();
 };

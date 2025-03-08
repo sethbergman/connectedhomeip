@@ -23,9 +23,9 @@
 
 #pragma once
 
-#include <platform/CHIPDeviceEvent.h>
+#include <system/SystemPacketBuffer.h>
 
-#include <bluetooth/bluetooth.h>
+#include <zephyr/bluetooth/bluetooth.h>
 
 namespace chip {
 namespace DeviceLayer {

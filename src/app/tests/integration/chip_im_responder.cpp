@@ -25,15 +25,20 @@
  */
 
 #include "MockEvents.h"
-#include <app/AttributeAccessInterface.h>
+#include "common.h"
+#include <app/AttributeValueEncoder.h>
 #include <app/CommandHandler.h>
 #include <app/CommandSender.h>
+#include <app/ConcreteAttributePath.h>
+#include <app/ConcreteEventPath.h>
 #include <app/EventManagement.h>
 #include <app/InteractionModelEngine.h>
+#include <app/reporting/tests/MockReportScheduler.h>
 #include <app/tests/integration/common.h>
 #include <lib/core/CHIPCore.h>
+#include <lib/core/ErrorStr.h>
 #include <lib/support/CHIPCounter.h>
-#include <lib/support/ErrorStr.h>
+#include <lib/support/CodeUtils.h>
 #include <messaging/ExchangeContext.h>
 #include <messaging/ExchangeMgr.h>
 #include <messaging/Flags.h>
@@ -46,35 +51,39 @@
 namespace chip {
 namespace app {
 
-Protocols::InteractionModel::Status ServerClusterCommandExists(const ConcreteCommandPath & aCommandPath)
+namespace {
+
+class TestTLVDataEncoder : public DataModel::EncodableToTLV
 {
-    // The Mock cluster catalog -- only have one command on one cluster on one endpoint.
-    using Protocols::InteractionModel::Status;
-
-    if (aCommandPath.mEndpointId != kTestEndpointId)
+public:
+    CHIP_ERROR EncodeTo(TLV::TLVWriter & writer, TLV::Tag tag) const override
     {
-        return Status::UnsupportedEndpoint;
+        TLV::TLVType outerType;
+        ReturnErrorOnFailure(writer.StartContainer(tag, TLV::kTLVType_Structure, outerType));
+
+        ReturnErrorOnFailure(writer.Put(chip::TLV::ContextTag(kTestFieldId1), kTestFieldValue1));
+        ReturnErrorOnFailure(writer.Put(chip::TLV::ContextTag(kTestFieldId2), kTestFieldValue2));
+
+        return writer.EndContainer(outerType);
     }
+};
 
-    if (aCommandPath.mClusterId != kTestClusterId)
-    {
-        return Status::UnsupportedCluster;
-    }
+} // namespace
 
-    if (aCommandPath.mCommandId != kTestCommandId)
-    {
-        return Status::UnsupportedCommand;
-    }
+// TODO:
+//   The overrides here do NOT provide a consistent data model view:
+//   This should be overriden with a Mock data model if using direct ember and
+//   CodegenDataModel OR a custom DataModel::Provider should be written
+//
+//   We cannot just say "every attribut exist, every device on every endpoint exists,
+//   every data version compare is the same etc.".
 
-    return Status::Success;
-}
-
-void DispatchSingleClusterCommand(const ConcreteCommandPath & aCommandPath, chip::TLV::TLVReader & aReader,
+void DispatchSingleClusterCommand(const ConcreteCommandPath & aRequestCommandPath, chip::TLV::TLVReader & aReader,
                                   CommandHandler * apCommandObj)
 {
     static bool statusCodeFlipper = false;
 
-    if (ServerClusterCommandExists(aCommandPath) != Protocols::InteractionModel::Status::Success)
+    if (aRequestCommandPath != ConcreteCommandPath(kTestEndpointId, kTestClusterId, kTestCommandId))
     {
         return;
     }
@@ -100,57 +109,10 @@ void DispatchSingleClusterCommand(const ConcreteCommandPath & aCommandPath, chip
     {
         printf("responder constructing command data in command");
 
-        chip::TLV::TLVWriter * writer;
-
-        ReturnOnFailure(apCommandObj->PrepareCommand(path));
-
-        writer = apCommandObj->GetCommandDataIBTLVWriter();
-        ReturnOnFailure(writer->Put(chip::TLV::ContextTag(kTestFieldId1), kTestFieldValue1));
-
-        ReturnOnFailure(writer->Put(chip::TLV::ContextTag(kTestFieldId2), kTestFieldValue2));
-
-        ReturnOnFailure(apCommandObj->FinishCommand());
+        TestTLVDataEncoder testData;
+        apCommandObj->AddResponse(path, kTestCommandId, testData);
     }
     statusCodeFlipper = !statusCodeFlipper;
-}
-
-CHIP_ERROR ReadSingleClusterData(const Access::SubjectDescriptor & aSubjectDescriptor, bool aIsFabricFiltered,
-                                 const ConcreteReadAttributePath & aPath, AttributeReportIBs::Builder & aAttributeReports,
-                                 AttributeValueEncoder::AttributeEncodeState * apEncoderState)
-{
-    ReturnErrorOnFailure(AttributeValueEncoder(aAttributeReports, 0, aPath, 0).Encode(kTestFieldValue1));
-    return CHIP_NO_ERROR;
-}
-
-bool ConcreteAttributePathExists(const ConcreteAttributePath & aPath)
-{
-    return true;
-}
-
-const EmberAfAttributeMetadata * GetAttributeMetadata(const ConcreteAttributePath & aConcreteClusterPath)
-{
-    // Note: This test does not make use of the real attribute metadata.
-    static EmberAfAttributeMetadata stub = { .defaultValue = EmberAfDefaultOrMinMaxAttributeValue(uint32_t(0)) };
-    return &stub;
-}
-
-CHIP_ERROR WriteSingleClusterData(const Access::SubjectDescriptor & aSubjectDescriptor, const ConcreteDataAttributePath & aPath,
-                                  TLV::TLVReader & aReader, WriteHandler * apWriteHandler)
-{
-    CHIP_ERROR err = CHIP_NO_ERROR;
-    ConcreteDataAttributePath attributePath(2, 3, 4);
-    err = apWriteHandler->AddStatus(attributePath, Protocols::InteractionModel::Status::Success);
-    return err;
-}
-
-bool IsClusterDataVersionEqual(const ConcreteClusterPath & aConcreteClusterPath, DataVersion aRequiredVersion)
-{
-    return true;
-}
-
-bool IsDeviceTypeOnEndpoint(DeviceTypeId deviceType, EndpointId endpoint)
-{
-    return false;
 }
 
 } // namespace app
@@ -177,8 +139,8 @@ CHIP_ERROR InitializeEventLogging(chip::Messaging::ExchangeManager * apMgr)
         { &gCritEventBuffer[0], sizeof(gCritEventBuffer), chip::app::PriorityLevel::Critical },
     };
 
-    chip::app::EventManagement::CreateEventManagement(apMgr, sizeof(logStorageResources) / sizeof(logStorageResources[0]),
-                                                      gCircularEventBuffer, logStorageResources, &gEventCounter);
+    chip::app::EventManagement::CreateEventManagement(apMgr, MATTER_ARRAY_SIZE(logStorageResources), gCircularEventBuffer,
+                                                      logStorageResources, &gEventCounter);
     return CHIP_NO_ERROR;
 }
 
@@ -197,7 +159,7 @@ int main(int argc, char * argv[])
     SuccessOrExit(err);
 
     err = gSessionManager.Init(&chip::DeviceLayer::SystemLayer(), &gTransportManager, &gMessageCounterManager, &gStorage,
-                               &gFabricTable);
+                               &gFabricTable, gSessionKeystore);
     SuccessOrExit(err);
 
     err = gExchangeManager.Init(&gSessionManager);
@@ -206,7 +168,8 @@ int main(int argc, char * argv[])
     err = gMessageCounterManager.Init(&gExchangeManager);
     SuccessOrExit(err);
 
-    err = chip::app::InteractionModelEngine::GetInstance()->Init(&gExchangeManager, &gFabricTable);
+    err = chip::app::InteractionModelEngine::GetInstance()->Init(&gExchangeManager, &gFabricTable,
+                                                                 chip::app::reporting::GetDefaultReportScheduler());
     SuccessOrExit(err);
 
     err = InitializeEventLogging(&gExchangeManager);
