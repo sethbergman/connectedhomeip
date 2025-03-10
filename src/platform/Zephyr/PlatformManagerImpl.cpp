@@ -21,19 +21,20 @@
  *          for Zephyr platforms.
  */
 
-#if !CONFIG_NORDIC_SECURITY_BACKEND
+#if !defined(CONFIG_NRF_SECURITY)
 #include <crypto/CHIPCryptoPAL.h> // nogncheck
-#endif                            // !CONFIG_NORDIC_SECURITY_BACKEND
+#endif                            // !defined(CONFIG_NRF_SECURITY)
 
 #include <platform/internal/CHIPDeviceLayerInternal.h>
 
+#include <lib/support/SafeInt.h>
 #include <lib/support/logging/CHIPLogging.h>
 #include <platform/PlatformManager.h>
 #include <platform/Zephyr/DiagnosticDataProviderImpl.h>
 #include <platform/internal/GenericPlatformManagerImpl_Zephyr.ipp>
 
-#include <drivers/entropy.h>
 #include <malloc.h>
+#include <zephyr/drivers/entropy.h>
 
 namespace chip {
 namespace DeviceLayer {
@@ -44,15 +45,25 @@ PlatformManagerImpl PlatformManagerImpl::sInstance{ sChipThreadStack };
 
 static k_timer sOperationalHoursSavingTimer;
 
-#if !CONFIG_NORDIC_SECURITY_BACKEND
+#if !defined(CONFIG_NRF_SECURITY) && !defined(CONFIG_MBEDTLS_ZEPHYR_ENTROPY) && !defined(CONFIG_MBEDTLS_ENTROPY_POLL_ZEPHYR)
+static bool sChipStackEntropySourceAdded = false;
 static int app_entropy_source(void * data, unsigned char * output, size_t len, size_t * olen)
 {
     const struct device * entropy = DEVICE_DT_GET(DT_CHOSEN(zephyr_entropy));
-    int ret                       = entropy_get_entropy(entropy, output, len);
+    uint16_t clampedLen;
+    if (CanCastTo<uint16_t>(len))
+    {
+        clampedLen = static_cast<uint16_t>(len);
+    }
+    else
+    {
+        clampedLen = UINT16_MAX;
+    }
+    int ret = entropy_get_entropy(entropy, output, clampedLen);
 
     if (ret == 0)
     {
-        *olen = len;
+        *olen = clampedLen;
     }
     else
     {
@@ -61,57 +72,69 @@ static int app_entropy_source(void * data, unsigned char * output, size_t len, s
 
     return ret;
 }
-#endif // !CONFIG_NORDIC_SECURITY_BACKEND
+#endif // !defined(CONFIG_NRF_SECURITY) && !defined(CONFIG_MBEDTLS_ZEPHYR_ENTROPY) && !defined(CONFIG_MBEDTLS_ENTROPY_POLL_ZEPHYR)
 
 void PlatformManagerImpl::OperationalHoursSavingTimerEventHandler(k_timer * timer)
 {
-    PlatformMgr().ScheduleWork(UpdateOperationalHours);
+    PlatformMgr().ScheduleWork([](intptr_t arg) {
+        CHIP_ERROR error = sInstance.UpdateOperationalHours(nullptr);
+        if (error != CHIP_NO_ERROR)
+        {
+            ChipLogError(DeviceLayer, "Failed to update operational hours: %" CHIP_ERROR_FORMAT, error.Format());
+        }
+    });
 }
 
-void PlatformManagerImpl::UpdateOperationalHours(intptr_t arg)
+CHIP_ERROR PlatformManagerImpl::UpdateOperationalHours(uint32_t * totalOperationalHours)
 {
     uint64_t upTimeS;
 
-    if (GetDiagnosticDataProvider().GetUpTime(upTimeS) != CHIP_NO_ERROR)
+    ReturnErrorOnFailure(GetDiagnosticDataProvider().GetUpTime(upTimeS));
+
+    uint32_t totalTime       = 0;
+    const uint32_t upTimeH   = upTimeS / 3600 < UINT32_MAX ? static_cast<uint32_t>(upTimeS / 3600) : UINT32_MAX;
+    const uint64_t deltaTime = upTimeH - mSavedOperationalHoursSinceBoot;
+
+    ReturnErrorOnFailure(ConfigurationMgr().GetTotalOperationalHours(totalTime));
+
+    totalTime = totalTime + deltaTime < UINT32_MAX ? static_cast<uint32_t>(totalTime + deltaTime) : UINT32_MAX;
+
+    if (deltaTime > 0)
     {
-        ChipLogError(DeviceLayer, "Failed to get up time of the node");
-        return;
+        ConfigurationMgr().StoreTotalOperationalHours(totalTime);
+        mSavedOperationalHoursSinceBoot = upTimeH;
     }
 
-    uint64_t totalOperationalHours = 0;
-    const uint32_t upTimeH         = upTimeS / 3600 < UINT32_MAX ? static_cast<uint32_t>(upTimeS / 3600) : UINT32_MAX;
-    const uint64_t deltaTime       = upTimeH - sInstance.mSavedOperationalHoursSinceBoot;
+    if (totalOperationalHours != nullptr)
+    {
+        *totalOperationalHours = totalTime;
+    }
 
-    if (ConfigurationMgr().GetTotalOperationalHours(reinterpret_cast<uint32_t &>(totalOperationalHours)) == CHIP_NO_ERROR)
-    {
-        ConfigurationMgr().StoreTotalOperationalHours(
-            totalOperationalHours + deltaTime < UINT32_MAX ? totalOperationalHours + deltaTime : UINT32_MAX);
-        sInstance.mSavedOperationalHoursSinceBoot = upTimeH;
-    }
-    else
-    {
-        ChipLogError(DeviceLayer, "Failed to get total operational hours of the node");
-    }
+    return CHIP_NO_ERROR;
 }
 
 CHIP_ERROR PlatformManagerImpl::_InitChipStack(void)
 {
     CHIP_ERROR err;
 
-#if !CONFIG_NORDIC_SECURITY_BACKEND
+#if !defined(CONFIG_NRF_SECURITY) && !defined(CONFIG_MBEDTLS_ZEPHYR_ENTROPY) && !defined(CONFIG_MBEDTLS_ENTROPY_POLL_ZEPHYR)
     // Minimum required from source before entropy is released ( with mbedtls_entropy_func() ) (in bytes)
     const size_t kThreshold = 16;
-#endif // !CONFIG_NORDIC_SECURITY_BACKEND
+#endif // !defined(CONFIG_NRF_SECURITY) && !defined(CONFIG_MBEDTLS_ZEPHYR_ENTROPY) && !defined(CONFIG_MBEDTLS_ENTROPY_POLL_ZEPHYR)
 
     // Initialize the configuration system.
     err = Internal::ZephyrConfig::Init();
     SuccessOrExit(err);
 
-#if !CONFIG_NORDIC_SECURITY_BACKEND
-    // Add entropy source based on Zephyr entropy driver
-    err = chip::Crypto::add_entropy_source(app_entropy_source, NULL, kThreshold);
-    SuccessOrExit(err);
-#endif // !CONFIG_NORDIC_SECURITY_BACKEND
+#if !defined(CONFIG_NRF_SECURITY) && !defined(CONFIG_MBEDTLS_ZEPHYR_ENTROPY) && !defined(CONFIG_MBEDTLS_ENTROPY_POLL_ZEPHYR)
+    if (!sChipStackEntropySourceAdded)
+    {
+        // Add entropy source based on Zephyr entropy driver
+        err = chip::Crypto::add_entropy_source(app_entropy_source, NULL, kThreshold);
+        SuccessOrExit(err);
+        sChipStackEntropySourceAdded = true;
+    }
+#endif // !defined(CONFIG_NRF_SECURITY) && !defined(CONFIG_MBEDTLS_ZEPHYR_ENTROPY) && !defined(CONFIG_MBEDTLS_ENTROPY_POLL_ZEPHYR)
 
     // Call _InitChipStack() on the generic implementation base class to finish the initialization process.
     err = Internal::GenericPlatformManagerImpl_Zephyr<PlatformManagerImpl>::_InitChipStack();

@@ -26,14 +26,15 @@
 #include "StructBuilder.h"
 #include "StructParser.h"
 
-#include <app/AppBuildConfig.h>
+#include <app/AppConfig.h>
 #include <app/util/basic-types.h>
 #include <lib/core/CHIPCore.h>
-#include <lib/core/CHIPTLV.h>
 #include <lib/core/Optional.h>
+#include <lib/core/TLV.h>
 #include <lib/support/CodeUtils.h>
 #include <lib/support/logging/CHIPLogging.h>
 #include <protocols/interaction_model/Constants.h>
+#include <protocols/interaction_model/StatusCode.h>
 #include <protocols/secure_channel/Constants.h>
 
 namespace chip {
@@ -41,11 +42,25 @@ namespace app {
 struct StatusIB
 {
     StatusIB() = default;
-    StatusIB(Protocols::InteractionModel::Status imStatus) : mStatus(imStatus) {}
-    StatusIB(Protocols::InteractionModel::Status imStatus, ClusterStatus clusterStatus) :
+    explicit StatusIB(Protocols::InteractionModel::Status imStatus) : mStatus(imStatus) {}
+
+    explicit StatusIB(Protocols::InteractionModel::Status imStatus, ClusterStatus clusterStatus) :
         mStatus(imStatus), mClusterStatus(clusterStatus)
     {}
-    explicit StatusIB(CHIP_ERROR error) { InitFromChipError(error); }
+
+    explicit StatusIB(const Protocols::InteractionModel::ClusterStatusCode & statusCode) : mStatus(statusCode.GetStatus())
+    {
+        // NOTE: Cluster-specific codes are only valid on SUCCESS/FAILURE IM status (7.10.7. Status Codes)
+        chip::Optional<ClusterStatus> clusterStatus = statusCode.GetClusterSpecificCode();
+        if (clusterStatus.HasValue())
+        {
+            mStatus        = statusCode.IsSuccess() ? Protocols::InteractionModel::Status::Success
+                                                    : Protocols::InteractionModel::Status::Failure;
+            mClusterStatus = clusterStatus;
+        }
+    }
+
+    explicit StatusIB(CHIP_ERROR error) : StatusIB(Protocols::InteractionModel::ClusterStatusCode(error)) {}
 
     enum class Tag : uint8_t
     {
@@ -56,23 +71,9 @@ struct StatusIB
     class Parser : public StructParser
     {
     public:
-#if CHIP_CONFIG_IM_ENABLE_SCHEMA_CHECK
-        /**
-         *  @brief Roughly verify the message is correctly formed
-         *   1) all mandatory tags are present
-         *   2) all elements have expected data type
-         *   3) any tag can only appear once
-         *   4) At the top level of the structure, unknown tags are ignored for forward compatibility
-         *  @note The main use of this function is to print out what we're
-         *    receiving during protocol development and debugging.
-         *    The encoding rule has changed in IM encoding spec so this
-         *    check is only "roughly" conformant now.
-         *
-         *  @return #CHIP_NO_ERROR on success
-         */
-        CHIP_ERROR CheckSchemaValidity() const;
-#endif
-
+#if CHIP_CONFIG_IM_PRETTY_PRINT
+        CHIP_ERROR PrettyPrint() const;
+#endif // CHIP_CONFIG_IM_PRETTY_PRINT
         /**
          * Decode the StatusIB
          *
@@ -105,13 +106,6 @@ struct StatusIB
     CHIP_ERROR ToChipError() const;
 
     /**
-     * Extract a CHIP_ERROR into this StatusIB.  If IsIMStatus() is false for
-     * the error, this might do a best-effort attempt to come up with a
-     * corresponding StatusIB, defaulting to a generic Status::Failure.
-     */
-    void InitFromChipError(CHIP_ERROR aError);
-
-    /**
      * Test whether this status is a success.
      */
     bool IsSuccess() const { return mStatus == Protocols::InteractionModel::Status::Success; }
@@ -130,6 +124,16 @@ struct StatusIB
     Optional<ClusterStatus> mClusterStatus      = Optional<ClusterStatus>::Missing();
 
 }; // struct StatusIB
+
+constexpr bool operator==(const StatusIB & one, const StatusIB & two)
+{
+    return one.mStatus == two.mStatus && one.mClusterStatus == two.mClusterStatus;
+}
+
+constexpr bool operator!=(const StatusIB & one, const StatusIB & two)
+{
+    return !(one == two);
+}
 
 }; // namespace app
 }; // namespace chip

@@ -1,5 +1,5 @@
 /*
- *   Copyright (c) 2022 Project CHIP Authors
+ *   Copyright (c) 2022-2023 Project CHIP Authors
  *   All rights reserved.
  *
  *   Licensed under the Apache License, Version 2.0 (the "License");
@@ -28,7 +28,7 @@ public:
         AddArgument("cluster-id", 0, UINT32_MAX, &mClusterId);
         AddArgument("attribute-id", 0, UINT32_MAX, &mAttributeId);
         AddArgument("fabric-filtered", 0, 1, &mFabricFiltered);
-        ModelCommand::AddArguments();
+        AddCommonByIdArguments();
     }
 
     ReadAttribute(chip::ClusterId clusterId)
@@ -37,7 +37,7 @@ public:
     {
         AddArgument("attribute-id", 0, UINT32_MAX, &mAttributeId);
         AddArgument("fabric-filtered", 0, 1, &mFabricFiltered);
-        ModelCommand::AddArguments();
+        AddCommonByIdArguments();
     }
 
     ReadAttribute(const char * _Nonnull attributeName)
@@ -52,32 +52,75 @@ public:
 
     CHIP_ERROR SendCommand(MTRBaseDevice * _Nonnull device, chip::EndpointId endpointId) override
     {
-        dispatch_queue_t callbackQueue = dispatch_queue_create("com.chip.command", DISPATCH_QUEUE_SERIAL);
+        dispatch_queue_t callbackQueue = dispatch_queue_create("com.chip.command", DISPATCH_QUEUE_SERIAL_WITH_AUTORELEASE_POOL);
         MTRReadParams * params = [[MTRReadParams alloc] init];
         if (mFabricFiltered.HasValue()) {
-            params.fabricFiltered = mFabricFiltered.Value();
+            params.filterByFabric = mFabricFiltered.Value();
         }
-        [device readAttributePathWithEndpointID:[NSNumber numberWithUnsignedShort:endpointId]
-                                      clusterID:[NSNumber numberWithUnsignedInteger:mClusterId]
-                                    attributeID:[NSNumber numberWithUnsignedInteger:mAttributeId]
-                                         params:params
-                                          queue:callbackQueue
-                                     completion:^(
-                                         NSArray<NSDictionary<NSString *, id> *> * _Nullable values, NSError * _Nullable error) {
-                                         if (error != nil) {
-                                             LogNSError("Error reading attribute", error);
-                                         }
-                                         if (values) {
-                                             for (id item in values) {
-                                                 NSLog(@"Response Item: %@", [item description]);
-                                             }
-                                         }
-                                         SetCommandExitStatus(error);
-                                     }];
+
+        __auto_type * endpoint = @(endpointId);
+        __auto_type * cluster = @(mClusterId);
+        __auto_type * attribute = @(mAttributeId);
+        [device
+            readAttributesWithEndpointID:endpoint
+                               clusterID:cluster
+                             attributeID:attribute
+                                  params:params
+                                   queue:callbackQueue
+                              completion:^(NSArray<NSDictionary<NSString *, id> *> * _Nullable values, NSError * _Nullable error) {
+                                  if (error != nil) {
+                                      LogNSError("Error reading attribute", error);
+                                      RemoteDataModelLogger::LogAttributeErrorAsJSON(endpoint, cluster, attribute, error);
+                                  }
+                                  if (values) {
+                                      for (id item in values) {
+                                          NSLog(@"Response Item: %@", [item description]);
+                                      }
+                                      RemoteDataModelLogger::LogAttributeAsJSON(endpoint, cluster, attribute, values);
+                                  }
+                                  SetCommandExitStatus(error);
+                              }];
+        return CHIP_NO_ERROR;
+    }
+
+    CHIP_ERROR SendCommand(MTRDevice * _Nonnull device, chip::EndpointId endpointId) override
+    {
+        MTRReadParams * params = [[MTRReadParams alloc] init];
+        if (mFabricFiltered.HasValue()) {
+            params.filterByFabric = mFabricFiltered.Value();
+        }
+
+        __auto_type * endpoint = @(endpointId);
+        __auto_type * cluster = @(mClusterId);
+        __auto_type * attribute = @(mAttributeId);
+        __auto_type values = [device readAttributeWithEndpointID:endpoint
+                                                       clusterID:cluster
+                                                     attributeID:attribute
+                                                          params:params];
+
+        NSError * error = nil;
+        if (nil == values) {
+            __auto_type * userInfo = @ { @"reason" : @"No value available." };
+            error = [NSError errorWithDomain:@"Error" code:0 userInfo:userInfo];
+            LogNSError("Error reading attribute", error);
+            RemoteDataModelLogger::LogAttributeErrorAsJSON(endpoint, cluster, attribute, error);
+        } else {
+            NSLog(@"cluster (0x%08" PRIX32 ") ReadAttribute (0x%08" PRIX32 ") on endpoint %u: %@", mClusterId, mAttributeId, endpointId, values);
+            RemoteDataModelLogger::LogAttributeAsJSON(endpoint, cluster, attribute, values);
+        }
+
+        SetCommandExitStatus(error);
         return CHIP_NO_ERROR;
     }
 
 protected:
+    void AddCommonByIdArguments()
+    {
+        AddArgument("use-mtr-device", 0, 1, &mUseMTRDevice,
+            "Use MTRDevice instead of MTRBaseDevice to send this command. Default is false.");
+        ModelCommand::AddArguments();
+    }
+
     chip::Optional<bool> mFabricFiltered;
 
 private:
@@ -124,29 +167,36 @@ public:
 
     CHIP_ERROR SendCommand(MTRBaseDevice * _Nonnull device, chip::EndpointId endpointId) override
     {
-        dispatch_queue_t callbackQueue = dispatch_queue_create("com.chip.command", DISPATCH_QUEUE_SERIAL);
+        dispatch_queue_t callbackQueue = dispatch_queue_create("com.chip.command", DISPATCH_QUEUE_SERIAL_WITH_AUTORELEASE_POOL);
 
         MTRSubscribeParams * params = [[MTRSubscribeParams alloc] initWithMinInterval:@(mMinInterval) maxInterval:@(mMaxInterval)];
         if (mFabricFiltered.HasValue()) {
-            params.fabricFiltered = mFabricFiltered.Value();
+            params.filterByFabric = mFabricFiltered.Value();
         }
         if (mKeepSubscriptions.HasValue()) {
-            params.keepPreviousSubscriptions = mKeepSubscriptions.Value();
+            params.replaceExistingSubscriptions = !mKeepSubscriptions.Value();
         }
         if (mAutoResubscribe.HasValue()) {
-            params.autoResubscribe = mAutoResubscribe.Value();
+            params.resubscribeAutomatically = mAutoResubscribe.Value();
         }
 
-        [device subscribeAttributePathWithEndpointID:[NSNumber numberWithUnsignedShort:endpointId]
-            clusterID:[NSNumber numberWithUnsignedInteger:mClusterId]
-            attributeID:[NSNumber numberWithUnsignedInteger:mAttributeId]
+        __auto_type * endpoint = @(endpointId);
+        __auto_type * cluster = @(mClusterId);
+        __auto_type * attribute = @(mAttributeId);
+        [device subscribeToAttributesWithEndpointID:endpoint
+            clusterID:cluster
+            attributeID:attribute
             params:params
             queue:callbackQueue
             reportHandler:^(NSArray<NSDictionary<NSString *, id> *> * _Nullable values, NSError * _Nullable error) {
+                if (error != nil) {
+                    RemoteDataModelLogger::LogAttributeErrorAsJSON(endpoint, cluster, attribute, error);
+                }
                 if (values) {
                     for (id item in values) {
                         NSLog(@"Response Item: %@", [item description]);
                     }
+                    RemoteDataModelLogger::LogAttributeAsJSON(endpoint, cluster, attribute, values);
                 }
                 SetCommandExitStatus(error);
             }
@@ -185,6 +235,24 @@ public:
     SubscribeEvent()
         : ModelCommand("subscribe-all-events")
     {
+        AddCommonArguments();
+    }
+
+    SubscribeEvent(chip::ClusterId clusterId, bool isClusterAny = false)
+        : ModelCommand("subscribe-event-by-id")
+        , mClusterId(clusterId)
+    {
+        if (isClusterAny == true) {
+            AddArgument("cluster-id", 0, UINT32_MAX, &mClusterId);
+        }
+        AddArgument("event-id", 0, UINT32_MAX, &mEventId);
+        AddArgument("event-min", 0, UINT64_MAX, &mEventNumber);
+        AddArgument("is-urgent", 0, 1, &mIsUrgent);
+        AddCommonArguments();
+    }
+
+    void AddCommonArguments()
+    {
         AddArgument("min-interval", 0, UINT16_MAX, &mMinInterval);
         AddArgument("max-interval", 0, UINT16_MAX, &mMaxInterval);
         AddArgument("keepSubscriptions", 0, 1, &mKeepSubscriptions);
@@ -196,37 +264,64 @@ public:
 
     CHIP_ERROR SendCommand(MTRBaseDevice * _Nonnull device, chip::EndpointId endpointId) override
     {
-        dispatch_queue_t callbackQueue = dispatch_queue_create("com.chip.command", DISPATCH_QUEUE_SERIAL);
+        dispatch_queue_t callbackQueue = dispatch_queue_create("com.chip.command", DISPATCH_QUEUE_SERIAL_WITH_AUTORELEASE_POOL);
 
         MTRSubscribeParams * params = [[MTRSubscribeParams alloc] initWithMinInterval:@(mMinInterval) maxInterval:@(mMaxInterval)];
+        if (mEventNumber.HasValue()) {
+            params.minEventNumber = [NSNumber numberWithUnsignedLongLong:mEventNumber.Value()];
+        }
         if (mKeepSubscriptions.HasValue()) {
-            params.keepPreviousSubscriptions = mKeepSubscriptions.Value();
+            params.replaceExistingSubscriptions = !mKeepSubscriptions.Value();
+        }
+        if (mIsUrgent.HasValue()) {
+            params.reportEventsUrgently = mIsUrgent.Value();
         }
         if (mAutoResubscribe.HasValue()) {
-            params.autoResubscribe = mAutoResubscribe.Value();
+            params.resubscribeAutomatically = mAutoResubscribe.Value();
         }
 
-        [device subscribeWithQueue:callbackQueue
-            params:params
-            clusterStateCacheContainer:nil
-            attributeReportHandler:^(NSArray * value) {
-                SetCommandExitStatus(CHIP_NO_ERROR);
-            }
-            eventReportHandler:^(NSArray * value) {
-                for (id item in value) {
-                    NSLog(@"Response Item: %@", [item description]);
+        if (strcmp(GetName(), "subscribe-event-by-id") == 0) {
+            [device subscribeToEventsWithEndpointID:(endpointId == chip::kInvalidEndpointId)
+                        ? nil
+                        : [NSNumber numberWithUnsignedShort:endpointId]
+                clusterID:(mClusterId == chip::kInvalidClusterId) ? nil : [NSNumber numberWithUnsignedInteger:mClusterId]
+                eventID:(mEventId == chip::kInvalidEventId) ? nil : [NSNumber numberWithUnsignedInteger:mEventId]
+                params:params
+                queue:callbackQueue
+                reportHandler:^(NSArray<NSDictionary<NSString *, id> *> * _Nullable values, NSError * _Nullable error) {
+                    if (values) {
+                        for (id item in values) {
+                            NSLog(@"Response Item: %@", [item description]);
+                        }
+                    }
+                    SetCommandExitStatus(error);
                 }
-                SetCommandExitStatus(CHIP_NO_ERROR);
-            }
-            errorHandler:^(NSError * error) {
-                SetCommandExitStatus(error);
-            }
-            subscriptionEstablished:^() {
-                mSubscriptionEstablished = YES;
-            }
-            resubscriptionScheduled:^(NSError * error, NSNumber * resubscriptionDelay) {
-                NSLog(@"Subscription dropped with error %@.  Resubscription in %@ms", error, resubscriptionDelay);
-            }];
+                subscriptionEstablished:^() {
+                    mSubscriptionEstablished = YES;
+                }];
+        } else {
+            [device subscribeWithQueue:callbackQueue
+                params:params
+                clusterStateCacheContainer:nil
+                attributeReportHandler:^(NSArray * value) {
+                    SetCommandExitStatus(CHIP_NO_ERROR);
+                }
+                eventReportHandler:^(NSArray * value) {
+                    for (id item in value) {
+                        NSLog(@"Response Item: %@", [item description]);
+                    }
+                    SetCommandExitStatus(CHIP_NO_ERROR);
+                }
+                errorHandler:^(NSError * error) {
+                    SetCommandExitStatus(error);
+                }
+                subscriptionEstablished:^() {
+                    mSubscriptionEstablished = YES;
+                }
+                resubscriptionScheduled:^(NSError * error, NSNumber * resubscriptionDelay) {
+                    NSLog(@"Subscription dropped with error %@.  Resubscription in %@ms", error, resubscriptionDelay);
+                }];
+        }
 
         return CHIP_NO_ERROR;
     }
@@ -237,7 +332,82 @@ protected:
     chip::Optional<bool> mKeepSubscriptions;
     chip::Optional<bool> mAutoResubscribe;
     chip::Optional<chip::EventNumber> mEventNumber;
+    chip::Optional<bool> mIsUrgent;
     bool mSubscriptionEstablished = NO;
     uint16_t mMinInterval;
     uint16_t mMaxInterval;
+
+    void Shutdown() override
+    {
+        mSubscriptionEstablished = NO;
+        ModelCommand::Shutdown();
+    }
+
+    bool DeferInteractiveCleanup() override { return mSubscriptionEstablished; }
+
+private:
+    chip::ClusterId mClusterId;
+    chip::EventId mEventId;
+};
+
+class ReadEvent : public ModelCommand {
+public:
+    ReadEvent()
+        : ModelCommand("read-event-by-id")
+    {
+        AddArgument("cluster-id", 0, UINT32_MAX, &mClusterId);
+        AddArgument("event-id", 0, UINT32_MAX, &mEventId);
+        AddArgument("event-min", 0, UINT64_MAX, &mEventNumber);
+        ModelCommand::AddArguments();
+    }
+
+    ReadEvent(chip::ClusterId clusterId)
+        : ModelCommand("read-event-by-id")
+        , mClusterId(clusterId)
+    {
+        AddArgument("event-id", 0, UINT32_MAX, &mEventId);
+        AddArgument("event-min", 0, UINT64_MAX, &mEventNumber);
+        ModelCommand::AddArguments();
+    }
+
+    ~ReadEvent() {}
+
+    CHIP_ERROR SendCommand(MTRBaseDevice * _Nonnull device, chip::EndpointId endpointId) override
+    {
+        dispatch_queue_t callbackQueue = dispatch_queue_create("com.chip.command", DISPATCH_QUEUE_SERIAL_WITH_AUTORELEASE_POOL);
+        MTRReadParams * params = [[MTRReadParams alloc] init];
+        if (mFabricFiltered.HasValue()) {
+            params.filterByFabric = mFabricFiltered.Value();
+        }
+        if (mEventNumber.HasValue()) {
+            params.minEventNumber = [NSNumber numberWithUnsignedLongLong:mEventNumber.Value()];
+        }
+
+        [device
+            readEventsWithEndpointID:(endpointId == chip::kInvalidEndpointId) ? nil : [NSNumber numberWithUnsignedShort:endpointId]
+                           clusterID:(mClusterId == chip::kInvalidClusterId) ? nil : [NSNumber numberWithUnsignedInteger:mClusterId]
+                             eventID:(mEventId == chip::kInvalidEventId) ? nil : [NSNumber numberWithUnsignedInteger:mEventId]
+                              params:params
+                               queue:callbackQueue
+                          completion:^(NSArray<NSDictionary<NSString *, id> *> * _Nullable values, NSError * _Nullable error) {
+                              if (error != nil) {
+                                  LogNSError("Error reading event", error);
+                              }
+                              if (values) {
+                                  for (id item in values) {
+                                      NSLog(@"Response Item: %@", [item description]);
+                                  }
+                              }
+                              SetCommandExitStatus(error);
+                          }];
+        return CHIP_NO_ERROR;
+    }
+
+protected:
+    chip::Optional<bool> mFabricFiltered;
+    chip::Optional<chip::EventNumber> mEventNumber;
+
+private:
+    chip::ClusterId mClusterId;
+    chip::AttributeId mEventId;
 };

@@ -89,10 +89,10 @@ public:
 
     // Note: The copy construct/assignment is not provided because the list node state is not copyable.
     //       The move construct/assignment is not provided because all modifications to the list shall go through the list object.
-    IntrusiveListNodePrivateBase(const IntrusiveListNodePrivateBase &) = delete;
+    IntrusiveListNodePrivateBase(const IntrusiveListNodePrivateBase &)             = delete;
     IntrusiveListNodePrivateBase & operator=(const IntrusiveListNodePrivateBase &) = delete;
     IntrusiveListNodePrivateBase(IntrusiveListNodePrivateBase &&)                  = delete;
-    IntrusiveListNodePrivateBase & operator=(IntrusiveListNodePrivateBase &&) = delete;
+    IntrusiveListNodePrivateBase & operator=(IntrusiveListNodePrivateBase &&)      = delete;
 
     bool IsInList() const { return (mPrev != nullptr && mNext != nullptr); }
 
@@ -183,10 +183,10 @@ public:
         using difference_type   = std::ptrdiff_t;
         using iterator_category = std::bidirectional_iterator_tag;
 
-        ConstIteratorBase(const ConstIteratorBase &) = default;
-        ConstIteratorBase(ConstIteratorBase &&)      = default;
+        ConstIteratorBase(const ConstIteratorBase &)             = default;
+        ConstIteratorBase(ConstIteratorBase &&)                  = default;
         ConstIteratorBase & operator=(const ConstIteratorBase &) = default;
-        ConstIteratorBase & operator=(ConstIteratorBase &&) = default;
+        ConstIteratorBase & operator=(ConstIteratorBase &&)      = default;
 
         bool operator==(const ConstIteratorBase & that) const { return mCurrent == that.mCurrent; }
         bool operator!=(const ConstIteratorBase & that) const { return !(*this == that); }
@@ -233,10 +233,10 @@ public:
         using difference_type   = std::ptrdiff_t;
         using iterator_category = std::bidirectional_iterator_tag;
 
-        IteratorBase(const IteratorBase &) = default;
-        IteratorBase(IteratorBase &&)      = default;
+        IteratorBase(const IteratorBase &)             = default;
+        IteratorBase(IteratorBase &&)                  = default;
         IteratorBase & operator=(const IteratorBase &) = default;
-        IteratorBase & operator=(IteratorBase &&) = default;
+        IteratorBase & operator=(IteratorBase &&)      = default;
 
         bool operator==(const IteratorBase & that) const { return mCurrent == that.mCurrent; }
         bool operator!=(const IteratorBase & that) const { return !(*this == that); }
@@ -292,7 +292,7 @@ protected:
         mNode.Remove();
     }
 
-    IntrusiveListBase(const IntrusiveListBase &) = delete;
+    IntrusiveListBase(const IntrusiveListBase &)             = delete;
     IntrusiveListBase & operator=(const IntrusiveListBase &) = delete;
 
     IntrusiveListBase(IntrusiveListBase && that) : mNode(&mNode, &mNode) { *this = std::move(that); }
@@ -401,7 +401,7 @@ class IntrusiveList : public IntrusiveListBase
 public:
     IntrusiveList() : IntrusiveListBase() {}
 
-    IntrusiveList(IntrusiveList &&) = default;
+    IntrusiveList(IntrusiveList &&)             = default;
     IntrusiveList & operator=(IntrusiveList &&) = default;
 
     class ConstIterator : public IntrusiveListBase::ConstIteratorBase
@@ -414,6 +414,11 @@ public:
         ConstIterator(IntrusiveListBase::ConstIteratorBase && base) : IntrusiveListBase::ConstIteratorBase(std::move(base)) {}
         const T * operator->() { return Hook::ToObject(mCurrent); }
         const T & operator*() { return *Hook::ToObject(mCurrent); }
+
+        ConstIterator & operator++() { return static_cast<ConstIterator &>(IntrusiveListBase::ConstIteratorBase::operator++()); }
+        ConstIterator operator++(int) { return IntrusiveListBase::ConstIteratorBase::operator++(1); }
+        ConstIterator & operator--() { return static_cast<ConstIterator &>(IntrusiveListBase::ConstIteratorBase::operator--()); }
+        ConstIterator operator--(int) { return IntrusiveListBase::ConstIteratorBase::operator--(1); }
     };
 
     class Iterator : public IntrusiveListBase::IteratorBase
@@ -426,6 +431,11 @@ public:
         Iterator(IntrusiveListBase::IteratorBase && base) : IntrusiveListBase::IteratorBase(std::move(base)) {}
         T * operator->() { return Hook::ToObject(mCurrent); }
         T & operator*() { return *Hook::ToObject(mCurrent); }
+
+        Iterator & operator++() { return static_cast<Iterator &>(IntrusiveListBase::IteratorBase::operator++()); }
+        Iterator operator++(int) { return IntrusiveListBase::IteratorBase::operator++(1); }
+        Iterator & operator--() { return static_cast<Iterator &>(IntrusiveListBase::IteratorBase::operator--()); }
+        Iterator operator--(int) { return IntrusiveListBase::IteratorBase::operator--(1); }
     };
 
     ConstIterator begin() const { return IntrusiveListBase::begin(); }
@@ -439,6 +449,14 @@ public:
     void Remove(T * value) { IntrusiveListBase::Remove(Hook::ToNode(value)); }
     void Replace(T * original, T * replacement) { IntrusiveListBase::Replace(Hook::ToNode(original), Hook::ToNode(replacement)); }
     bool Contains(const T * value) const { return IntrusiveListBase::Contains(Hook::ToNode(value)); }
+
+    void Clear()
+    {
+        while (begin() != end())
+        {
+            Remove(&(*begin()));
+        }
+    }
 };
 
 } // namespace chip

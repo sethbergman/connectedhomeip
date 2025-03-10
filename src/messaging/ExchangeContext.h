@@ -86,6 +86,9 @@ public:
     NewSessionHandlingPolicy GetNewSessionHandlingPolicy() override { return NewSessionHandlingPolicy::kStayAtOldSession; }
     void OnSessionReleased() override;
 
+#if INET_CONFIG_ENABLE_TCP_ENDPOINT
+    void OnSessionConnectionClosed(CHIP_ERROR conErr) override;
+#endif // INET_CONFIG_ENABLE_TCP_ENDPOINT
     /**
      *  Send a CHIP message on this exchange.
      *
@@ -104,8 +107,6 @@ public:
      *  @param[in]    sendFlags     Flags set by the application for the CHIP message being sent.
      *
      *  @retval  #CHIP_ERROR_INVALID_ARGUMENT               if an invalid argument was passed to this SendMessage API.
-     *  @retval  #CHIP_ERROR_WRONG_MSG_VERSION_FOR_EXCHANGE if there is a mismatch in the specific send operation and the
-     *                                                       CHIP message protocol version that is supported.
      *  @retval  #CHIP_ERROR_NOT_CONNECTED                  if the context was associated with a connection that is now
      *                                                       closed.
      *  @retval  #CHIP_ERROR_INCORRECT_STATE                if the state of the exchange context is incorrect.
@@ -157,7 +158,7 @@ public:
 
     SessionHandle GetSessionHandle() const
     {
-        VerifyOrDie(mSession);
+        VerifyOrDieWithObject(mSession, this);
         auto sessionHandle = mSession.Get();
         return std::move(sessionHandle.Value());
     }
@@ -183,6 +184,10 @@ public:
     // Set the response timeout for the exchange context, regardless of the underlying session type. Using
     // UseSuggestedResponseTimeout to set a timeout based on the type of the session and the application processing time instead of
     // using this function is recommended.
+    //
+    // If a timeout of 0 is provided, it implies no response is expected. Consequently, ExchangeDelegate::OnResponseTimeout will not
+    // be called.
+    //
     void SetResponseTimeout(Timeout timeout);
 
     // This API is used by commands that need to shut down all existing
@@ -212,6 +217,14 @@ public:
      */
     bool IsSendExpected() const { return mFlags.Has(Flags::kFlagWillSendMessage); }
 
+    /**
+     * Tracks whether we have received at least one application level message
+     * during the life-time of this exchange
+     *
+     * @return Returns 'true' if we have received at least one message, else 'false'
+     */
+    inline bool HasReceivedAtLeastOneMessage() { return mFlags.Has(Flags::kFlagReceivedAtLeastOneMessage); }
+
 #if CONFIG_BUILD_FOR_HOST_UNIT_TEST
     SessionHolder & GetSessionHolder() { return mSession; }
 
@@ -224,6 +237,12 @@ public:
 
     void ClearInjectedFailures() { mInjectedFailures.ClearAll(); }
 #endif
+
+    void DumpToLog() const
+    {
+        ChipLogError(ExchangeManager, "ExchangeContext: " ChipLogFormatExchangeId " delegate=" ChipLogFormatRtti,
+                     ChipLogValueExchangeId(GetExchangeId(), IsInitiator()), ChipLogValueRtti(mDelegate));
+    }
 
 private:
 #if CONFIG_BUILD_FOR_HOST_UNIT_TEST
@@ -290,42 +309,19 @@ private:
      */
     void MessageHandled();
 
-    /**
-     * Updates Sleepy End Device intervals mode in the following way:
-     * - does nothing for exchanges over Bluetooth LE
-     * - requests active mode if there are more messages,
-     *   including MRP acknowledgements, expected to be sent or received on
-     *   this exchange.
-     * - withdraws the request for active mode, otherwise.
-     */
-    void UpdateSEDIntervalMode();
-
-    /**
-     * Requests or withdraws the request for Sleepy End Device active mode
-     * based on the argument value.
-     *
-     * Note that the device switches to the idle mode if no
-     * exchange nor other component requests the active mode.
-     */
-    void UpdateSEDIntervalMode(bool activeMode);
-
     static ExchangeMessageDispatch & GetMessageDispatch(bool isEphemeralExchange, ExchangeDelegate * delegate);
 
     // If SetAutoReleaseSession() is called, this exchange must be using a SecureSession, and should
     // evict it when the exchange is done with all its work (including any MRP traffic).
-    inline void SetIgnoreSessionRelease(bool ignore);
-    inline bool ShouldIgnoreSessionRelease();
+    inline void SetIgnoreSessionRelease(bool ignore) { mFlags.Set(Flags::kFlagIgnoreSessionRelease, ignore); }
+
+    inline bool ShouldIgnoreSessionRelease() { return mFlags.Has(Flags::kFlagIgnoreSessionRelease); }
+
+    inline void SetHasReceivedAtLeastOneMessage(bool hasReceivedMessage)
+    {
+        mFlags.Set(Flags::kFlagReceivedAtLeastOneMessage, hasReceivedMessage);
+    }
 };
-
-inline void ExchangeContext::SetIgnoreSessionRelease(bool ignore)
-{
-    mFlags.Set(Flags::kFlagIgnoreSessionRelease, ignore);
-}
-
-inline bool ExchangeContext::ShouldIgnoreSessionRelease()
-{
-    return mFlags.Has(Flags::kFlagIgnoreSessionRelease);
-}
 
 } // namespace Messaging
 } // namespace chip

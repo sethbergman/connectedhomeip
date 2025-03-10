@@ -15,7 +15,9 @@
  *    limitations under the License.
  */
 
-#import <Matter/MTRDeviceController.h>
+#import <Matter/MTRDefines.h>
+
+#import "MTRDeviceController_Concrete.h"
 
 NS_ASSUME_NONNULL_BEGIN
 
@@ -23,7 +25,7 @@ NS_ASSUME_NONNULL_BEGIN
 
 typedef NSXPCConnection * _Nonnull (^MTRXPCConnectBlock)(void);
 
-@interface MTRDeviceControllerOverXPC : MTRDeviceController
+@interface MTRDeviceControllerOverXPC : MTRDeviceController_Concrete
 
 - (instancetype)init NS_UNAVAILABLE;
 + (instancetype)new NS_UNAVAILABLE;

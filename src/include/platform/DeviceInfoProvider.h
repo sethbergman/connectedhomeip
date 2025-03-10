@@ -67,7 +67,7 @@ public:
 
     using FixedLabelType = app::Clusters::FixedLabel::Structs::LabelStruct::Type;
     using UserLabelType  = app::Clusters::UserLabel::Structs::LabelStruct::Type;
-    using CalendarType   = app::Clusters::TimeFormatLocalization::CalendarType;
+    using CalendarType   = app::Clusters::TimeFormatLocalization::CalendarTypeEnum;
 
     using FixedLabelIterator             = Iterator<FixedLabelType>;
     using UserLabelIterator              = Iterator<UserLabelType>;
@@ -79,7 +79,7 @@ public:
     virtual ~DeviceInfoProvider() = default;
 
     // Not copyable
-    DeviceInfoProvider(const DeviceInfoProvider &) = delete;
+    DeviceInfoProvider(const DeviceInfoProvider &)             = delete;
     DeviceInfoProvider & operator=(const DeviceInfoProvider &) = delete;
 
     /**
@@ -89,8 +89,46 @@ public:
      */
     void SetStorageDelegate(PersistentStorageDelegate * storage);
 
+    /**
+     * @brief Sets the user label list for a specified endpoint.
+     *
+     * Replaces the current user label list with a new list. If the new list is smaller
+     * than the existing one, excess labels are deleted to free up space.
+     *
+     * @param[in] endpoint The endpoint ID associated with the user label list.
+     * @param[in] labelList The new list of user labels to store.
+     *
+     * @return CHIP_NO_ERROR on success.
+     * @return CHIP_ERROR if an error occurs.
+     */
     CHIP_ERROR SetUserLabelList(EndpointId endpoint, const AttributeList<UserLabelType, kMaxUserLabelListLength> & labelList);
+
+    /**
+     * @brief Clears the user label list for a specified endpoint.
+     *
+     * Deletes all user labels associated with the given endpoint, resetting the list length to zero.
+     * If no previous list exists, this function has no effect.
+     *
+     * @param[in] endpoint The endpoint ID whose user label list will be cleared.
+     *
+     * @return CHIP_NO_ERROR on success or if no previous value exists.
+     * @return CHIP_ERROR if an error occurs during deletion.
+     */
     CHIP_ERROR ClearUserLabelList(EndpointId endpoint);
+
+    /**
+     * @brief Appends a user label to the user label list for a specified endpoint.
+     *
+     * Adds a new label to the end of the existing user label list. The list size must not
+     * exceed `kMaxUserLabelListLength`. If the list is full, the function returns an error.
+     *
+     * @param[in] endpoint The endpoint ID to which the user label will be added.
+     * @param[in] label The user label to append to the list.
+     *
+     * @return CHIP_NO_ERROR on success.
+     * @return CHIP_ERROR_NO_MEMORY if the list is already at its maximum size.
+     * @return CHIP_ERROR if an error occurs during storage.
+     */
     CHIP_ERROR AppendUserLabel(EndpointId endpoint, const UserLabelType & label);
 
     // Iterators

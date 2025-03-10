@@ -17,18 +17,18 @@
 #    limitations under the License.
 #
 
+import sys
+
 import IPython
 from traitlets.config import Config
-import builtins
-import sys
 
 
 def main():
     c = Config()
     c.InteractiveShellApp.exec_lines = [
-        "import pkgutil",
-        "module = pkgutil.get_loader('chip.ChipReplStartup')",
-        "%run {module.path} " + " ".join(sys.argv[1:])
+        "import importlib.util",
+        "spec = importlib.util.find_spec('chip.ChipReplStartup')",
+        "%run {spec.origin} " + " ".join(sys.argv[1:])
     ]
 
     sys.argv = [sys.argv[0]]

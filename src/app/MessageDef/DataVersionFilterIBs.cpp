@@ -26,8 +26,8 @@
 
 namespace chip {
 namespace app {
-#if CHIP_CONFIG_IM_ENABLE_SCHEMA_CHECK
-CHIP_ERROR DataVersionFilterIBs::Parser::CheckSchemaValidity() const
+#if CHIP_CONFIG_IM_PRETTY_PRINT
+CHIP_ERROR DataVersionFilterIBs::Parser::PrettyPrint() const
 {
     CHIP_ERROR err = CHIP_NO_ERROR;
     TLV::TLVReader reader;
@@ -45,7 +45,7 @@ CHIP_ERROR DataVersionFilterIBs::Parser::CheckSchemaValidity() const
             DataVersionFilterIB::Parser DataVersionFilter;
             ReturnErrorOnFailure(DataVersionFilter.Init(reader));
             PRETTY_PRINT_INCDEPTH();
-            ReturnErrorOnFailure(DataVersionFilter.CheckSchemaValidity());
+            ReturnErrorOnFailure(DataVersionFilter.PrettyPrint());
             PRETTY_PRINT_DECDEPTH();
         }
     }
@@ -61,7 +61,7 @@ CHIP_ERROR DataVersionFilterIBs::Parser::CheckSchemaValidity() const
     ReturnErrorOnFailure(err);
     return reader.ExitContainer(mOuterContainerType);
 }
-#endif // CHIP_CONFIG_IM_ENABLE_SCHEMA_CHECK
+#endif // CHIP_CONFIG_IM_PRETTY_PRINT
 
 DataVersionFilterIB::Builder & DataVersionFilterIBs::Builder::CreateDataVersionFilter()
 {
@@ -69,10 +69,25 @@ DataVersionFilterIB::Builder & DataVersionFilterIBs::Builder::CreateDataVersionF
     return mDataVersionFilter;
 }
 
-DataVersionFilterIBs::Builder & DataVersionFilterIBs::Builder::EndOfDataVersionFilterIBs()
+CHIP_ERROR DataVersionFilterIBs::Builder::EncodeDataVersionFilterIB(const DataVersionFilter & aFilter)
+{
+    DataVersionFilterIB::Builder & filterIB = CreateDataVersionFilter();
+    ReturnErrorOnFailure(GetError());
+    ClusterPathIB::Builder & path = filterIB.CreatePath();
+    ReturnErrorOnFailure(filterIB.GetError());
+    ReturnErrorOnFailure(path.Endpoint(aFilter.mEndpointId).Cluster(aFilter.mClusterId).EndOfClusterPathIB());
+    ReturnErrorOnFailure(filterIB.DataVersion(aFilter.mDataVersion.Value()).EndOfDataVersionFilterIB());
+
+    ChipLogProgress(DataManagement, "Encoded DataVersionFilter: Endpoint=%u Cluster=" ChipLogFormatMEI " Version=%" PRIu32,
+                    aFilter.mEndpointId, ChipLogValueMEI(aFilter.mClusterId), aFilter.mDataVersion.Value());
+
+    return CHIP_NO_ERROR;
+}
+
+CHIP_ERROR DataVersionFilterIBs::Builder::EndOfDataVersionFilterIBs()
 {
     EndOfContainer();
-    return *this;
+    return GetError();
 }
 } // namespace app
 } // namespace chip

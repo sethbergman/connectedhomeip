@@ -20,112 +20,71 @@
  */
 
 #import <Foundation/Foundation.h>
+#import <Matter/MTRBaseDevice.h> // for MTRClusterPath
 
 #import "MTRDeviceConnectionBridge.h" // For MTRInternalDeviceConnectionCallback
 #import "MTRDeviceController.h"
 
-#include <lib/core/CHIPError.h>
-#include <lib/core/DataModelTypes.h>
+#import <os/lock.h>
 
 #import "MTRBaseDevice.h"
+#import "MTRDeviceClusterData.h"
 #import "MTRDeviceController.h"
+#import "MTRDeviceControllerDelegate.h"
+#import "MTRDeviceStorageBehaviorConfiguration.h"
 
-@class MTRDeviceControllerStartupParamsInternal;
+#import <Matter/MTRDefines.h>
+#import <Matter/MTRDeviceControllerStorageDelegate.h>
+#import <Matter/MTROTAProviderDelegate.h>
+
+@class MTRDeviceControllerParameters;
 @class MTRDeviceControllerFactory;
 @class MTRDevice;
-
-namespace chip {
-class FabricTable;
-
-namespace Controller {
-    class DeviceCommissioner;
-}
-} // namespace chip
+@protocol MTRDevicePairingDelegate;
+@protocol MTRDeviceControllerDelegate;
+@class MTRDevice_Concrete;
 
 NS_ASSUME_NONNULL_BEGIN
 
-@interface MTRDeviceController (InternalMethods)
+@interface MTRDeviceController ()
+
+@property (nonatomic, readonly) NSMapTable<NSNumber *, MTRDevice *> * nodeIDToDeviceMap;
+@property (readonly, assign) os_unfair_lock_t deviceMapLock;
+
+@property (readwrite, nonatomic) NSUUID * uniqueIdentifier;
+// (moved here so subclasses can initialize differently)
+
+- (instancetype)initForSubclasses:(BOOL)startSuspended;
 
 #pragma mark - MTRDeviceControllerFactory methods
 
 /**
- * Start a new controller.  Returns whether startup succeeded.  If this fails,
- * it guarantees that it has called controllerShuttingDown on the
- * MTRDeviceControllerFactory.
- *
- * The return value will always match [controller isRunning] for this
- * controller.
- *
- * Only MTRDeviceControllerFactory should be calling this.
+ * Will return the compressed fabric id of the fabric if the controller is
+ * running, else nil.
  */
-- (BOOL)startup:(MTRDeviceControllerStartupParamsInternal *)startupParams;
+@property (nonatomic, readonly, nullable) NSNumber * compressedFabricID;
 
 /**
- * Will return chip::kUndefinedFabricIndex if we do not have a fabric index.
- * This property MUST be gotten from the Matter work queue.
+ * OTA delegate and its queue, if this controller supports OTA.  Either both
+ * will be non-nil or both will be nil.
  */
-@property (readonly) chip::FabricIndex fabricIndex;
+@property (nonatomic, readonly, nullable) id<MTROTAProviderDelegate> otaProviderDelegate;
+@property (nonatomic, readonly, nullable) dispatch_queue_t otaProviderDelegateQueue;
 
 /**
- * Init a newly created controller.
- *
- * Only MTRDeviceControllerFactory should be calling this.
+ * Fabric ID tied to controller
  */
-- (instancetype)initWithFactory:(MTRDeviceControllerFactory *)factory queue:(dispatch_queue_t)queue;
+@property (nonatomic, retain, nullable) NSNumber * fabricID;
 
 /**
- * Check whether this controller is running on the given fabric, as represented
- * by the provided FabricTable and fabric index.  The provided fabric table may
- * not be the same as the fabric table this controller is using. This method
- * MUST be called from the Matter work queue.
- *
- * Might return failure, in which case we don't know whether it's running on the
- * given fabric.  Otherwise it will set *isRunning to the right boolean value.
- *
- * Only MTRDeviceControllerFactory should be calling this.
+ * Node ID tied to controller
  */
-- (CHIP_ERROR)isRunningOnFabric:(chip::FabricTable *)fabricTable
-                    fabricIndex:(chip::FabricIndex)fabricIndex
-                      isRunning:(BOOL *)isRunning;
+@property (nonatomic, retain, nullable) NSNumber * nodeID;
 
 /**
- * Shut down the underlying C++ controller.  Must be called on the Matter work
- * queue or after the Matter work queue has been shut down.
- *
- * Only MTRDeviceControllerFactory should be calling this.
+ * Root Public Key tied to controller
  */
-- (void)shutDownCppController;
-
-/**
- * Notification that the MTRDeviceControllerFactory has finished shutting down
- * this controller and will not be touching it anymore.  This is guaranteed to
- * be called after initWithFactory succeeds.
- *
- * Only MTRDeviceControllerFactory should be calling this.
- */
-- (void)deinitFromFactory;
-
-/**
- * Ensure we have a CASE session to the given node ID and then call the provided
- * connection callback.  This may be called on any queue (including the Matter
- * event queue) and will always call the provided connection callback on the
- * Matter queue, asynchronously.  Consumers must be prepared to run on the
- * Matter queue (an in particular must not use any APIs that will try to do sync
- * dispatch to the Matter queue).
- *
- * If the controller is not running when this function is called, will return NO
- * and never invoke the completion.  If the controller is not running when the
- * async dispatch on the Matter queue would happen, an error will be dispatched
- * to the completion handler.
- */
-- (BOOL)getSessionForNode:(chip::NodeId)nodeID completion:(MTRInternalDeviceConnectionCallback)completion;
-
-/**
- * Invalidate the CASE session for the given node ID.  This is a temporary thing
- * just to support MTRBaseDevice's invalidateCASESession.  Must not be called on
- * the Matter event queue.
- */
-- (void)invalidateCASESessionForNode:(chip::NodeId)nodeID;
+@property (nonatomic, retain, nullable) NSData * rootPublicKey;
 
 /**
  * Try to asynchronously dispatch the given block on the Matter queue.  If the
@@ -134,11 +93,9 @@ NS_ASSUME_NONNULL_BEGIN
  * that this means the error handler might be called on an arbitrary queue, and
  * might be called before this function returns or after it returns.
  *
- * The DeviceCommissioner pointer passed to the callback should only be used
- * synchronously during the callback invocation.
+ * If the error handler is nil, failure to run the block will be silent.
  */
-- (void)asyncDispatchToMatterQueue:(void (^)(chip::Controller::DeviceCommissioner *))block
-                      errorHandler:(void (^)(NSError *))erroHandler;
+- (void)asyncDispatchToMatterQueue:(dispatch_block_t)block errorHandler:(nullable MTRDeviceErrorHandler)errorHandler;
 
 /**
  * Get an MTRBaseDevice for the given node id.  This exists to allow subclasses
@@ -150,8 +107,48 @@ NS_ASSUME_NONNULL_BEGIN
 #pragma mark - Device-specific data and SDK access
 // DeviceController will act as a central repository for this opaque dictionary that MTRDevice manages
 - (MTRDevice *)deviceForNodeID:(NSNumber *)nodeID;
+// _deviceForNodeID:createIfNeeded: can only return nil if NO is passed for createIfNeeded.
+- (MTRDevice * _Nullable)_deviceForNodeID:(NSNumber *)nodeID createIfNeeded:(BOOL)createIfNeeded;
+/**
+ * _setupDeviceForNodeID is a hook expected to be implemented by subclasses to
+ * actually allocate a device object of the right type.
+ */
+- (MTRDevice *)_setupDeviceForNodeID:(NSNumber *)nodeID prefetchedClusterData:(nullable NSDictionary<MTRClusterPath *, MTRDeviceClusterData *> *)prefetchedClusterData;
 - (void)removeDevice:(MTRDevice *)device;
 
+/**
+ * Called by MTRDevice object when their dealloc is called, so the controller can notify interested delegate that active devices have changed
+ */
+- (void)deviceDeallocated;
+
 @end
+
+/**
+ * Shim to allow us to treat an MTRDevicePairingDelegate as an
+ * MTRDeviceControllerDelegate.
+ */
+@interface MTRDevicePairingDelegateShim : NSObject <MTRDeviceControllerDelegate>
+@property (nonatomic, readonly) id<MTRDevicePairingDelegate> delegate;
+- (instancetype)initWithDelegate:(id<MTRDevicePairingDelegate>)delegate;
+@end
+
+static NSString * const kDeviceControllerErrorCommissionerInit = @"Init failure while initializing a commissioner";
+static NSString * const kDeviceControllerErrorIPKInit = @"Init failure while initializing IPK";
+static NSString * const kDeviceControllerErrorSigningKeypairInit = @"Init failure while creating signing keypair bridge";
+static NSString * const kDeviceControllerErrorOperationalCredentialsInit = @"Init failure while creating operational credentials delegate";
+static NSString * const kDeviceControllerErrorOperationalKeypairInit = @"Init failure while creating operational keypair bridge";
+static NSString * const kDeviceControllerErrorPairingInit = @"Init failure while creating a pairing delegate";
+static NSString * const kDeviceControllerErrorPartialDacVerifierInit = @"Init failure while creating a partial DAC verifier";
+static NSString * const kDeviceControllerErrorPairDevice = @"Failure while pairing the device";
+static NSString * const kDeviceControllerErrorStopPairing = @"Failure while trying to stop the pairing process";
+static NSString * const kDeviceControllerErrorOpenPairingWindow = @"Open Pairing Window failed";
+static NSString * const kDeviceControllerErrorNotRunning = @"Controller is not running. Call startup first.";
+static NSString * const kDeviceControllerErrorSetupCodeGen = @"Generating Manual Pairing Code failed";
+static NSString * const kDeviceControllerErrorGenerateNOC = @"Generating operational certificate failed";
+static NSString * const kDeviceControllerErrorKeyAllocation = @"Generating new operational key failed";
+static NSString * const kDeviceControllerErrorCSRValidation = @"Extracting public key from CSR failed";
+static NSString * const kDeviceControllerErrorGetCommissionee = @"Failure obtaining device being commissioned";
+static NSString * const kDeviceControllerErrorGetAttestationChallenge = @"Failure getting attestation challenge";
+static NSString * const kDeviceControllerErrorCDCertStoreInit = @"Init failure while initializing Certificate Declaration Signing Keys store";
 
 NS_ASSUME_NONNULL_END

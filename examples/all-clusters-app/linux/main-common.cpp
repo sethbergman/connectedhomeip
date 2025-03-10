@@ -16,97 +16,119 @@
  *    limitations under the License.
  */
 
-#include "main-common.h"
 #include "AllClustersCommandDelegate.h"
+#include "AppOptions.h"
+#include "ValveControlDelegate.h"
 #include "WindowCoveringManager.h"
+#include "air-quality-instance.h"
+#include "app-common/zap-generated/ids/Clusters.h"
+#include "device-energy-management-modes.h"
+#include "dishwasher-mode.h"
+#include "energy-evse-modes.h"
+#include "include/diagnostic-logs-provider-delegate-impl.h"
 #include "include/tv-callbacks.h"
-#include <app-common/zap-generated/att-storage.h>
-#include <app-common/zap-generated/attribute-type.h>
+#include "laundry-dryer-controls-delegate-impl.h"
+#include "laundry-washer-controls-delegate-impl.h"
+#include "laundry-washer-mode.h"
+#include "microwave-oven-mode.h"
+#include "operational-state-delegate-impl.h"
+#include "oven-modes.h"
+#include "oven-operational-state-delegate.h"
+#include "resource-monitoring-delegates.h"
+#include "rvc-modes.h"
+#include "rvc-operational-state-delegate-impl.h"
+#include "tcc-mode.h"
+#include "thermostat-delegate-impl.h"
+#include "water-heater-mode.h"
+
+#include <Options.h>
 #include <app-common/zap-generated/attributes/Accessors.h>
 #include <app/CommandHandler.h>
+#include <app/clusters/diagnostic-logs-server/diagnostic-logs-server.h>
 #include <app/clusters/identify-server/identify-server.h>
-#include <app/clusters/network-commissioning/network-commissioning.h>
+#include <app/clusters/laundry-dryer-controls-server/laundry-dryer-controls-server.h>
+#include <app/clusters/laundry-washer-controls-server/laundry-washer-controls-server.h>
+#include <app/clusters/mode-base-server/mode-base-server.h>
+#include <app/clusters/thermostat-server/thermostat-server.h>
+#include <app/clusters/time-synchronization-server/time-synchronization-server.h>
+#include <app/clusters/valve-configuration-and-control-server/valve-configuration-and-control-server.h>
 #include <app/server/Server.h>
-#include <app/util/af.h>
+#include <app/util/attribute-storage.h>
 #include <lib/support/CHIPMem.h>
-#include <new>
+#include <platform/DeviceInstanceInfoProvider.h>
 #include <platform/DiagnosticDataProvider.h>
 #include <platform/PlatformManager.h>
-#include <signal.h>
+#include <static-supported-modes-manager.h>
+#include <static-supported-temperature-levels.h>
 #include <system/SystemPacketBuffer.h>
 #include <transport/SessionManager.h>
 #include <transport/raw/PeerAddress.h>
 
-#if CHIP_DEVICE_LAYER_TARGET_DARWIN
-#include <platform/Darwin/NetworkCommissioningDriver.h>
-#if CHIP_DEVICE_CONFIG_ENABLE_WIFI
-#include <platform/Darwin/WiFi/NetworkCommissioningWiFiDriver.h>
-#endif // CHIP_DEVICE_CONFIG_ENABLE_WIFI
-#endif // CHIP_DEVICE_LAYER_TARGET_DARWIN
+#include <string>
 
-#if CHIP_DEVICE_LAYER_TARGET_LINUX
-#include <platform/Linux/NetworkCommissioningDriver.h>
-#endif // CHIP_DEVICE_LAYER_TARGET_LINUX
-
-#include <Options.h>
+#include <WhmMain.h>
 
 using namespace chip;
 using namespace chip::app;
 using namespace chip::DeviceLayer;
 
+using chip::Protocols::InteractionModel::Status;
+
 namespace {
 
-constexpr const char kChipEventFifoPathPrefix[] = "/tmp/chip_all_clusters_fifo_";
+constexpr char kChipEventFifoPathPrefix[] = "/tmp/chip_all_clusters_fifo_";
 LowPowerManager sLowPowerManager;
 NamedPipeCommands sChipNamedPipeCommands;
 AllClustersCommandDelegate sAllClustersCommandDelegate;
-chip::app::Clusters::WindowCovering::WindowCoveringManager sWindowCoveringManager;
+Clusters::WindowCovering::WindowCoveringManager sWindowCoveringManager;
 
-// TODO(#20664) REPL test will fail if signal SIGINT is not caught, temporarily keep following logic.
+Clusters::TemperatureControl::AppSupportedTemperatureLevelsDelegate sAppSupportedTemperatureLevelsDelegate;
+Clusters::ModeSelect::StaticSupportedModesManager sStaticSupportedModesManager;
+Clusters::ValveConfigurationAndControl::ValveControlDelegate sValveDelegate;
+Clusters::TimeSynchronization::ExtendedTimeSyncDelegate sTimeSyncDelegate;
 
-// when the shell is enabled, don't intercept signals since it prevents the user from
-// using expected commands like CTRL-C to quit the application. (see issue #17845)
-// We should stop using signals for those faults, and move to a different notification
-// means, like a pipe. (see issue #19114)
-#if !defined(ENABLE_CHIP_SHELL)
-void OnRebootSignalHandler(int signum)
-{
-    ChipLogDetail(DeviceLayer, "Caught signal %d", signum);
+// Please refer to https://github.com/CHIP-Specifications/connectedhomeip-spec/blob/master/src/namespaces
+constexpr const uint8_t kNamespaceCommon   = 7;
+constexpr const uint8_t kNamespaceSwitches = 0x43;
 
-    // The BootReason attribute SHALL indicate the reason for the Node’s most recent boot, the real usecase
-    // for this attribute is embedded system. In Linux simulation, we use different signals to tell the current
-    // running process to terminate with different reasons.
-    BootReasonType bootReason = BootReasonType::kUnspecified;
-    switch (signum)
-    {
-    case SIGINT:
-        bootReason = BootReasonType::kSoftwareReset;
-        break;
-    default:
-        IgnoreUnusedVariable(bootReason);
-        ChipLogError(NotSpecified, "Unhandled signal: Should never happens");
-        chipDie();
-        break;
-    }
+// Common Number Namespace: 7, tag 0 (Zero)
+constexpr const uint8_t kTagCommonZero = 0;
+// Common Number Namespace: 7, tag 1 (One)
+constexpr const uint8_t kTagCommonOne = 1;
+// Common Number Namespace: 7, tag 2 (Two)
+constexpr const uint8_t kTagCommonTwo = 2;
+// Switches namespace: 0x43, tag = 0x03 (Up)
+constexpr const uint8_t kTagSwitchesUp = 0x03;
+// Switches namespace: 0x43, tag = 0x04 (Down)
+constexpr const uint8_t kTagSwitchesDown = 0x04;
 
-    Server::GetInstance().DispatchShutDownAndStopEventLoop();
-}
-
-void SetupSignalHandlers()
-{
-    // sigaction is not used here because Tsan interceptors seems to
-    // never dispatch the signals on darwin.
-    signal(SIGINT, OnRebootSignalHandler);
-}
-#endif // !defined(ENABLE_CHIP_SHELL)
+constexpr const uint8_t kNamespacePosition = 8;
+// Common Position Namespace: 8, tag: 0 (Left)
+constexpr const uint8_t kTagPositionLeft = 0;
+// Common Position Namespace: 8, tag: 1 (Right)
+constexpr const uint8_t kTagPositionRight = 1;
+// Common Position Namespace: 8, tag: 3 (Bottom)
+constexpr const uint8_t kTagPositionBottom                                 = 3;
+const Clusters::Descriptor::Structs::SemanticTagStruct::Type gEp0TagList[] = {
+    { .namespaceID = kNamespaceCommon, .tag = kTagCommonZero }, { .namespaceID = kNamespacePosition, .tag = kTagPositionBottom }
+};
+const Clusters::Descriptor::Structs::SemanticTagStruct::Type gEp1TagList[] = {
+    { .namespaceID = kNamespaceCommon, .tag = kTagCommonOne }, { .namespaceID = kNamespacePosition, .tag = kTagPositionLeft }
+};
+const Clusters::Descriptor::Structs::SemanticTagStruct::Type gEp2TagList[] = {
+    { .namespaceID = kNamespaceCommon, .tag = kTagCommonTwo }, { .namespaceID = kNamespacePosition, .tag = kTagPositionRight }
+};
+// Endpoints 3 and 4 are an action switch and a non-action switch. On the device, they're tagged as up and down because why not.
+const Clusters::Descriptor::Structs::SemanticTagStruct::Type gEp3TagList[] = { { .namespaceID = kNamespaceSwitches,
+                                                                                 .tag         = kTagSwitchesUp } };
+const Clusters::Descriptor::Structs::SemanticTagStruct::Type gEp4TagList[] = { { .namespaceID = kNamespaceSwitches,
+                                                                                 .tag         = kTagSwitchesDown } };
 
 } // namespace
 
-bool emberAfBasicClusterMfgSpecificPingCallback(chip::app::CommandHandler * commandObj)
-{
-    emberAfSendDefaultResponse(emberAfCurrentCommand(), EMBER_ZCL_STATUS_SUCCESS);
-    return true;
-}
+#ifdef MATTER_DM_PLUGIN_DISHWASHER_ALARM_SERVER
+extern void MatterDishwasherAlarmServerInit();
+#endif
 
 void OnIdentifyStart(::Identify *)
 {
@@ -122,17 +144,17 @@ void OnTriggerEffect(::Identify * identify)
 {
     switch (identify->mCurrentEffectIdentifier)
     {
-    case EMBER_ZCL_IDENTIFY_EFFECT_IDENTIFIER_BLINK:
-        ChipLogProgress(Zcl, "EMBER_ZCL_IDENTIFY_EFFECT_IDENTIFIER_BLINK");
+    case Clusters::Identify::EffectIdentifierEnum::kBlink:
+        ChipLogProgress(Zcl, "Clusters::Identify::EffectIdentifierEnum::kBlink");
         break;
-    case EMBER_ZCL_IDENTIFY_EFFECT_IDENTIFIER_BREATHE:
-        ChipLogProgress(Zcl, "EMBER_ZCL_IDENTIFY_EFFECT_IDENTIFIER_BREATHE");
+    case Clusters::Identify::EffectIdentifierEnum::kBreathe:
+        ChipLogProgress(Zcl, "Clusters::Identify::EffectIdentifierEnum::kBreathe");
         break;
-    case EMBER_ZCL_IDENTIFY_EFFECT_IDENTIFIER_OKAY:
-        ChipLogProgress(Zcl, "EMBER_ZCL_IDENTIFY_EFFECT_IDENTIFIER_OKAY");
+    case Clusters::Identify::EffectIdentifierEnum::kOkay:
+        ChipLogProgress(Zcl, "Clusters::Identify::EffectIdentifierEnum::kOkay");
         break;
-    case EMBER_ZCL_IDENTIFY_EFFECT_IDENTIFIER_CHANNEL_CHANGE:
-        ChipLogProgress(Zcl, "EMBER_ZCL_IDENTIFY_EFFECT_IDENTIFIER_CHANNEL_CHANGE");
+    case Clusters::Identify::EffectIdentifierEnum::kChannelChange:
+        ChipLogProgress(Zcl, "Clusters::Identify::EffectIdentifierEnum::kChannelChange");
         break;
     default:
         ChipLogProgress(Zcl, "No identifier effect");
@@ -141,109 +163,75 @@ void OnTriggerEffect(::Identify * identify)
 }
 
 static Identify gIdentify0 = {
-    chip::EndpointId{ 0 }, OnIdentifyStart, OnIdentifyStop, EMBER_ZCL_IDENTIFY_IDENTIFY_TYPE_VISIBLE_LED, OnTriggerEffect,
+    chip::EndpointId{ 0 }, OnIdentifyStart, OnIdentifyStop, Clusters::Identify::IdentifyTypeEnum::kVisibleIndicator,
+    OnTriggerEffect,
 };
 
 static Identify gIdentify1 = {
-    chip::EndpointId{ 1 }, OnIdentifyStart, OnIdentifyStop, EMBER_ZCL_IDENTIFY_IDENTIFY_TYPE_VISIBLE_LED, OnTriggerEffect,
+    chip::EndpointId{ 1 }, OnIdentifyStart, OnIdentifyStop, Clusters::Identify::IdentifyTypeEnum::kVisibleIndicator,
+    OnTriggerEffect,
 };
 
-// Network commissioning
 namespace {
-// This file is being used by platforms other than Linux, so we need this check to disable related features since we only
-// implemented them on linux.
-constexpr EndpointId kNetworkCommissioningEndpointMain      = 0;
-constexpr EndpointId kNetworkCommissioningEndpointSecondary = 0xFFFE;
 
-#if CHIP_DEVICE_LAYER_TARGET_LINUX
-#if CHIP_DEVICE_CONFIG_ENABLE_THREAD
-NetworkCommissioning::LinuxThreadDriver sThreadDriver;
-#endif // CHIP_DEVICE_CONFIG_ENABLE_THREAD
+class ExampleDeviceInstanceInfoProvider : public DeviceInstanceInfoProvider
+{
+public:
+    void Init(DeviceInstanceInfoProvider * defaultProvider) { mDefaultProvider = defaultProvider; }
 
-#if CHIP_DEVICE_CONFIG_ENABLE_WIFI
-NetworkCommissioning::LinuxWiFiDriver sWiFiDriver;
-#endif // CHIP_DEVICE_CONFIG_ENABLE_WIFI
+    CHIP_ERROR GetVendorName(char * buf, size_t bufSize) override { return mDefaultProvider->GetVendorName(buf, bufSize); }
+    CHIP_ERROR GetVendorId(uint16_t & vendorId) override { return mDefaultProvider->GetVendorId(vendorId); }
+    CHIP_ERROR GetProductName(char * buf, size_t bufSize) override { return mDefaultProvider->GetProductName(buf, bufSize); }
+    CHIP_ERROR GetProductId(uint16_t & productId) override { return mDefaultProvider->GetProductId(productId); }
+    CHIP_ERROR GetPartNumber(char * buf, size_t bufSize) override { return mDefaultProvider->GetPartNumber(buf, bufSize); }
+    CHIP_ERROR GetProductURL(char * buf, size_t bufSize) override { return mDefaultProvider->GetPartNumber(buf, bufSize); }
+    CHIP_ERROR GetProductLabel(char * buf, size_t bufSize) override { return mDefaultProvider->GetProductLabel(buf, bufSize); }
+    CHIP_ERROR GetSerialNumber(char * buf, size_t bufSize) override { return mDefaultProvider->GetSerialNumber(buf, bufSize); }
+    CHIP_ERROR GetManufacturingDate(uint16_t & year, uint8_t & month, uint8_t & day) override
+    {
+        return mDefaultProvider->GetManufacturingDate(year, month, day);
+    }
+    CHIP_ERROR GetHardwareVersion(uint16_t & hardwareVersion) override
+    {
+        return mDefaultProvider->GetHardwareVersion(hardwareVersion);
+    }
+    CHIP_ERROR GetHardwareVersionString(char * buf, size_t bufSize) override
+    {
+        return mDefaultProvider->GetHardwareVersionString(buf, bufSize);
+    }
+    CHIP_ERROR GetRotatingDeviceIdUniqueId(MutableByteSpan & uniqueIdSpan) override
+    {
+        return mDefaultProvider->GetRotatingDeviceIdUniqueId(uniqueIdSpan);
+    }
+    CHIP_ERROR GetProductFinish(Clusters::BasicInformation::ProductFinishEnum * finish) override;
+    CHIP_ERROR GetProductPrimaryColor(Clusters::BasicInformation::ColorEnum * primaryColor) override;
 
-NetworkCommissioning::LinuxEthernetDriver sEthernetDriver;
-#endif // CHIP_DEVICE_LAYER_TARGET_LINUX
+private:
+    DeviceInstanceInfoProvider * mDefaultProvider;
+};
 
-#if CHIP_DEVICE_LAYER_TARGET_DARWIN
-#if CHIP_DEVICE_CONFIG_ENABLE_WIFI
-NetworkCommissioning::DarwinWiFiDriver sWiFiDriver;
-#endif // CHIP_DEVICE_CONFIG_ENABLE_WIFI
+CHIP_ERROR ExampleDeviceInstanceInfoProvider::GetProductFinish(Clusters::BasicInformation::ProductFinishEnum * finish)
+{
+    // Our example device claims to have a Satin finish for now.  We can make
+    // this configurable as needed.
+    *finish = Clusters::BasicInformation::ProductFinishEnum::kSatin;
+    return CHIP_NO_ERROR;
+}
 
-NetworkCommissioning::DarwinEthernetDriver sEthernetDriver;
-#endif // CHIP_DEVICE_LAYER_TARGET_DARWIN
+CHIP_ERROR ExampleDeviceInstanceInfoProvider::GetProductPrimaryColor(Clusters::BasicInformation::ColorEnum * primaryColor)
+{
+    // Our example device claims to have a nice purple color for now.  We can
+    // make this configurable as needed.
+    *primaryColor = Clusters::BasicInformation::ColorEnum::kPurple;
+    return CHIP_NO_ERROR;
+}
 
-#if CHIP_DEVICE_CONFIG_ENABLE_THREAD
-Clusters::NetworkCommissioning::Instance sThreadNetworkCommissioningInstance(kNetworkCommissioningEndpointMain, &sThreadDriver);
-#endif // CHIP_DEVICE_CONFIG_ENABLE_THREAD
+ExampleDeviceInstanceInfoProvider gExampleDeviceInstanceInfoProvider;
 
-#if CHIP_DEVICE_CONFIG_ENABLE_WIFI
-Clusters::NetworkCommissioning::Instance sWiFiNetworkCommissioningInstance(kNetworkCommissioningEndpointSecondary, &sWiFiDriver);
-#endif
-
-Clusters::NetworkCommissioning::Instance sEthernetNetworkCommissioningInstance(kNetworkCommissioningEndpointMain, &sEthernetDriver);
 } // namespace
 
 void ApplicationInit()
 {
-#if !defined(ENABLE_CHIP_SHELL)
-    SetupSignalHandlers();
-#endif // !defined(ENABLE_CHIP_SHELL)
-
-    (void) kNetworkCommissioningEndpointMain;
-    // Enable secondary endpoint only when we need it, this should be applied to all platforms.
-    emberAfEndpointEnableDisable(kNetworkCommissioningEndpointSecondary, false);
-
-    const bool kThreadEnabled = {
-#if CHIP_DEVICE_CONFIG_ENABLE_THREAD
-        LinuxDeviceOptions::GetInstance().mThread
-#else
-        false
-#endif
-    };
-
-    const bool kWiFiEnabled = {
-#if CHIP_DEVICE_CONFIG_ENABLE_WIFI
-        LinuxDeviceOptions::GetInstance().mWiFi
-#else
-        false
-#endif
-    };
-
-    if (kThreadEnabled && kWiFiEnabled)
-    {
-#if CHIP_DEVICE_CONFIG_ENABLE_THREAD
-        sThreadNetworkCommissioningInstance.Init();
-#endif
-#if CHIP_DEVICE_CONFIG_ENABLE_WIFI
-        sWiFiNetworkCommissioningInstance.Init();
-#endif
-        // Only enable secondary endpoint for network commissioning cluster when both WiFi and Thread are enabled.
-        emberAfEndpointEnableDisable(kNetworkCommissioningEndpointSecondary, true);
-    }
-    else if (kThreadEnabled)
-    {
-#if CHIP_DEVICE_CONFIG_ENABLE_THREAD
-        sThreadNetworkCommissioningInstance.Init();
-#endif
-    }
-    else if (kWiFiEnabled)
-    {
-#if CHIP_DEVICE_CONFIG_ENABLE_WIFI
-        // If we only enable WiFi on this device, "move" WiFi instance to main NetworkCommissioning cluster endpoint.
-        sWiFiNetworkCommissioningInstance.~Instance();
-        new (&sWiFiNetworkCommissioningInstance)
-            Clusters::NetworkCommissioning::Instance(kNetworkCommissioningEndpointMain, &sWiFiDriver);
-        sWiFiNetworkCommissioningInstance.Init();
-#endif
-    }
-    else
-    {
-        sEthernetNetworkCommissioningInstance.Init();
-    }
-
     std::string path = kChipEventFifoPathPrefix + std::to_string(getpid());
 
     if (sChipNamedPipeCommands.Start(path, &sAllClustersCommandDelegate) != CHIP_NO_ERROR)
@@ -251,25 +239,128 @@ void ApplicationInit()
         ChipLogError(NotSpecified, "Failed to start CHIP NamedPipeCommands");
         sChipNamedPipeCommands.Stop();
     }
+
+    auto * defaultProvider = GetDeviceInstanceInfoProvider();
+    if (defaultProvider != &gExampleDeviceInstanceInfoProvider)
+    {
+        gExampleDeviceInstanceInfoProvider.Init(defaultProvider);
+        SetDeviceInstanceInfoProvider(&gExampleDeviceInstanceInfoProvider);
+    }
+
+#ifdef MATTER_DM_PLUGIN_DISHWASHER_ALARM_SERVER
+    MatterDishwasherAlarmServerInit();
+#endif
+    Clusters::TemperatureControl::SetInstance(&sAppSupportedTemperatureLevelsDelegate);
+    Clusters::ModeSelect::setSupportedModesManager(&sStaticSupportedModesManager);
+
+    Clusters::ValveConfigurationAndControl::SetDefaultDelegate(chip::EndpointId(1), &sValveDelegate);
+    Clusters::TimeSynchronization::SetDefaultDelegate(&sTimeSyncDelegate);
+
+    Clusters::WaterHeaterManagement::WhmApplicationInit(chip::EndpointId(1));
+
+    SetTagList(/* endpoint= */ 0, Span<const Clusters::Descriptor::Structs::SemanticTagStruct::Type>(gEp0TagList));
+    SetTagList(/* endpoint= */ 1, Span<const Clusters::Descriptor::Structs::SemanticTagStruct::Type>(gEp1TagList));
+    SetTagList(/* endpoint= */ 2, Span<const Clusters::Descriptor::Structs::SemanticTagStruct::Type>(gEp2TagList));
+    SetTagList(/* endpoint= */ 3, Span<const Clusters::Descriptor::Structs::SemanticTagStruct::Type>(gEp3TagList));
+    SetTagList(/* endpoint= */ 4, Span<const Clusters::Descriptor::Structs::SemanticTagStruct::Type>(gEp4TagList));
 }
 
-void ApplicationExit()
+void ApplicationShutdown()
 {
+    // These may have been initialised via the emberAfXxxClusterInitCallback methods. We need to destroy them before shutdown.
+    Clusters::DishwasherMode::Shutdown();
+    Clusters::LaundryWasherMode::Shutdown();
+    Clusters::RvcCleanMode::Shutdown();
+    Clusters::RvcRunMode::Shutdown();
+    Clusters::MicrowaveOvenMode::Shutdown();
+    Clusters::RefrigeratorAndTemperatureControlledCabinetMode::Shutdown();
+    Clusters::HepaFilterMonitoring::Shutdown();
+    Clusters::ActivatedCarbonFilterMonitoring::Shutdown();
+
+    Clusters::AirQuality::Shutdown();
+    Clusters::OperationalState::Shutdown();
+    Clusters::RvcOperationalState::Shutdown();
+    Clusters::OvenMode::Shutdown();
+    Clusters::OvenCavityOperationalState::Shutdown();
+
+    Clusters::DeviceEnergyManagementMode::Shutdown();
+    Clusters::EnergyEvseMode::Shutdown();
+    Clusters::WaterHeaterMode::Shutdown();
+
+    Clusters::WaterHeaterManagement::WhmApplicationShutdown();
+
     if (sChipNamedPipeCommands.Stop() != CHIP_NO_ERROR)
     {
         ChipLogError(NotSpecified, "Failed to stop CHIP NamedPipeCommands");
     }
 }
 
+using namespace chip::app::Clusters::LaundryWasherControls;
+void emberAfLaundryWasherControlsClusterInitCallback(EndpointId endpoint)
+{
+    LaundryWasherControlsServer::SetDefaultDelegate(endpoint, &LaundryWasherControlDelegate::getLaundryWasherControlDelegate());
+}
+
+using namespace chip::app::Clusters::LaundryDryerControls;
+void emberAfLaundryDryerControlsClusterInitCallback(EndpointId endpoint)
+{
+    LaundryDryerControlsServer::SetDefaultDelegate(endpoint, &LaundryDryerControlDelegate::getLaundryDryerControlDelegate());
+}
+
 void emberAfLowPowerClusterInitCallback(EndpointId endpoint)
 {
     ChipLogProgress(NotSpecified, "Setting LowPower default delegate to global manager");
-    chip::app::Clusters::LowPower::SetDefaultDelegate(endpoint, &sLowPowerManager);
+    Clusters::LowPower::SetDefaultDelegate(endpoint, &sLowPowerManager);
 }
 
 void emberAfWindowCoveringClusterInitCallback(chip::EndpointId endpoint)
 {
     sWindowCoveringManager.Init(endpoint);
-    chip::app::Clusters::WindowCovering::SetDefaultDelegate(endpoint, &sWindowCoveringManager);
-    chip::app::Clusters::WindowCovering::ConfigStatusUpdateFeatures(endpoint);
+    Clusters::WindowCovering::SetDefaultDelegate(endpoint, &sWindowCoveringManager);
+    Clusters::WindowCovering::ConfigStatusUpdateFeatures(endpoint);
+}
+
+using namespace chip::app::Clusters::DiagnosticLogs;
+void emberAfDiagnosticLogsClusterInitCallback(chip::EndpointId endpoint)
+{
+    auto & logProvider = LogProvider::GetInstance();
+    logProvider.SetEndUserSupportLogFilePath(AppOptions::GetEndUserSupportLogFilePath());
+    logProvider.SetNetworkDiagnosticsLogFilePath(AppOptions::GetNetworkDiagnosticsLogFilePath());
+    logProvider.SetCrashLogFilePath(AppOptions::GetCrashLogFilePath());
+
+    DiagnosticLogsServer::Instance().SetDiagnosticLogsProviderDelegate(endpoint, &logProvider);
+}
+
+using namespace chip::app::Clusters::Thermostat;
+void emberAfThermostatClusterInitCallback(EndpointId endpoint)
+{
+    // Register the delegate for the Thermostat
+    auto & delegate = ThermostatDelegate::GetInstance();
+
+    SetDefaultDelegate(endpoint, &delegate);
+}
+
+Status emberAfExternalAttributeReadCallback(EndpointId endpoint, ClusterId clusterId,
+                                            const EmberAfAttributeMetadata * attributeMetadata, uint8_t * buffer,
+                                            uint16_t maxReadLength)
+{
+
+    VerifyOrReturnValue(clusterId == Clusters::UnitTesting::Id, Status::Failure);
+    VerifyOrReturnValue(attributeMetadata != nullptr, Status::Failure);
+
+    if (attributeMetadata->attributeId == Clusters::UnitTesting::Attributes::FailureInt32U::Id)
+    {
+        uint8_t forced_code = 0;
+        Status status;
+
+        status = Clusters::UnitTesting::Attributes::ReadFailureCode::Get(endpoint, &forced_code);
+        if (status == Status::Success)
+        {
+            status = static_cast<Status>(forced_code);
+        }
+        return status;
+    }
+
+    // Finally we just do not support external attributes in all-clusters at this point
+    return Status::Failure;
 }

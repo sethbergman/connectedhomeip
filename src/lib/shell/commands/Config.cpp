@@ -17,28 +17,19 @@
 
 #include <inttypes.h>
 #include <lib/core/CHIPCore.h>
+#include <lib/shell/CommandSet.h>
 #include <lib/shell/Commands.h>
 #include <lib/shell/Engine.h>
-#include <lib/shell/commands/Help.h>
 #include <lib/support/CHIPArgParser.hpp>
 #include <lib/support/CHIPMem.h>
 #include <lib/support/CodeUtils.h>
+#include <lib/support/SafeInt.h>
 #include <platform/CHIPDeviceLayer.h>
 #include <platform/CommissionableDataProvider.h>
 #include <platform/DeviceInstanceInfoProvider.h>
 
-using chip::DeviceLayer::ConfigurationMgr;
-
 namespace chip {
 namespace Shell {
-
-static chip::Shell::Engine sShellConfigSubcommands;
-
-CHIP_ERROR ConfigHelpHandler(int argc, char ** argv)
-{
-    sShellConfigSubcommands.ForEachCommand(PrintCommandHelp, nullptr);
-    return CHIP_NO_ERROR;
-}
 
 static CHIP_ERROR ConfigGetVendorId(bool printHeader)
 {
@@ -133,8 +124,13 @@ static CHIP_ERROR ConfigGetSetupDiscriminator(bool printHeader)
 static CHIP_ERROR ConfigSetSetupDiscriminator(char * argv)
 {
     CHIP_ERROR error;
-    streamer_t * sout           = streamer_get();
-    uint16_t setupDiscriminator = strtoull(argv, nullptr, 10);
+    streamer_t * sout      = streamer_get();
+    unsigned long long arg = strtoull(argv, nullptr, 10);
+    if (!CanCastTo<uint16_t>(arg))
+    {
+        return CHIP_ERROR_INVALID_ARGUMENT;
+    }
+    uint16_t setupDiscriminator = static_cast<uint16_t>(arg);
 
     VerifyOrReturnError(setupDiscriminator != 0 && setupDiscriminator < chip::kMaxDiscriminatorValue, CHIP_ERROR_INVALID_ARGUMENT);
 
@@ -146,7 +142,7 @@ static CHIP_ERROR ConfigSetSetupDiscriminator(char * argv)
     }
     else
     {
-        streamer_printf(sout, "Setup discriminator setting failed with code: %d\r\n", error);
+        streamer_printf(sout, "Setup discriminator setting failed with code: %d\r\n", error.AsInteger());
     }
 
     return error;
@@ -176,28 +172,7 @@ static CHIP_ERROR PrintAllConfigs()
 
 static CHIP_ERROR ConfigHandler(int argc, char ** argv)
 {
-    switch (argc)
-    {
-    case 0:
-        return PrintAllConfigs();
-    case 1:
-        if ((strcmp(argv[0], "help") == 0) || (strcmp(argv[0], "-h") == 0))
-        {
-            return ConfigHelpHandler(argc, argv);
-        }
-    }
-    return sShellConfigSubcommands.ExecCommand(argc, argv);
-}
-
-void RegisterConfigCommands()
-{
-
-    static const shell_command_t sConfigComand = { &ConfigHandler, "config",
-                                                   "Manage device configuration. Usage to dump value: config [param_name] and "
-                                                   "to set some values (discriminator): config [param_name] [param_value]." };
-
-    static const shell_command_t sConfigSubCommands[] = {
-        { &ConfigHelpHandler, "help", "Usage: config <subcommand>" },
+    static constexpr Command subCommands[] = {
         { &ConfigVendorId, "vendorid", "Get VendorId. Usage: config vendorid" },
         { &ConfigProductId, "productid", "Get ProductId. Usage: config productid" },
         { &ConfigHardwareVersion, "hardwarever", "Get HardwareVersion. Usage: config hardwarever" },
@@ -205,11 +180,18 @@ void RegisterConfigCommands()
         { &ConfigDiscriminator, "discriminator", "Get/Set commissioning discriminator. Usage: config discriminator [value]" },
     };
 
-    // Register `config` subcommands with the local shell dispatcher.
-    sShellConfigSubcommands.RegisterCommands(sConfigSubCommands, ArraySize(sConfigSubCommands));
+    static constexpr CommandSet subShell(subCommands);
 
-    // Register the root `config` command with the top-level shell.
-    Engine::Root().RegisterCommands(&sConfigComand, 1);
+    return argc ? subShell.ExecCommand(argc, argv) : PrintAllConfigs();
+}
+
+void RegisterConfigCommands()
+{
+    static constexpr Command configCommand = { &ConfigHandler, "config",
+                                               "Manage device configuration. Usage to dump value: config [param_name] and "
+                                               "to set some values (discriminator): config [param_name] [param_value]." };
+
+    Engine::Root().RegisterCommands(&configCommand, 1);
 }
 
 } // namespace Shell

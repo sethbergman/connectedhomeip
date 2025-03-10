@@ -22,7 +22,7 @@
 #include <platform/CommissionableDataProvider.h>
 
 #include "app/clusters/ota-requestor/OTARequestorInterface.h"
-#include "app/server/OnboardingCodesUtil.h"
+#include "app/server/CommissioningWindowManager.h"
 #include "app/server/Server.h"
 #include "credentials/FabricTable.h"
 #include "device_service/device_service.rpc.pb.h"
@@ -30,6 +30,8 @@
 #include "platform/ConfigurationManager.h"
 #include "platform/DiagnosticDataProvider.h"
 #include "platform/PlatformManager.h"
+#include "setup_payload/OnboardingCodesUtil.h"
+#include <crypto/CHIPCryptoPAL.h>
 #include <platform/DeviceInstanceInfoProvider.h>
 #include <setup_payload/QRCodeSetupPayloadGenerator.h>
 
@@ -187,9 +189,9 @@ public:
 private:
     std::optional<uint16_t> mDiscriminatorOverride;
     std::optional<uint32_t> mPasscodeOverride;
-    Spake2pVerifierSerialized mVerifierBuf;
+    Crypto::Spake2pVerifierSerialized mVerifierBuf;
     std::optional<ByteSpan> mVerifierOverride;
-    uint8_t mSaltBuf[kSpake2p_Max_PBKDF_Salt_Length];
+    uint8_t mSaltBuf[Crypto::kSpake2p_Max_PBKDF_Salt_Length];
     std::optional<ByteSpan> mSaltOverride;
     std::optional<uint32_t> mIterationCountOverride;
     DeviceLayer::CommissionableDataProvider * mCommissionableDataProvider = nullptr;
@@ -216,7 +218,7 @@ public:
         return pw::OkStatus();
     }
 
-    virtual pw::Status Reboot(const pw_protobuf_Empty & request, pw_protobuf_Empty & response)
+    virtual pw::Status Reboot(const chip_rpc_RebootRequest & request, pw_protobuf_Empty & response)
     {
         return pw::Status::Unimplemented();
     }
@@ -269,14 +271,22 @@ public:
 
     virtual pw::Status SetPairingState(const chip_rpc_PairingState & request, pw_protobuf_Empty & response)
     {
-        if (request.pairing_enabled)
+        if (request.pairing_enabled && !chip::Server::GetInstance().GetCommissioningWindowManager().IsCommissioningWindowOpen())
         {
-            DeviceLayer::ConnectivityMgr().SetBLEAdvertisingEnabled(true);
-            DeviceLayer::ConnectivityMgr().SetBLEAdvertisingMode(DeviceLayer::ConnectivityMgr().kFastAdvertising);
+            DeviceLayer::StackLock lock;
+            chip::ChipError err = chip::Server::GetInstance().GetCommissioningWindowManager().OpenBasicCommissioningWindow();
+            if (err != CHIP_NO_ERROR)
+            {
+                ChipLogError(NotSpecified, "RPC SetPairingState failed to open commissioning window: %" CHIP_ERROR_FORMAT,
+                             err.Format());
+                return pw::Status::Internal();
+            }
         }
-        else
+        else if (!request.pairing_enabled &&
+                 chip::Server::GetInstance().GetCommissioningWindowManager().IsCommissioningWindowOpen())
         {
-            DeviceLayer::ConnectivityMgr().SetBLEAdvertisingEnabled(false);
+            DeviceLayer::StackLock lock;
+            chip::Server::GetInstance().GetCommissioningWindowManager().CloseCommissioningWindow();
         }
         return pw::OkStatus();
     }
@@ -296,7 +306,7 @@ public:
         DeviceLayer::StackLock lock;
         for (const FabricInfo & fabricInfo : Server::GetInstance().GetFabricTable())
         {
-            if (count < ArraySize(response.fabric_info))
+            if (count < MATTER_ARRAY_SIZE(response.fabric_info))
             {
                 response.fabric_info[count].fabric_id = fabricInfo.GetFabricId();
                 response.fabric_info[count].node_id   = fabricInfo.GetPeerId().GetNodeId();
@@ -317,7 +327,7 @@ public:
         }
         else
         {
-            response.vendor_id = CHIP_DEVICE_CONFIG_DEVICE_VENDOR_ID;
+            return pw::Status::Internal();
         }
 
         uint16_t product_id;
@@ -327,7 +337,7 @@ public:
         }
         else
         {
-            response.product_id = CHIP_DEVICE_CONFIG_DEVICE_PRODUCT_ID;
+            return pw::Status::Internal();
         }
 
         uint32_t software_version;
@@ -337,14 +347,13 @@ public:
         }
         else
         {
-            response.software_version = CHIP_DEVICE_CONFIG_DEVICE_SOFTWARE_VERSION;
+            return pw::Status::Internal();
         }
 
         if (DeviceLayer::ConfigurationMgr().GetSoftwareVersionString(response.software_version_string,
                                                                      sizeof(response.software_version_string)) != CHIP_NO_ERROR)
         {
-            snprintf(response.software_version_string, sizeof(response.software_version_string),
-                     CHIP_DEVICE_CONFIG_DEVICE_SOFTWARE_VERSION_STRING);
+            return pw::Status::Internal();
         }
 
         uint32_t code;
@@ -364,7 +373,7 @@ public:
         if (DeviceLayer::GetDeviceInstanceInfoProvider()->GetSerialNumber(response.serial_number, sizeof(response.serial_number)) !=
             CHIP_NO_ERROR)
         {
-            snprintf(response.serial_number, sizeof(response.serial_number), CHIP_DEVICE_CONFIG_TEST_SERIAL_NUMBER);
+            response.serial_number[0] = '\0'; // optional serial field not set.
         }
 
         // Create buffer for QR code that can fit max size and null terminator.
@@ -419,6 +428,41 @@ public:
         {
             mCommissionableDataProvider.SetSpake2pVerifier(ByteSpan(request.verifier.bytes, request.verifier.size));
         }
+
+        if (Server::GetInstance().GetCommissioningWindowManager().IsCommissioningWindowOpen() &&
+            Server::GetInstance().GetCommissioningWindowManager().CommissioningWindowStatusForCluster() !=
+                app::Clusters::AdministratorCommissioning::CommissioningWindowStatusEnum::kEnhancedWindowOpen)
+        {
+            // Cache values before closing to restore them after restart.
+            app::DataModel::Nullable<VendorId> vendorId = Server::GetInstance().GetCommissioningWindowManager().GetOpenerVendorId();
+            app::DataModel::Nullable<FabricIndex> fabricIndex =
+                Server::GetInstance().GetCommissioningWindowManager().GetOpenerFabricIndex();
+
+            // Restart commissioning window to recache the spakeInfo values:
+            {
+                DeviceLayer::StackLock lock;
+                Server::GetInstance().GetCommissioningWindowManager().CloseCommissioningWindow();
+            }
+            // Let other tasks possibly work since Commissioning window close/open are "heavy"
+            if (Server::GetInstance().GetCommissioningWindowManager().CommissioningWindowStatusForCluster() !=
+                    app::Clusters::AdministratorCommissioning::CommissioningWindowStatusEnum::kWindowNotOpen &&
+                !vendorId.IsNull() && !fabricIndex.IsNull())
+            {
+                DeviceLayer::StackLock lock;
+                System::Clock::Seconds16 commissioningTimeout =
+                    System::Clock::Seconds16(CHIP_DEVICE_CONFIG_DISCOVERY_TIMEOUT_SECS); // Use default for timeout for now.
+                Server::GetInstance()
+                    .GetCommissioningWindowManager()
+                    .OpenBasicCommissioningWindowForAdministratorCommissioningCluster(commissioningTimeout, fabricIndex.Value(),
+                                                                                      vendorId.Value());
+            }
+            else
+            {
+                DeviceLayer::StackLock lock;
+                Server::GetInstance().GetCommissioningWindowManager().OpenBasicCommissioningWindow();
+            }
+        }
+
         return pw::OkStatus();
     }
 

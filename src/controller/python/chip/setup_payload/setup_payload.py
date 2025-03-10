@@ -1,5 +1,5 @@
 #
-#    Copyright (c) 2021 Project CHIP Authors
+#    Copyright (c) 2021-2023 Project CHIP Authors
 #
 #    Licensed under the Apache License, Version 2.0 (the "License");
 #    you may not use this file except in compliance with the License.
@@ -14,10 +14,10 @@
 #    limitations under the License.
 #
 
-from chip.native import GetLibraryHandle, NativeLibraryHandleMethodArguments
-from chip.exceptions import ChipStackError
+from ctypes import CFUNCTYPE, c_char_p, c_uint8, c_uint16, c_uint32, c_uint64, create_string_buffer
+from typing import Optional
 
-from ctypes import CFUNCTYPE, c_char_p, c_int32, c_uint8
+from chip.native import GetLibraryHandle, NativeLibraryHandleMethodArguments, PyChipError
 
 
 class SetupPayload:
@@ -43,36 +43,43 @@ class SetupPayload:
         self.vendor_attribute_visitor = SetupPayload.VendorAttributeVisitor(
             AddVendorAttribute)
 
+    def GenerateQrCode(self, passcode: int, vendorId: int = 0xFFF1, productId: int = 0x8001, discriminator: int = 3840,
+                       customFlow: int = 0, capabilities: int = 4, version: int = 0) -> str:
+        buffer = create_string_buffer(256)
+        self.chipLib.pychip_SetupPayload_GenerateQrCode(buffer, 256, passcode, vendorId, productId,
+                                                        discriminator, customFlow, capabilities, version).raise_on_error()
+        return buffer.value.decode()
+
+    def GenerateManualPairingCode(self, passcode: int, vendorId: int = 0xFFF1, productId: int = 0x8001, discriminator: int = 3840,
+                                  customFlow: int = 0, capabilities: int = 4, version: int = 0) -> str:
+        buffer = create_string_buffer(256)
+        self.chipLib.pychip_SetupPayload_GenerateManualPairingCode(buffer, 256, passcode, vendorId, productId,
+                                                                   discriminator, customFlow, capabilities, version).raise_on_error()
+        return buffer.value.decode()
+
     def ParseQrCode(self, qrCode: str):
         self.Clear()
-        err = self.chipLib.pychip_SetupPayload_ParseQrCode(qrCode.upper().encode(),
-                                                           self.attribute_visitor,
-                                                           self.vendor_attribute_visitor)
-
-        if err != 0:
-            raise ChipStackError(err)
+        self.chipLib.pychip_SetupPayload_ParseQrCode(qrCode.upper().encode(),
+                                                     self.attribute_visitor,
+                                                     self.vendor_attribute_visitor).raise_on_error()
 
         return self
 
     def ParseManualPairingCode(self, manualPairingCode: str):
         self.Clear()
-        err = self.chipLib.pychip_SetupPayload_ParseManualPairingCode(manualPairingCode.encode(),
-                                                                      self.attribute_visitor,
-                                                                      self.vendor_attribute_visitor)
-
-        if err != 0:
-            raise ChipStackError(err)
+        self.chipLib.pychip_SetupPayload_ParseManualPairingCode(manualPairingCode.encode(),
+                                                                self.attribute_visitor,
+                                                                self.vendor_attribute_visitor).raise_on_error()
 
         return self
 
+    # DEPRECATED
     def PrintOnboardingCodes(self, passcode, vendorId, productId, discriminator, customFlow, capabilities, version):
         self.Clear()
-        err = self.chipLib.pychip_SetupPayload_PrintOnboardingCodes(
-            passcode, vendorId, productId, discriminator, customFlow, capabilities, version)
+        self.chipLib.pychip_SetupPayload_PrintOnboardingCodes(
+            passcode, vendorId, productId, discriminator, customFlow, capabilities, version).raise_on_error()
 
-        if err != 0:
-            raise ChipStackError(err)
-
+    # DEPRECATED
     def Print(self):
         for name, value in self.attributes.items():
             decorated_value = self.__DecorateValue(name, value)
@@ -83,10 +90,12 @@ class SetupPayload:
             print(
                 f"Vendor attribute '{tag:>3}': {self.vendor_attributes[tag]}")
 
+    # DEPRECATED
     def Clear(self):
         self.attributes.clear()
         self.vendor_attributes.clear()
 
+    # DEPRECATED
     def __DecorateValue(self, name, value):
         if name == "RendezvousInformation":
             rendezvous_methods = []
@@ -101,15 +110,73 @@ class SetupPayload:
         return None
 
     def __InitNativeFunctions(self, chipLib):
-        if chipLib.pychip_SetupPayload_ParseQrCode is not None:
+        if chipLib.pychip_SetupPayload_ParseQrCode.argtypes is not None:
             return
         setter = NativeLibraryHandleMethodArguments(chipLib)
+        setter.Set("pychip_SetupPayload_GenerateQrCode",
+                   PyChipError,
+                   [c_char_p, c_uint64, c_uint32, c_uint16, c_uint16, c_uint16, c_uint8, c_uint8, c_uint8])
+        setter.Set("pychip_SetupPayload_GenerateManualPairingCode",
+                   PyChipError,
+                   [c_char_p, c_uint64, c_uint32, c_uint16, c_uint16, c_uint16, c_uint8, c_uint8, c_uint8])
         setter.Set("pychip_SetupPayload_ParseQrCode",
-                   c_int32,
+                   PyChipError,
                    [c_char_p, SetupPayload.AttributeVisitor, SetupPayload.VendorAttributeVisitor])
         setter.Set("pychip_SetupPayload_ParseManualPairingCode",
-                   c_int32,
+                   PyChipError,
                    [c_char_p, SetupPayload.AttributeVisitor, SetupPayload.VendorAttributeVisitor])
         setter.Set("pychip_SetupPayload_PrintOnboardingCodes",
-                   c_int32,
-                   [c_uint32, c_uint16, c_uint16, c_uint16, uint8_t, uint8_t, uint8_t])
+                   PyChipError,
+                   [c_uint32, c_uint16, c_uint16, c_uint16, c_uint8, c_uint8, c_uint8])
+
+    # Getters from parsed contents.
+    # Prefer using the methods below to access setup payload information once parse.
+
+    @property
+    def version(self) -> int:
+        return int(self.attributes.get("Version", "0"))
+
+    @property
+    def vendor_id(self) -> int:
+        return int(self.attributes.get("VendorID", "0"))
+
+    @property
+    def product_id(self) -> int:
+        return int(self.attributes.get("ProductID", "0"))
+
+    @property
+    def setup_passcode(self) -> int:
+        if "SetUpPINCode" not in self.attributes:
+            raise KeyError("Missing setup passcode in setup payload: parsing likely not yet done")
+
+        return int(self.attributes["SetUpPINCode"])
+
+    @property
+    def long_discriminator(self) -> Optional[int]:
+        if "Long discriminator" not in self.attributes:
+            return None
+
+        return int(self.attributes["Long discriminator"])
+
+    @property
+    def short_discriminator(self) -> Optional[int]:
+        if "Short discriminator" not in self.attributes:
+            return None
+
+        return int(self.attributes["Short discriminator"])
+
+    @property
+    def commissioning_flow(self) -> int:
+        return int(self.attributes.get("CommissioningFlow", "0"))
+
+    @property
+    def rendezvous_information(self) -> int:
+        return int(self.attributes.get("RendezvousInformation", "0"))
+
+    @property
+    def supports_ble_commissioning(self) -> bool:
+        return (self.rendezvous_information & 0b010) != 0
+
+    @property
+    def supports_on_network_commissioning(self) -> bool:
+        return (self.rendezvous_information & 0b100) != 0

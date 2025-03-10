@@ -69,6 +69,14 @@ public:
         (void) csrNonce;
         return CHIP_ERROR_NOT_IMPLEMENTED;
     }
+
+    void CheckForRevokedDACChain(const AttestationInfo & info,
+                                 Callback::Callback<OnAttestationInformationVerification> * onCompletion) override
+    {
+        (void) info;
+        (void) onCompletion;
+        VerifyOrDie(false);
+    }
 };
 
 // Default to avoid nullptr on getter and cleanly handle new products/clients before
@@ -124,7 +132,9 @@ static inline Platform::ScopedMemoryBufferWithSize<uint8_t> CopyByteSpanHelper(c
 }
 
 DeviceAttestationVerifier::AttestationDeviceInfo::AttestationDeviceInfo(const AttestationInfo & attestationInfo) :
-    mPaiDerBuffer(CopyByteSpanHelper(attestationInfo.paiDerBuffer)), mDacDerBuffer(CopyByteSpanHelper(attestationInfo.dacDerBuffer))
+    mPaiDerBuffer(CopyByteSpanHelper(attestationInfo.paiDerBuffer)),
+    mDacDerBuffer(CopyByteSpanHelper(attestationInfo.dacDerBuffer)), mBasicInformationVendorId(attestationInfo.vendorId),
+    mBasicInformationProductId(attestationInfo.productId)
 {
     ByteSpan certificationDeclarationSpan;
     ByteSpan attestationNonceSpan;

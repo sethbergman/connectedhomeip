@@ -20,11 +20,11 @@
  * @brief Implementation for the User Label Server Cluster
  ***************************************************************************/
 
-#include <app-common/zap-generated/af-structs.h>
 #include <app-common/zap-generated/cluster-objects.h>
 #include <app-common/zap-generated/ids/Attributes.h>
 #include <app-common/zap-generated/ids/Clusters.h>
 #include <app/AttributeAccessInterface.h>
+#include <app/AttributeAccessInterfaceRegistry.h>
 #include <app/server/Server.h>
 #include <app/util/attribute-storage.h>
 #include <credentials/FabricTable.h>
@@ -131,7 +131,7 @@ CHIP_ERROR UserLabelAttrAccess::WriteLabelList(const ConcreteDataAttributePath &
         LabelList::TypeInfo::DecodableType decodablelist;
 
         ReturnErrorOnFailure(aDecoder.Decode(decodablelist));
-        ReturnErrorCodeIf(!IsValidLabelEntryList(decodablelist), CHIP_IM_GLOBAL_STATUS(ConstraintError));
+        VerifyOrReturnError(IsValidLabelEntryList(decodablelist), CHIP_IM_GLOBAL_STATUS(ConstraintError));
 
         auto iter = decodablelist.begin();
         while (iter.Next())
@@ -143,14 +143,22 @@ CHIP_ERROR UserLabelAttrAccess::WriteLabelList(const ConcreteDataAttributePath &
 
         return provider->SetUserLabelList(endpoint, labelList);
     }
+
     if (aPath.mListOp == ConcreteDataAttributePath::ListOperation::AppendItem)
     {
         Structs::LabelStruct::DecodableType entry;
 
         ReturnErrorOnFailure(aDecoder.Decode(entry));
-        ReturnErrorCodeIf(!IsValidLabelEntry(entry), CHIP_IM_GLOBAL_STATUS(ConstraintError));
+        VerifyOrReturnError(IsValidLabelEntry(entry), CHIP_IM_GLOBAL_STATUS(ConstraintError));
 
-        return provider->AppendUserLabel(endpoint, entry);
+        // Append the single user label entry
+        CHIP_ERROR err = provider->AppendUserLabel(endpoint, entry);
+        if (err == CHIP_ERROR_NO_MEMORY)
+        {
+            return CHIP_IM_GLOBAL_STATUS(ResourceExhausted);
+        }
+
+        return err;
     }
 
     return CHIP_ERROR_UNSUPPORTED_CHIP_FEATURE;
@@ -217,8 +225,8 @@ public:
 
 UserLabelFabricTableDelegate gUserLabelFabricDelegate;
 
-void MatterUserLabelPluginServerInitCallback(void)
+void MatterUserLabelPluginServerInitCallback()
 {
-    registerAttributeAccessOverride(&gAttrAccess);
+    AttributeAccessInterfaceRegistry::Instance().Register(&gAttrAccess);
     Server::GetInstance().GetFabricTable().AddFabricDelegate(&gUserLabelFabricDelegate);
 }

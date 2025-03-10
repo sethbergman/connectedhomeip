@@ -50,7 +50,7 @@ private:
     CHIP_ERROR GetSoftwareVersion(uint32_t & softwareVer) override { return CHIP_ERROR_NOT_IMPLEMENTED; }
     CHIP_ERROR StoreSoftwareVersion(uint32_t softwareVer) override { return CHIP_ERROR_NOT_IMPLEMENTED; }
     CHIP_ERROR StoreSerialNumber(const char * serialNum, size_t serialNumLen) override { return CHIP_ERROR_NOT_IMPLEMENTED; }
-    CHIP_ERROR GetPrimaryMACAddress(MutableByteSpan buf) override { return CHIP_ERROR_NOT_IMPLEMENTED; }
+    CHIP_ERROR GetPrimaryMACAddress(MutableByteSpan & buf) override { return CHIP_ERROR_NOT_IMPLEMENTED; }
     CHIP_ERROR GetPrimaryWiFiMACAddress(uint8_t * buf) override { return CHIP_ERROR_NOT_IMPLEMENTED; }
     CHIP_ERROR GetPrimary802154MACAddress(uint8_t * buf) override { return CHIP_ERROR_NOT_IMPLEMENTED; }
     CHIP_ERROR StoreManufacturingDate(const char * mfgDate, size_t mfgDateLen) override { return CHIP_ERROR_NOT_IMPLEMENTED; }
@@ -82,14 +82,11 @@ private:
     CHIP_ERROR StoreTotalOperationalHours(uint32_t totalOperationalHours) override { return CHIP_ERROR_NOT_IMPLEMENTED; }
     CHIP_ERROR GetBootReason(uint32_t & bootReason) override { return CHIP_ERROR_NOT_IMPLEMENTED; }
     CHIP_ERROR StoreBootReason(uint32_t bootReason) override { return CHIP_ERROR_NOT_IMPLEMENTED; }
-    CHIP_ERROR GetPartNumber(char * buf, size_t bufSize) override { return CHIP_ERROR_NOT_IMPLEMENTED; }
-    CHIP_ERROR GetProductURL(char * buf, size_t bufSize) override { return CHIP_ERROR_NOT_IMPLEMENTED; }
-    CHIP_ERROR GetProductLabel(char * buf, size_t bufSize) override { return CHIP_ERROR_NOT_IMPLEMENTED; }
     CHIP_ERROR GetUniqueId(char * buf, size_t bufSize) override { return CHIP_ERROR_NOT_IMPLEMENTED; }
     CHIP_ERROR StoreUniqueId(const char * uniqueId, size_t uniqueIdLen) override { return CHIP_ERROR_NOT_IMPLEMENTED; }
     CHIP_ERROR GenerateUniqueId(char * buf, size_t bufSize) override { return CHIP_ERROR_NOT_IMPLEMENTED; }
-#if !defined(NDEBUG)
-    CHIP_ERROR RunUnitTests(void) override { return CHIP_ERROR_NOT_IMPLEMENTED; }
+#if CHIP_CONFIG_TEST
+    void RunUnitTests() override {}
 #endif
     bool IsFullyProvisioned() override { return false; }
     void LogDeviceConfig() override {}

@@ -16,25 +16,16 @@
 #    limitations under the License.
 #
 
-set -e
-# Build script for GN P6 examples GitHub workflow.
-source "$(dirname "$0")/../../scripts/activate.sh"
-
 # Install required software
-if [ -d "/opt/ModusToolbox" ]; then
-    export CY_TOOLS_PATHS="/opt/ModusToolbox/tools_2.4"
-elif [ -d "$HOME/ModusToolbox" ]; then
-    # Set CY TOOLS PATH
-    export CY_TOOLS_PATHS="$HOME/ModusToolbox/tools_2.4"
-else
-    # Install Modustoolbox
-    curl --fail --location --silent --show-error https://download.cypress.com/downloadmanager/software/ModusToolbox/ModusToolbox_2.4/ModusToolbox_2.4.0.5972-linux-install.tar.gz -o /tmp/ModusToolbox_2.4.0.5972-linux-install.tar.gz -o /tmp/ModusToolbox_2.4.0.5972-linux-install.tar.gz &&
-        tar -C "$HOME" -zxf /tmp/ModusToolbox_2.4.0.5972-linux-install.tar.gz &&
-        rm /tmp/ModusToolbox_2.4.0.5972-linux-install.tar.gz
-
-    # Set CY TOOLS PATH
-    export CY_TOOLS_PATHS="$HOME/ModusToolbox/tools_2.4"
+if [[ -z "${CY_TOOLS_PATHS}" ]]; then
+    echo "*****************************************************************************************************"
+    echo "Install ModusToolbox Software v3.2 from https://www.infineon.com/modustoolbox and set CY_TOOLS_PATHS"
+    echo "*****************************************************************************************************"
 fi
+
+set -e
+# Build script for GN PSOC6 examples GitHub workflow.
+source "$(dirname "$0")/../../scripts/activate.sh"
 
 set -x
 env

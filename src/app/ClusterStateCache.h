@@ -21,6 +21,7 @@
 #include "lib/core/CHIPError.h"
 #include "system/SystemPacketBuffer.h"
 #include "system/TLVPacketBufferBackingStore.h"
+#include <app/AppConfig.h>
 #include <app/AttributePathParams.h>
 #include <app/BufferedReadCallback.h>
 #include <app/ReadClient.h>
@@ -33,6 +34,7 @@
 #include <set>
 #include <vector>
 
+#if CHIP_CONFIG_ENABLE_READ_CLIENT
 namespace chip {
 namespace app {
 /*
@@ -64,33 +66,62 @@ namespace app {
  * 2. The same cache cannot be used by multiple subscribe/read interactions at the same time.
  *
  */
-class ClusterStateCache : protected ReadClient::Callback
+template <bool CanEnableDataCaching>
+class ClusterStateCacheT : protected ReadClient::Callback
 {
 public:
     class Callback : public ReadClient::Callback
     {
     public:
+        Callback() = default;
+
+        // Callbacks are not expected to be copyable or movable.
+        Callback(const Callback &)             = delete;
+        Callback(Callback &&)                  = delete;
+        Callback & operator=(const Callback &) = delete;
+        Callback & operator=(Callback &&)      = delete;
+
         /*
          * Called anytime an attribute value has changed in the cache
          */
-        virtual void OnAttributeChanged(ClusterStateCache * cache, const ConcreteAttributePath & path){};
+        virtual void OnAttributeChanged(ClusterStateCacheT * cache, const ConcreteAttributePath & path){};
 
         /*
          * Called anytime any attribute in a cluster has changed in the cache
          */
-        virtual void OnClusterChanged(ClusterStateCache * cache, EndpointId endpointId, ClusterId clusterId){};
+        virtual void OnClusterChanged(ClusterStateCacheT * cache, EndpointId endpointId, ClusterId clusterId){};
 
         /*
          * Called anytime an endpoint was added to the cache
          */
-        virtual void OnEndpointAdded(ClusterStateCache * cache, EndpointId endpointId){};
+        virtual void OnEndpointAdded(ClusterStateCacheT * cache, EndpointId endpointId){};
     };
 
-    ClusterStateCache(Callback & callback, Optional<EventNumber> highestReceivedEventNumber = Optional<EventNumber>::Missing()) :
+    /**
+     *
+     * @param [in] callback the derived callback which inherit from ReadClient::Callback
+     * @param [in] highestReceivedEventNumber optional highest received event number, if cache receive the events with the number
+     *             less than or equal to this value, skip those events
+     */
+    ClusterStateCacheT(Callback & callback, Optional<EventNumber> highestReceivedEventNumber = Optional<EventNumber>::Missing()) :
         mCallback(callback), mBufferedReader(*this)
     {
         mHighestReceivedEventNumber = highestReceivedEventNumber;
     }
+
+    template <bool DataCachingEnabled = CanEnableDataCaching, std::enable_if_t<DataCachingEnabled, bool> = true>
+    ClusterStateCacheT(Callback & callback, Optional<EventNumber> highestReceivedEventNumber = Optional<EventNumber>::Missing(),
+                       bool cacheData = true) :
+        mCallback(callback),
+        mBufferedReader(*this), mCacheData(cacheData)
+    {
+        mHighestReceivedEventNumber = highestReceivedEventNumber;
+    }
+
+    ClusterStateCacheT(const ClusterStateCacheT &)             = delete;
+    ClusterStateCacheT(ClusterStateCacheT &&)                  = delete;
+    ClusterStateCacheT & operator=(const ClusterStateCacheT &) = delete;
+    ClusterStateCacheT & operator=(ClusterStateCacheT &&)      = delete;
 
     void SetHighestReceivedEventNumber(EventNumber highestReceivedEventNumber)
     {
@@ -140,6 +171,17 @@ public:
 
         ReturnErrorOnFailure(Get(path, reader));
         return DataModel::Decode(reader, value);
+    }
+
+    /**
+     * Get the value of a particular attribute for the given endpoint.  See the
+     * documentation for Get() with a ConcreteAttributePath above.
+     */
+    template <typename AttributeObjectTypeT>
+    CHIP_ERROR Get(EndpointId endpoint, typename AttributeObjectTypeT::DecodableType & value) const
+    {
+        ConcreteAttributePath path(endpoint, AttributeObjectTypeT::GetClusterId(), AttributeObjectTypeT::GetAttributeId());
+        return Get<AttributeObjectTypeT>(path, value);
     }
 
     /*
@@ -463,6 +505,22 @@ public:
     }
 
     /*
+     * Clear out all the attribute data and DataVersions stored for a given endpoint.
+     */
+    void ClearAttributes(EndpointId endpoint);
+
+    /*
+     * Clear out all the attribute data and the DataVersion stored for a given cluster.
+     */
+    void ClearAttributes(const ConcreteClusterPath & cluster);
+
+    /*
+     * Clear out the data (or size, if not storing data) stored for an
+     * attribute.
+     */
+    void ClearAttribute(const ConcreteAttributePath & attribute);
+
+    /*
      * Clear out the event data and status caches.
      *
      * By default, this will not clear out any internally tracked event counters, specifically:
@@ -483,8 +541,27 @@ public:
         mEventStatusCache.clear();
     }
 
+    /*
+     *  Get the last concrete report data path, if path is not concrete cluster path, return CHIP_ERROR_NOT_FOUND
+     *
+     */
+    CHIP_ERROR GetLastReportDataPath(ConcreteClusterPath & aPath);
+
 private:
-    using AttributeState = Variant<Platform::ScopedMemoryBufferWithSize<uint8_t>, StatusIB>;
+    // An attribute state can be one of three things:
+    // * If we got a path-specific error for the attribute, the corresponding
+    //   status.
+    // * If we got data for the attribute and we are storing data ourselves, the
+    //   data.
+    // * If we got data for the attribute and we are not storing data
+    //   oureselves, the size of the data, so we can still prioritize sending
+    //   DataVersions correctly.
+    //
+    // The data for a single attribute is not going to be gigabytes in size, so
+    // using uint32_t for the size is fine; on 64-bit systems this can save
+    // quite a bit of space.
+    using AttributeData  = Platform::ScopedMemoryBufferWithSize<uint8_t>;
+    using AttributeState = std::conditional_t<CanEnableDataCaching, Variant<StatusIB, AttributeData, uint32_t>, uint32_t>;
     // mPendingDataVersion represents a tentative data version for a cluster that we have gotten some reports for.
     //
     // mCurrentDataVersion represents a known data version for a cluster.  In order for this to have a
@@ -590,6 +667,16 @@ private:
                                                      const Span<AttributePathParams> & aAttributePaths,
                                                      bool & aEncodedDataVersionList) override;
 
+    void OnUnsolicitedMessageFromPublisher(ReadClient * apReadClient) override
+    {
+        return mCallback.OnUnsolicitedMessageFromPublisher(apReadClient);
+    }
+
+    void OnCASESessionEstablished(const SessionHandle & aSession, ReadPrepareParams & aSubscriptionParams) override
+    {
+        return mCallback.OnCASESessionEstablished(aSession, aSubscriptionParams);
+    }
+
     // Commit the pending cluster data version, if there is one.
     void CommitPendingDataVersion();
 
@@ -598,7 +685,7 @@ private:
     // on the wire if not all filters can be applied.
     void GetSortedFilters(std::vector<std::pair<DataVersionFilter, size_t>> & aVector) const;
 
-    CHIP_ERROR GetElementTLVSize(TLV::TLVReader * apData, size_t & aSize);
+    CHIP_ERROR GetElementTLVSize(TLV::TLVReader * apData, uint32_t & aSize);
 
     Callback & mCallback;
     NodeState mCache;
@@ -611,7 +698,12 @@ private:
     std::map<ConcreteEventPath, StatusIB> mEventStatusCache;
     BufferedReadCallback mBufferedReader;
     ConcreteClusterPath mLastReportDataPath = ConcreteClusterPath(kInvalidEndpointId, kInvalidClusterId);
+    const bool mCacheData                   = CanEnableDataCaching;
 };
 
-}; // namespace app
-}; // namespace chip
+using ClusterStateCache       = ClusterStateCacheT<true>;
+using ClusterStateCacheNoData = ClusterStateCacheT<false>;
+
+};     // namespace app
+};     // namespace chip
+#endif // CHIP_CONFIG_ENABLE_READ_CLIENT

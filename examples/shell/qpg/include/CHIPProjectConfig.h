@@ -36,7 +36,7 @@
 
 // shell app uses openthread but does not have the NETWORK_COMMISSIONING cluster or zap config
 // Do not instantiate the NETWORK_COMMISSIONING thread driver
-#define _NO_NETWORK_COMMISSIONING_DRIVER_
+#define _NO_GENERIC_THREAD_NETWORK_COMMISSIONING_DRIVER_
 
 // For convenience, enable Chip Security Test Mode and disable the requirement for
 // authentication in various protocols.
@@ -92,27 +92,12 @@
 #define CHIP_DEVICE_CONFIG_ENABLE_CHIPOBLE 1
 
 /**
- * CHIP_DEVICE_CONFIG_ENABLE_CHIP_TIME_SERVICE_TIME_SYNC
- *
- * Enables synchronizing the device's real time clock with a remote Chip Time service
- * using the Chip Time Sync protocol.
- */
-#define CHIP_DEVICE_CONFIG_ENABLE_CHIP_TIME_SERVICE_TIME_SYNC 0
-
-/**
  * CHIP_DEVICE_CONFIG_TEST_SERIAL_NUMBER
  *
  * Enables the use of a hard-coded default serial number if none
  * is found in Chip NV storage.
  */
 #define CHIP_DEVICE_CONFIG_TEST_SERIAL_NUMBER "TEST_SN"
-
-/**
- * CHIP_DEVICE_CONFIG_EVENT_LOGGING_DEBUG_BUFFER_SIZE
- *
- * A size, in bytes, of the individual debug event logging buffer.
- */
-#define CHIP_DEVICE_CONFIG_EVENT_LOGGING_DEBUG_BUFFER_SIZE (512)
 
 /**
  * CHIP_DEVICE_CONFIG_THREAD_ENABLE_CLI

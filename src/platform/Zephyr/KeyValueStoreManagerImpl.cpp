@@ -1,6 +1,6 @@
 /*
  *
- *    Copyright (c) 2021 Project CHIP Authors
+ *    Copyright (c) 2021-2022 Project CHIP Authors
  *    All rights reserved.
  *
  *    Licensed under the Apache License, Version 2.0 (the "License");
@@ -27,7 +27,7 @@
 #include <lib/support/logging/CHIPLogging.h>
 #include <system/SystemError.h>
 
-#include <settings/settings.h>
+#include <zephyr/settings/settings.h>
 
 namespace chip {
 namespace DeviceLayer {
@@ -131,7 +131,7 @@ int DeleteSubtreeCallback(const char * name, size_t /* entrySize */, settings_re
     char fullKey[SETTINGS_MAX_NAME_LEN + 1];
 
     // name comes from Zephyr settings subsystem so it is guaranteed to fit in the buffer.
-    (void) snprintf(fullKey, sizeof(fullKey), CHIP_DEVICE_CONFIG_SETTINGS_KEY "/%s", name);
+    (void) snprintf(fullKey, sizeof(fullKey), CHIP_DEVICE_CONFIG_SETTINGS_KEY "/%s", StringOrNullMarker(name));
     const int result = settings_delete(fullKey);
 
     // Return the first error, but continue removing remaining keys anyway.
@@ -195,9 +195,9 @@ CHIP_ERROR KeyValueStoreManagerImpl::_Delete(const char * key)
     char fullKey[SETTINGS_MAX_NAME_LEN + 1];
     ReturnErrorOnFailure(MakeFullKey(fullKey, key));
 
-    ReturnErrorCodeIf(Get(key, nullptr, 0) == CHIP_ERROR_PERSISTED_STORAGE_VALUE_NOT_FOUND,
-                      CHIP_ERROR_PERSISTED_STORAGE_VALUE_NOT_FOUND);
-    ReturnErrorCodeIf(settings_delete(fullKey) != 0, CHIP_ERROR_PERSISTED_STORAGE_FAILED);
+    VerifyOrReturnError(Get(key, nullptr, 0) != CHIP_ERROR_PERSISTED_STORAGE_VALUE_NOT_FOUND,
+                        CHIP_ERROR_PERSISTED_STORAGE_VALUE_NOT_FOUND);
+    VerifyOrReturnError(settings_delete(fullKey) == 0, CHIP_ERROR_PERSISTED_STORAGE_FAILED);
 
     return CHIP_NO_ERROR;
 }

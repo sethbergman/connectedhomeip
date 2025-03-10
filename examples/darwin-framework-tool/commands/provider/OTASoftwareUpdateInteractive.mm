@@ -1,6 +1,6 @@
 /*
  *
- *    Copyright (c) 2022 Project CHIP Authors
+ *    Copyright (c) 2022-2023 Project CHIP Authors
  *
  *    Licensed under the Apache License, Version 2.0 (the "License");
  *    you may not use this file except in compliance with the License.
@@ -38,8 +38,7 @@ MTROTAHeader * ParseOTAHeader(const char * otaFilePath)
         return nil;
     }
 
-    NSError * error;
-    return [MTROTAHeader headerFromData:[NSData dataWithBytes:buffer.data() length:buffer.size()] error:&error];
+    return [[MTROTAHeader alloc] initWithData:[NSData dataWithBytes:buffer.data() length:buffer.size()]];
 }
 
 // Parses the JSON filepath and extracts DeviceSoftwareVersionModel parameters
@@ -78,18 +77,18 @@ static bool ParseJsonFileAndPopulateCandidates(
 
         auto vendorId = [NSNumber numberWithUnsignedInt:iter.get("vendorId", 1).asUInt()];
         auto productId = [NSNumber numberWithUnsignedInt:iter.get("productId", 1).asUInt()];
-        auto softwareVersion = [NSNumber numberWithUnsignedLong:iter.get("softwareVersion", 10).asUInt64()];
+        auto softwareVersion = [NSNumber numberWithUnsignedLongLong:iter.get("softwareVersion", 10).asUInt64()];
         auto softwareVersionString = [NSString stringWithUTF8String:iter.get("softwareVersionString", "1.0.0").asCString()];
         auto cDVersionNumber = [NSNumber numberWithUnsignedInt:iter.get("cDVersionNumber", 0).asUInt()];
         auto softwareVersionValid = iter.get("softwareVersionValid", true).asBool() ? YES : NO;
         auto minApplicableSoftwareVersion =
-            [NSNumber numberWithUnsignedLong:iter.get("minApplicableSoftwareVersion", 0).asUInt64()];
+            [NSNumber numberWithUnsignedLongLong:iter.get("minApplicableSoftwareVersion", 0).asUInt64()];
         auto maxApplicableSoftwareVersion =
-            [NSNumber numberWithUnsignedLong:iter.get("maxApplicableSoftwareVersion", 1000).asUInt64()];
+            [NSNumber numberWithUnsignedLongLong:iter.get("maxApplicableSoftwareVersion", 1000).asUInt64()];
         auto otaURL = [NSString stringWithUTF8String:iter.get("otaURL", "https://test.com").asCString()];
 
-        candidate.deviceModelData.vendorId = vendorId;
-        candidate.deviceModelData.productId = productId;
+        candidate.deviceModelData.vendorID = vendorId;
+        candidate.deviceModelData.productID = productId;
         candidate.softwareVersion = softwareVersion;
         candidate.softwareVersionString = softwareVersionString;
         candidate.deviceModelData.cDVersionNumber = cDVersionNumber;
@@ -246,8 +245,8 @@ CHIP_ERROR OTASoftwareUpdateBase::SetCandidatesFromFilePath(char * _Nonnull file
 
         ChipLogDetail(chipTool, "Validating image list candidate %s: ", [candidate.deviceModelData.otaURL UTF8String]);
 
-        auto vendorId = [candidate.deviceModelData.vendorId unsignedIntValue];
-        auto productId = [candidate.deviceModelData.productId unsignedIntValue];
+        auto vendorId = [candidate.deviceModelData.vendorID unsignedIntValue];
+        auto productId = [candidate.deviceModelData.productID unsignedIntValue];
         auto softwareVersion = [candidate.softwareVersion unsignedLongValue];
         auto softwareVersionString = [candidate.softwareVersionString UTF8String];
         auto softwareVersionStringLength = [candidate.softwareVersionString length];

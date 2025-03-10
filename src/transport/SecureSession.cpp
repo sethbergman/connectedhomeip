@@ -27,7 +27,7 @@ void SecureSessionDeleter::Release(SecureSession * entry)
 }
 
 void SecureSession::Activate(const ScopedNodeId & localNode, const ScopedNodeId & peerNode, CATValues peerCATs,
-                             uint16_t peerSessionId, const ReliableMessageProtocolConfig & config)
+                             uint16_t peerSessionId, const SessionParameters & sessionParameters)
 {
     VerifyOrDie(mState == State::kEstablishing);
     VerifyOrDie(peerNode.GetFabricIndex() == localNode.GetFabricIndex());
@@ -40,11 +40,11 @@ void SecureSession::Activate(const ScopedNodeId & localNode, const ScopedNodeId 
     VerifyOrDie(!((mSecureSessionType == Type::kCASE) &&
                   (!IsOperationalNodeId(peerNode.GetNodeId()) || !IsOperationalNodeId(localNode.GetNodeId()))));
 
-    mPeerNodeId      = peerNode.GetNodeId();
-    mLocalNodeId     = localNode.GetNodeId();
-    mPeerCATs        = peerCATs;
-    mPeerSessionId   = peerSessionId;
-    mRemoteMRPConfig = config;
+    mPeerNodeId          = peerNode.GetNodeId();
+    mLocalNodeId         = localNode.GetNodeId();
+    mPeerCATs            = peerCATs;
+    mPeerSessionId       = peerSessionId;
+    mRemoteSessionParams = sessionParameters;
     SetFabricIndex(peerNode.GetFabricIndex());
     MarkActiveRx(); // Initialize SessionTimestamp and ActiveTimestamp per spec.
 
@@ -87,8 +87,8 @@ void SecureSession::MoveToState(State targetState)
 {
     if (mState != targetState)
     {
-        ChipLogProgress(SecureChannel, "SecureSession[%p]: Moving from state '%s' --> '%s'", this, StateToString(mState),
-                        StateToString(targetState));
+        ChipLogProgress(SecureChannel, "SecureSession[%p, LSID:%d]: State change '%s' --> '%s'", this, mLocalSessionId,
+                        StateToString(mState), StateToString(targetState));
         mState = targetState;
     }
 }
@@ -120,9 +120,9 @@ void SecureSession::MarkAsDefunct()
 
     case State::kPendingEviction:
         //
-        // Once a session is headed for eviction, we CANNOT bring it back to either being active or defunct.
+        // Once a session is headed for eviction, we CANNOT bring it back to either being active or defunct. Let's just
+        // do nothing and return.
         //
-        VerifyOrDie(false);
         return;
     }
 }
@@ -160,10 +160,11 @@ Access::SubjectDescriptor SecureSession::GetSubjectDescriptor() const
     Access::SubjectDescriptor subjectDescriptor;
     if (IsOperationalNodeId(mPeerNodeId))
     {
-        subjectDescriptor.authMode    = Access::AuthMode::kCase;
-        subjectDescriptor.subject     = mPeerNodeId;
-        subjectDescriptor.cats        = mPeerCATs;
-        subjectDescriptor.fabricIndex = GetFabricIndex();
+        subjectDescriptor.authMode        = Access::AuthMode::kCase;
+        subjectDescriptor.subject         = mPeerNodeId;
+        subjectDescriptor.cats            = mPeerCATs;
+        subjectDescriptor.fabricIndex     = GetFabricIndex();
+        subjectDescriptor.isCommissioning = IsCommissioningSession();
     }
     else if (IsPAKEKeyId(mPeerNodeId))
     {
@@ -171,9 +172,10 @@ Access::SubjectDescriptor SecureSession::GetSubjectDescriptor() const
         // Initiator (aka commissioner) leaves subject descriptor unfilled.
         if (GetCryptoContext().IsResponder())
         {
-            subjectDescriptor.authMode    = Access::AuthMode::kPase;
-            subjectDescriptor.subject     = mPeerNodeId;
-            subjectDescriptor.fabricIndex = GetFabricIndex();
+            subjectDescriptor.authMode        = Access::AuthMode::kPase;
+            subjectDescriptor.subject         = mPeerNodeId;
+            subjectDescriptor.fabricIndex     = GetFabricIndex();
+            subjectDescriptor.isCommissioning = IsCommissioningSession();
         }
     }
     else
@@ -181,6 +183,24 @@ Access::SubjectDescriptor SecureSession::GetSubjectDescriptor() const
         VerifyOrDie(false);
     }
     return subjectDescriptor;
+}
+
+bool SecureSession::IsCommissioningSession() const
+{
+    // PASE session is always a commissioning session.
+    if (IsPASESession())
+    {
+        return true;
+    }
+
+    // CASE session is a commissioning session if it was marked as such.
+    // The SessionManager is what keeps track.
+    if (IsCASESession() && mIsCaseCommissioningSession)
+    {
+        return true;
+    }
+
+    return false;
 }
 
 void SecureSession::Retain()

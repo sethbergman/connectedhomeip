@@ -16,39 +16,37 @@
  */
 
 #import "MTRThreadOperationalDataset.h"
+#import "NSDataSpanConversion.h"
 
-#include "MTRLogging.h"
+#include "MTRLogging_Internal.h"
 #include <lib/support/Span.h>
 #include <lib/support/ThreadOperationalDataset.h>
 
 size_t const MTRSizeThreadNetworkName = chip::Thread::kSizeNetworkName;
 size_t const MTRSizeThreadExtendedPANID = chip::Thread::kSizeExtendedPanId;
+size_t const MTRSizeThreadExtendedPanId = MTRSizeThreadExtendedPANID;
 size_t const MTRSizeThreadMasterKey = chip::Thread::kSizeMasterKey;
 size_t const MTRSizeThreadPSKc = chip::Thread::kSizePSKc;
 size_t const MTRSizeThreadPANID = 2; // Thread's PAN ID is 2 bytes
 
-@interface MTRThreadOperationalDataset ()
-
-@property (readonly) chip::Thread::OperationalDataset cppThreadOperationalDataset;
-
-@end
-
-@implementation MTRThreadOperationalDataset
+@implementation MTRThreadOperationalDataset {
+    chip::Thread::OperationalDataset _cppThreadOperationalDataset;
+}
 
 - (instancetype _Nullable)initWithNetworkName:(NSString *)networkName
                                 extendedPANID:(NSData *)extendedPANID
                                     masterKey:(NSData *)masterKey
                                          PSKc:(NSData *)PSKc
-                                      channel:(NSNumber *)channel
+                                channelNumber:(NSNumber *)channelNumber
                                         panID:(NSData *)panID
 {
     if (self = [super init]) {
-        _networkName = networkName;
-        _extendedPANID = extendedPANID;
-        _masterKey = masterKey;
-        _PSKc = PSKc;
-        _channel = channel;
-        _panID = panID;
+        _networkName = [networkName copy];
+        _extendedPANID = [extendedPANID copy];
+        _masterKey = [masterKey copy];
+        _PSKc = [PSKc copy];
+        _channelNumber = [channelNumber copy];
+        _panID = [panID copy];
         _cppThreadOperationalDataset = chip::Thread::OperationalDataset();
         if ([self _populateCppOperationalDataset]) {
             return self;
@@ -60,7 +58,7 @@ size_t const MTRSizeThreadPANID = 2; // Thread's PAN ID is 2 bytes
 - (BOOL)_populateCppOperationalDataset
 {
     _cppThreadOperationalDataset.Clear();
-    _cppThreadOperationalDataset.SetNetworkName([self.networkName cStringUsingEncoding:NSUTF8StringEncoding]);
+    _cppThreadOperationalDataset.SetNetworkName(self.networkName.UTF8String);
 
     if (![self _checkDataLength:self.extendedPANID expectedLength:MTRSizeThreadExtendedPANID]) {
         MTR_LOG_ERROR("Invalid ExtendedPANID");
@@ -86,7 +84,7 @@ size_t const MTRSizeThreadPANID = 2; // Thread's PAN ID is 2 bytes
     [self.PSKc getBytes:&PSKc length:MTRSizeThreadPSKc];
     _cppThreadOperationalDataset.SetPSKc(PSKc);
 
-    _cppThreadOperationalDataset.SetChannel([self.channel unsignedShortValue]);
+    _cppThreadOperationalDataset.SetChannel([self.channelNumber unsignedShortValue]);
 
     // Thread's PAN ID is 2 bytes
     if (![self _checkDataLength:self.panID expectedLength:MTRSizeThreadPANID]) {
@@ -104,7 +102,7 @@ size_t const MTRSizeThreadPANID = 2; // Thread's PAN ID is 2 bytes
 - (BOOL)_checkDataLength:(NSData *)data expectedLength:(size_t)expectedLength
 {
     if (data.length != expectedLength) {
-        MTR_LOG_ERROR("Length Check Failed. Length:%tu is incorrect, must be %tu", data.length, expectedLength);
+        MTR_LOG_ERROR("Length Check Failed. Length:%lu is incorrect, must be %tu", static_cast<unsigned long>(data.length), expectedLength);
         return NO;
     }
     return YES;
@@ -135,17 +133,46 @@ size_t const MTRSizeThreadPANID = 2; // Thread's PAN ID is 2 bytes
     panID = CFSwapInt16BigToHost(panID);
 
     return [self initWithNetworkName:[NSString stringWithUTF8String:networkName]
-                       extendedPANID:[NSData dataWithBytes:extendedPANID length:MTRSizeThreadExtendedPANID]
-                           masterKey:[NSData dataWithBytes:masterKey length:MTRSizeThreadMasterKey]
-                                PSKc:[NSData dataWithBytes:pskc length:MTRSizeThreadPSKc]
-                             channel:@(channel)
+                       extendedPANID:AsData(chip::ByteSpan(extendedPANID))
+                           masterKey:AsData(chip::ByteSpan(masterKey))
+                                PSKc:AsData(chip::ByteSpan(pskc))
+                       channelNumber:@(channel)
                                panID:[NSData dataWithBytes:&panID length:sizeof(uint16_t)]];
 }
 
 - (NSData *)data
 {
     chip::ByteSpan span = _cppThreadOperationalDataset.AsByteSpan();
-    return [NSData dataWithBytes:span.data() length:span.size()];
+    return AsData(span);
+}
+
+@end
+
+@implementation MTRThreadOperationalDataset (Deprecated)
+
+- (void)setChannel:(uint16_t)channel
+{
+    _channelNumber = @(channel);
+}
+
+- (uint16_t)channel
+{
+    return [self.channelNumber unsignedShortValue];
+}
+
+- (nullable instancetype)initWithNetworkName:(NSString *)networkName
+                               extendedPANID:(NSData *)extendedPANID
+                                   masterKey:(NSData *)masterKey
+                                        PSKc:(NSData *)PSKc
+                                     channel:(uint16_t)channel
+                                       panID:(NSData *)panID
+{
+    return [self initWithNetworkName:networkName
+                       extendedPANID:extendedPANID
+                           masterKey:masterKey
+                                PSKc:PSKc
+                       channelNumber:@(channel)
+                               panID:panID];
 }
 
 @end

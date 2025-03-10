@@ -23,13 +23,12 @@
  */
 #include <platform/internal/CHIPDeviceLayerInternal.h>
 
-#include <ble/CHIPBleServiceData.h>
+#include <ble/Ble.h>
+#include <lib/core/Global.h>
 #include <lib/support/logging/CHIPLogging.h>
 #include <platform/Darwin/BleApplicationDelegate.h>
 #include <platform/Darwin/BleConnectionDelegate.h>
 #include <platform/Darwin/BlePlatformDelegate.h>
-
-#include <new>
 
 #if CHIP_DEVICE_CONFIG_ENABLE_CHIPOBLE
 
@@ -40,7 +39,7 @@ namespace chip {
 namespace DeviceLayer {
 namespace Internal {
 
-BLEManagerImpl BLEManagerImpl::sInstance;
+Global<BLEManagerImpl> BLEManagerImpl::sInstance;
 
 CHIP_ERROR BLEManagerImpl::_Init()
 {
@@ -88,7 +87,21 @@ void BLEManagerImpl::_Shutdown()
     }
 }
 
-bool BLEManagerImpl::_IsAdvertisingEnabled(void)
+CHIP_ERROR BLEManagerImpl::StartScan(BleScannerDelegate * delegate, BleScanMode mode)
+{
+    VerifyOrReturnError(mConnectionDelegate != nullptr, CHIP_ERROR_INCORRECT_STATE);
+    static_cast<BleConnectionDelegateImpl *>(mConnectionDelegate)->StartScan(delegate, mode);
+    return CHIP_NO_ERROR;
+}
+
+CHIP_ERROR BLEManagerImpl::StopScan()
+{
+    VerifyOrReturnError(mConnectionDelegate != nullptr, CHIP_ERROR_INCORRECT_STATE);
+    static_cast<BleConnectionDelegateImpl *>(mConnectionDelegate)->StopScan();
+    return CHIP_NO_ERROR;
+}
+
+bool BLEManagerImpl::_IsAdvertisingEnabled()
 {
     ChipLogDetail(DeviceLayer, "%s", __FUNCTION__);
     return false;
@@ -106,7 +119,7 @@ CHIP_ERROR BLEManagerImpl::_SetAdvertisingMode(BLEAdvertisingMode mode)
     return CHIP_ERROR_UNSUPPORTED_CHIP_FEATURE;
 }
 
-bool BLEManagerImpl::_IsAdvertising(void)
+bool BLEManagerImpl::_IsAdvertising()
 {
     ChipLogDetail(DeviceLayer, "%s", __FUNCTION__);
     return false;
@@ -129,7 +142,7 @@ BleLayer * BLEManagerImpl::_GetBleLayer()
     return this;
 }
 
-uint16_t BLEManagerImpl::_NumConnections(void)
+uint16_t BLEManagerImpl::_NumConnections()
 {
     ChipLogDetail(DeviceLayer, "%s", __FUNCTION__);
     return 0;

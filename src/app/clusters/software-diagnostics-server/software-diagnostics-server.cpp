@@ -21,12 +21,12 @@
 #include <app-common/zap-generated/ids/Attributes.h>
 #include <app-common/zap-generated/ids/Clusters.h>
 #include <app/AttributeAccessInterface.h>
+#include <app/AttributeAccessInterfaceRegistry.h>
 #include <app/CommandHandler.h>
 #include <app/CommandHandlerInterface.h>
+#include <app/CommandHandlerInterfaceRegistry.h>
 #include <app/ConcreteCommandPath.h>
 #include <app/EventLogging.h>
-#include <app/InteractionModelEngine.h>
-#include <app/util/af.h>
 #include <app/util/attribute-storage.h>
 #include <lib/core/Optional.h>
 #include <platform/DiagnosticDataProvider.h>
@@ -41,11 +41,11 @@ using chip::DeviceLayer::GetDiagnosticDataProvider;
 
 namespace {
 
-class SoftwareDiagosticsAttrAccess : public AttributeAccessInterface
+class SoftwareDiagnosticsAttrAccess : public AttributeAccessInterface
 {
 public:
     // Register for the SoftwareDiagnostics cluster on all endpoints.
-    SoftwareDiagosticsAttrAccess() : AttributeAccessInterface(Optional<EndpointId>::Missing(), SoftwareDiagnostics::Id) {}
+    SoftwareDiagnosticsAttrAccess() : AttributeAccessInterface(Optional<EndpointId>::Missing(), SoftwareDiagnostics::Id) {}
 
     CHIP_ERROR Read(const ConcreteReadAttributePath & aPath, AttributeValueEncoder & aEncoder) override;
 
@@ -65,11 +65,11 @@ public:
     CHIP_ERROR EnumerateAcceptedCommands(const ConcreteClusterPath & cluster, CommandIdCallback callback, void * context) override;
 };
 
-SoftwareDiagosticsAttrAccess gAttrAccess;
+SoftwareDiagnosticsAttrAccess gAttrAccess;
 
 SoftwareDiagnosticsCommandHandler gCommandHandler;
 
-CHIP_ERROR SoftwareDiagosticsAttrAccess::Read(const ConcreteReadAttributePath & aPath, AttributeValueEncoder & aEncoder)
+CHIP_ERROR SoftwareDiagnosticsAttrAccess::Read(const ConcreteReadAttributePath & aPath, AttributeValueEncoder & aEncoder)
 {
     if (aPath.mClusterId != SoftwareDiagnostics::Id)
     {
@@ -88,11 +88,11 @@ CHIP_ERROR SoftwareDiagosticsAttrAccess::Read(const ConcreteReadAttributePath & 
     case ThreadMetrics::Id:
         return ReadThreadMetrics(aEncoder);
     case Clusters::Globals::Attributes::FeatureMap::Id: {
-        BitFlags<SoftwareDiagnosticsFeature> features;
+        BitFlags<Feature> features;
 
         if (DeviceLayer::GetDiagnosticDataProvider().SupportsWatermarks())
         {
-            features.Set(SoftwareDiagnosticsFeature::kWaterMarks);
+            features.Set(Feature::kWatermarks);
         }
 
         return aEncoder.Encode(features);
@@ -103,8 +103,8 @@ CHIP_ERROR SoftwareDiagosticsAttrAccess::Read(const ConcreteReadAttributePath & 
     return CHIP_NO_ERROR;
 }
 
-CHIP_ERROR SoftwareDiagosticsAttrAccess::ReadIfSupported(CHIP_ERROR (DiagnosticDataProvider::*getter)(uint64_t &),
-                                                         AttributeValueEncoder & aEncoder)
+CHIP_ERROR SoftwareDiagnosticsAttrAccess::ReadIfSupported(CHIP_ERROR (DiagnosticDataProvider::*getter)(uint64_t &),
+                                                          AttributeValueEncoder & aEncoder)
 {
     uint64_t data;
     CHIP_ERROR err = (DeviceLayer::GetDiagnosticDataProvider().*getter)(data);
@@ -120,7 +120,7 @@ CHIP_ERROR SoftwareDiagosticsAttrAccess::ReadIfSupported(CHIP_ERROR (DiagnosticD
     return aEncoder.Encode(data);
 }
 
-CHIP_ERROR SoftwareDiagosticsAttrAccess::ReadThreadMetrics(AttributeValueEncoder & aEncoder)
+CHIP_ERROR SoftwareDiagnosticsAttrAccess::ReadThreadMetrics(AttributeValueEncoder & aEncoder)
 {
     CHIP_ERROR err = CHIP_NO_ERROR;
     DeviceLayer::ThreadMetrics * threadMetrics;
@@ -220,16 +220,8 @@ void SoftwareDiagnosticsServer::OnSoftwareFaultDetect(const SoftwareDiagnostics:
 } // namespace app
 } // namespace chip
 
-bool emberAfSoftwareDiagnosticsClusterResetWatermarksCallback(app::CommandHandler * commandObj,
-                                                              const app::ConcreteCommandPath & commandPath,
-                                                              const Commands::ResetWatermarks::DecodableType & commandData)
-{
-    // Shouldn't be called at all.
-    return false;
-}
-
 void MatterSoftwareDiagnosticsPluginServerInitCallback()
 {
-    registerAttributeAccessOverride(&gAttrAccess);
-    InteractionModelEngine::GetInstance()->RegisterCommandHandler(&gCommandHandler);
+    AttributeAccessInterfaceRegistry::Instance().Register(&gAttrAccess);
+    CommandHandlerInterfaceRegistry::Instance().RegisterCommandHandler(&gCommandHandler);
 }

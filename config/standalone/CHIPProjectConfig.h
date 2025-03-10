@@ -26,8 +26,6 @@
 
 #define CHIP_CONFIG_EVENT_LOGGING_NUM_EXTERNAL_CALLBACKS 2
 
-#define CHIP_CONFIG_EVENT_LOGGING_EXTERNAL_EVENT_SUPPORT 1
-
 // Uncomment this for a large Tunnel MTU.
 // #define CHIP_CONFIG_TUNNEL_INTERFACE_MTU                           (9000)
 
@@ -39,7 +37,9 @@
 //    WARNING: This option makes it possible to circumvent basic chip security functionality.
 //    Because of this it SHOULD NEVER BE ENABLED IN PRODUCTION BUILDS.
 //
+#ifndef CHIP_DEVICE_CONFIG_ENABLE_TEST_SETUP_PARAMS
 #define CHIP_DEVICE_CONFIG_ENABLE_TEST_SETUP_PARAMS 1
+#endif
 
 // Enable reading DRBG seed data from /dev/(u)random.
 // This is needed for test applications and the CHIP device manager to function
@@ -59,8 +59,6 @@
 #define CHIP_CONFIG_ENABLE_UPDATE 1
 
 #define CHIP_SYSTEM_CONFIG_PACKETBUFFER_POOL_SIZE 0
-
-#define CHIP_CONFIG_DATA_MANAGEMENT_CLIENT_EXPERIMENTAL 1
 
 #ifndef CHIP_DEVICE_CONFIG_DYNAMIC_ENDPOINT_COUNT
 #define CHIP_DEVICE_CONFIG_DYNAMIC_ENDPOINT_COUNT 4

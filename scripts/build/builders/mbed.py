@@ -15,8 +15,9 @@
 import os
 import shlex
 from enum import Enum, auto
+from typing import Optional
 
-from .builder import Builder
+from .builder import Builder, BuilderOutput
 
 
 class MbedApp(Enum):
@@ -26,6 +27,7 @@ class MbedApp(Enum):
     ALL_CLUSTERS_MINIMAL = auto()
     PIGWEED = auto()
     SHELL = auto()
+    OTA_REQUESTOR = auto()
 
     @property
     def ExampleName(self):
@@ -39,6 +41,8 @@ class MbedApp(Enum):
             return 'all-clusters-minimal-app'
         elif self == MbedApp.PIGWEED:
             return 'pigweed-app'
+        elif self == MbedApp.OTA_REQUESTOR:
+            return 'ota-requestor-app'
         elif self == MbedApp.SHELL:
             return 'shell'
         else:
@@ -56,6 +60,8 @@ class MbedApp(Enum):
             return 'chip-mbed-all-clusters-minimal-app-example'
         elif self == MbedApp.PIGWEED:
             return 'chip-mbed-pigweed-app-example'
+        elif self == MbedApp.OTA_REQUESTOR:
+            return 'chip-mbed-ota-requestor-app-example'
         elif self == MbedApp.SHELL:
             return 'chip-mbed-shell-example'
         else:
@@ -96,7 +102,8 @@ class MbedBuilder(Builder):
                  runner,
                  app: MbedApp = MbedApp.LOCK,
                  board: MbedBoard = MbedBoard.CY8CPROTO_062_4343W,
-                 profile: MbedProfile = MbedProfile.RELEASE):
+                 profile: MbedProfile = MbedProfile.RELEASE,
+                 ):
         super(MbedBuilder, self).__init__(root, runner)
         self.app = app
         self.board = board
@@ -121,14 +128,16 @@ class MbedBuilder(Builder):
                            '--mbed-os-path', self.mbed_os_path,
                            ], title='Generating config ' + self.identifier)
 
-            self._Execute(['cmake', '-S', shlex.quote(self.ExamplePath), '-B', shlex.quote(self.output_dir), '-GNinja',
-                           '-DCMAKE_BUILD_TYPE={}'.format(
-                               self.profile.ProfileName.lower()),
-                           '-DMBED_OS_PATH={}'.format(
-                               shlex.quote(self.mbed_os_path)),
-                           '-DMBED_OS_POSIX_SOCKET_PATH={}'.format(
-                               shlex.quote(self.mbed_os_posix_socket_path)),
-                           ], title='Generating ' + self.identifier)
+            flags = []
+            flags.append(f"-DMBED_OS_PATH={shlex.quote(self.mbed_os_path)}")
+            flags.append(f"-DMBED_OS_PATH={shlex.quote(self.mbed_os_path)}")
+            flags.append(f"-DMBED_OS_POSIX_SOCKET_PATH={shlex.quote(self.mbed_os_posix_socket_path)}")
+
+            if self.options.pregen_dir:
+                flags.append(f"-DCHIP_CODEGEN_PREGEN_DIR={shlex.quote(self.options.pregen_dir)}")
+
+            self._Execute(['cmake', '-S', shlex.quote(self.ExamplePath), '-B', shlex.quote(self.output_dir),
+                          '-GNinja'] + flags, title='Generating ' + self.identifier)
 
     def _build(self):
         # Remove old artifacts to force linking
@@ -140,12 +149,9 @@ class MbedBuilder(Builder):
                       title='Building ' + self.identifier)
 
     def build_outputs(self):
-        return {
-            self.app.AppNamePrefix + '.elf':
-                os.path.join(self.output_dir, self.app.AppNamePrefix + '.elf'),
-            self.app.AppNamePrefix + '.hex':
-                os.path.join(self.output_dir, self.app.AppNamePrefix + '.hex'),
-            self.app.AppNamePrefix + '.map':
-                os.path.join(self.output_dir,
-                             self.app.AppNamePrefix + '.elf.map'),
-        }
+        extensions = ['elf', 'hex']
+        if self.options.enable_link_map_file:
+            extensions.append('elf.map')
+        for ext in extensions:
+            name = f"{self.app.AppNamePrefix()}.{ext}"
+            yield BuilderOutput(os.path.join(self.output_dir, name), name)

@@ -20,11 +20,9 @@
 #include <app-common/zap-generated/cluster-objects.h>
 #include <app-common/zap-generated/ids/Attributes.h>
 #include <app-common/zap-generated/ids/Clusters.h>
-#include <app/AttributeAccessInterface.h>
 #include <app/CommandHandler.h>
 #include <app/ConcreteCommandPath.h>
 #include <app/EventLogging.h>
-#include <app/util/af.h>
 #include <app/util/attribute-storage.h>
 #include <lib/core/Optional.h>
 #include <platform/DeviceControlServer.h>
@@ -135,13 +133,13 @@ void SwitchServer::OnMultiPressOngoing(EndpointId endpoint, uint8_t newPosition,
     }
 }
 
-void SwitchServer::OnMultiPressComplete(EndpointId endpoint, uint8_t newPosition, uint8_t count)
+void SwitchServer::OnMultiPressComplete(EndpointId endpoint, uint8_t previousPosition, uint8_t count)
 {
     ChipLogProgress(Zcl, "SwitchServer: OnMultiPressComplete");
 
     // Record MultiPressComplete event
     EventNumber eventNumber;
-    Events::MultiPressComplete::Type event{ newPosition, count };
+    Events::MultiPressComplete::Type event{ previousPosition, count };
 
     if (CHIP_NO_ERROR != LogEvent(event, endpoint, eventNumber))
     {

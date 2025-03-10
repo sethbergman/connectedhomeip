@@ -29,19 +29,23 @@ namespace Dnssd {
  * Matter DNS host settings
  */
 
-constexpr size_t kHostNameMaxLength = 16; // MAC or 802.15.4 Extended Address in hex
+// Matter spec expects hostname to be MAC or 802.15.4 Extended Address in hex.
+// But in latest android nsdManager, it would set hostname with 40 bytes with prefix as android_,
+// and there is no existing API to update the hostname, therefore we put temporary workaround with 40 bytes.
+// Follow-up with ticket issue https://github.com/project-chip/connectedhomeip/issues/33474
+inline constexpr size_t kHostNameMaxLength = 40;
+//
 
 /*
  * Matter DNS service subtypes
  */
 
-constexpr size_t kSubTypeShortDiscriminatorMaxLength      = 4;  // _S<dd>
-constexpr size_t kSubTypeLongDiscriminatorMaxLength       = 6;  // _L<dddd>
-constexpr size_t kSubTypeVendorIdMaxLength                = 7;  // _V<ddddd>
-constexpr size_t kSubTypeDeviceTypeMaxLength              = 12; // _T<dddddddddd>
-constexpr size_t kSubTypeCommissioningModeMaxLength       = 3;  // _C<d>
-constexpr size_t kSubTypeAdditionalCommissioningMaxLength = 3;  // _A<d>
-constexpr size_t kSubTypeCompressedFabricIdMaxLength      = 18; // _I<16-hex-digits>
+inline constexpr size_t kSubTypeShortDiscriminatorMaxLength = 4;  // _S<dd>
+inline constexpr size_t kSubTypeLongDiscriminatorMaxLength  = 6;  // _L<dddd>
+inline constexpr size_t kSubTypeVendorIdMaxLength           = 7;  // _V<ddddd>
+inline constexpr size_t kSubTypeDeviceTypeMaxLength         = 12; // _T<dddddddddd>
+inline constexpr size_t kSubTypeCommissioningModeMaxLength  = 3;  // _CM
+inline constexpr size_t kSubTypeCompressedFabricIdMaxLength = 18; // _I<16-hex-digits>
 
 /*
  * Matter operational node service settings
@@ -51,10 +55,10 @@ namespace Operational {
 
 #define SUBTYPES (std::initializer_list<size_t>{ kSubTypeCompressedFabricIdMaxLength })
 
-constexpr size_t kInstanceNameMaxLength = 33; // <NodeId>-<FabricId> in hex (16 + 1 + 16)
-constexpr size_t kSubTypeMaxNumber      = SUBTYPES.size();
-constexpr size_t kSubTypeMaxLength      = std::max(SUBTYPES);
-constexpr size_t kSubTypeTotalLength    = chip::Sum(SUBTYPES);
+inline constexpr size_t kInstanceNameMaxLength = 33; // <NodeId>-<FabricId> in hex (16 + 1 + 16)
+inline constexpr size_t kSubTypeMaxNumber      = SUBTYPES.size();
+inline constexpr size_t kSubTypeMaxLength      = std::max(SUBTYPES);
+inline constexpr size_t kSubTypeTotalLength    = chip::Sum(SUBTYPES);
 
 #undef SUBTYPES
 
@@ -68,13 +72,12 @@ namespace Commission {
 
 #define SUBTYPES                                                                                                                   \
     (std::initializer_list<size_t>{ kSubTypeShortDiscriminatorMaxLength, kSubTypeLongDiscriminatorMaxLength,                       \
-                                    kSubTypeVendorIdMaxLength, kSubTypeDeviceTypeMaxLength, kSubTypeCommissioningModeMaxLength,    \
-                                    kSubTypeAdditionalCommissioningMaxLength })
+                                    kSubTypeVendorIdMaxLength, kSubTypeDeviceTypeMaxLength, kSubTypeCommissioningModeMaxLength })
 
-constexpr size_t kInstanceNameMaxLength = 16; // 64-bit random number in hex
-constexpr size_t kSubTypeMaxNumber      = SUBTYPES.size();
-constexpr size_t kSubTypeMaxLength      = std::max(SUBTYPES);
-constexpr size_t kSubTypeTotalLength    = chip::Sum(SUBTYPES);
+inline constexpr size_t kInstanceNameMaxLength = 16; // 64-bit random number in hex
+inline constexpr size_t kSubTypeMaxNumber      = SUBTYPES.size();
+inline constexpr size_t kSubTypeMaxLength      = std::max(SUBTYPES);
+inline constexpr size_t kSubTypeTotalLength    = chip::Sum(SUBTYPES);
 
 #undef SUBTYPES
 
@@ -86,10 +89,10 @@ constexpr size_t kSubTypeTotalLength    = chip::Sum(SUBTYPES);
 
 namespace Common {
 
-constexpr size_t kInstanceNameMaxLength = std::max(Operational::kInstanceNameMaxLength, Commission::kInstanceNameMaxLength);
-constexpr size_t kSubTypeMaxNumber      = std::max(Operational::kSubTypeMaxNumber, Commission::kSubTypeMaxNumber);
-constexpr size_t kSubTypeMaxLength      = std::max(Operational::kSubTypeMaxLength, Commission::kSubTypeMaxLength);
-constexpr size_t kSubTypeTotalLength    = std::max(Operational::kSubTypeTotalLength, Commission::kSubTypeTotalLength);
+inline constexpr size_t kInstanceNameMaxLength = std::max(Operational::kInstanceNameMaxLength, Commission::kInstanceNameMaxLength);
+inline constexpr size_t kSubTypeMaxNumber      = std::max(Operational::kSubTypeMaxNumber, Commission::kSubTypeMaxNumber);
+inline constexpr size_t kSubTypeMaxLength      = std::max(Operational::kSubTypeMaxLength, Commission::kSubTypeMaxLength);
+inline constexpr size_t kSubTypeTotalLength    = std::max(Operational::kSubTypeTotalLength, Commission::kSubTypeTotalLength);
 
 } // namespace Common
 

@@ -26,8 +26,8 @@
 
 namespace chip {
 namespace app {
-#if CHIP_CONFIG_IM_ENABLE_SCHEMA_CHECK
-CHIP_ERROR InvokeRequests::Parser::CheckSchemaValidity() const
+#if CHIP_CONFIG_IM_PRETTY_PRINT
+CHIP_ERROR InvokeRequests::Parser::PrettyPrint() const
 {
     CHIP_ERROR err         = CHIP_NO_ERROR;
     size_t numCommandDatas = 0;
@@ -46,7 +46,7 @@ CHIP_ERROR InvokeRequests::Parser::CheckSchemaValidity() const
             CommandDataIB::Parser commandData;
             ReturnErrorOnFailure(commandData.Init(reader));
             PRETTY_PRINT_INCDEPTH();
-            ReturnErrorOnFailure(commandData.CheckSchemaValidity());
+            ReturnErrorOnFailure(commandData.PrettyPrint());
             PRETTY_PRINT_DECDEPTH();
         }
 
@@ -68,7 +68,15 @@ CHIP_ERROR InvokeRequests::Parser::CheckSchemaValidity() const
     ReturnErrorOnFailure(err);
     return reader.ExitContainer(mOuterContainerType);
 }
-#endif // CHIP_CONFIG_IM_ENABLE_SCHEMA_CHECK
+#endif // CHIP_CONFIG_IM_PRETTY_PRINT
+
+CHIP_ERROR InvokeRequests::Builder::InitWithEndBufferReserved(TLV::TLVWriter * const apWriter, const uint8_t aContextTagToUse)
+{
+    ReturnErrorOnFailure(Init(apWriter, aContextTagToUse));
+    ReturnErrorOnFailure(GetWriter()->ReserveBuffer(GetSizeToEndInvokeRequests()));
+    mIsEndBufferReserved = true;
+    return CHIP_NO_ERROR;
+}
 
 CommandDataIB::Builder & InvokeRequests::Builder::CreateCommandData()
 {
@@ -79,10 +87,24 @@ CommandDataIB::Builder & InvokeRequests::Builder::CreateCommandData()
     return mCommandData;
 }
 
-InvokeRequests::Builder & InvokeRequests::Builder::EndOfInvokeRequests()
+CHIP_ERROR InvokeRequests::Builder::EndOfInvokeRequests()
 {
+    // If any changes are made to how we end the invoke requests that involves how many bytes are
+    // needed, a corresponding change to GetSizeToEndInvokeRequests indicating the new size that
+    // will be required.
+    if (mIsEndBufferReserved)
+    {
+        ReturnErrorOnFailure(GetWriter()->UnreserveBuffer(GetSizeToEndInvokeRequests()));
+        mIsEndBufferReserved = false;
+    }
     EndOfContainer();
-    return *this;
+    return GetError();
+}
+
+uint32_t InvokeRequests::Builder::GetSizeToEndInvokeRequests()
+{
+    uint32_t kEndOfContainerSize = 1;
+    return kEndOfContainerSize;
 }
 } // namespace app
 } // namespace chip

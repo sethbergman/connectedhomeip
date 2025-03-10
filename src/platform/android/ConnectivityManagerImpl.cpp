@@ -46,7 +46,6 @@
 #endif
 
 using namespace ::chip;
-using namespace ::chip::TLV;
 using namespace ::chip::DeviceLayer::Internal;
 
 namespace chip {
@@ -213,15 +212,6 @@ void ConnectivityManagerImpl::DriveAPState(::chip::System::Layer * aLayer, void 
     sInstance.DriveAPState();
 }
 #endif // CHIP_DEVICE_CONFIG_ENABLE_WPA
-
-CHIP_ERROR ConnectivityManagerImpl::ProvisionWiFiNetwork(const char * ssid, const char * key)
-{
-#if CHIP_DEVICE_CONFIG_ENABLE_WPA
-    return CHIP_NO_ERROR;
-#else
-    return CHIP_ERROR_NOT_IMPLEMENTED;
-#endif
-}
 
 } // namespace DeviceLayer
 } // namespace chip

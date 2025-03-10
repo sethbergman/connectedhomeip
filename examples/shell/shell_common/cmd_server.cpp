@@ -25,9 +25,10 @@
 #include <lib/support/CodeUtils.h>
 
 #include <app/server/Server.h>
-#include <app/util/af.h>
 #include <app/util/attribute-storage.h>
+#include <app/util/endpoint-config-api.h>
 #include <credentials/examples/DeviceAttestationCredsExample.h>
+#include <data-model-providers/codegen/Instance.h>
 
 #include <transport/Session.h>
 
@@ -58,6 +59,7 @@ static CHIP_ERROR CmdAppServerStart(int argc, char ** argv)
     // Init ZCL Data Model and CHIP App Server
     static chip::CommonCaseDeviceServerInitParams initParams;
     (void) initParams.InitializeStaticResourcesBeforeServerInit();
+    initParams.dataModelProvider             = app::CodegenDataModelProviderInstance(initParams.persistentStorageDelegate);
     initParams.operationalServicePort        = sServerPortOperational;
     initParams.userDirectedCommissioningPort = sServerPortCommissioning;
 
@@ -119,17 +121,18 @@ static bool PrintServerSession(void * context, SessionHandle & session)
     case Session::SessionType::kSecure: {
         SecureSession * secureSession         = session->AsSecureSession();
         SecureSession::Type secureSessionType = secureSession->GetSecureSessionType();
-        streamer_printf(
-            streamer_get(), "session type=SECURE %s id=0x%04x peerSessionId=0x%04x peerNodeId=0x%016" PRIx64 " fabricIdx=%d\r\n",
-            secureSessionType == SecureSession::Type::kCASE ? "CASE" : "PASE", secureSession->GetLocalSessionId(),
-            secureSession->AsSecureSession()->GetPeerSessionId(), secureSession->GetPeerNodeId(), secureSession->GetFabricIndex());
+        streamer_printf(streamer_get(),
+                        "session type=SECURE %s id=0x%04x peerSessionId=0x%04x peerNodeId=0x" ChipLogFormatX64 " fabricIdx=%d\r\n",
+                        secureSessionType == SecureSession::Type::kCASE ? "CASE" : "PASE", secureSession->GetLocalSessionId(),
+                        secureSession->AsSecureSession()->GetPeerSessionId(), ChipLogValueX64(secureSession->GetPeerNodeId()),
+                        secureSession->GetFabricIndex());
         break;
     }
 
     case Session::SessionType::kUnauthenticated: {
         UnauthenticatedSession * unsecuredSession = session->AsUnauthenticatedSession();
-        streamer_printf(streamer_get(), "session type=UNSECURED id=0x0000 peerNodeId=0x%016" PRIx64 "\r\n",
-                        unsecuredSession->GetPeerNodeId());
+        streamer_printf(streamer_get(), "session type=UNSECURED id=0x0000 peerNodeId=0x" ChipLogFormatX64 "\r\n",
+                        ChipLogValueX64(unsecuredSession->GetPeerNodeId()));
         break;
     }
 
@@ -170,7 +173,7 @@ static CHIP_ERROR CmdAppServerClusters(int argc, char ** argv)
 {
     bool server = true;
 
-    for (int i = 0; i < emberAfEndpointCount(); i++)
+    for (uint16_t i = 0; i < emberAfEndpointCount(); i++)
     {
         EndpointId endpoint = emberAfEndpointFromIndex(i);
 
@@ -190,7 +193,7 @@ static CHIP_ERROR CmdAppServerClusters(int argc, char ** argv)
 
 static CHIP_ERROR CmdAppServerEndpoints(int argc, char ** argv)
 {
-    for (int i = 0; i < emberAfEndpointCount(); i++)
+    for (uint16_t i = 0; i < emberAfEndpointCount(); i++)
     {
         EndpointId endpoint = emberAfEndpointFromIndex(i);
 
@@ -240,7 +243,7 @@ void cmd_app_server_init()
     std::atexit(CmdAppServerAtExit);
 
     // Register `server` subcommands with the local shell dispatcher.
-    sShellServerSubcommands.RegisterCommands(sServerSubCommands, ArraySize(sServerSubCommands));
+    sShellServerSubcommands.RegisterCommands(sServerSubCommands, MATTER_ARRAY_SIZE(sServerSubCommands));
 
     // Register the root `server` command with the top-level shell.
     Engine::Root().RegisterCommands(&sServerComand, 1);

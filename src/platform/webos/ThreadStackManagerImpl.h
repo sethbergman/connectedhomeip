@@ -20,13 +20,12 @@
 #include <memory>
 #include <vector>
 
-#include <app/AttributeAccessInterface.h>
 #include <lib/support/ThreadOperationalDataset.h>
+#include <platform/GLibTypeDeleter.h>
 #include <platform/NetworkCommissioning.h>
 #include <platform/internal/CHIPDeviceLayerInternal.h>
 #include <platform/internal/DeviceNetworkInfo.h>
-#include <platform/webos/GlibTypeDeleter.h>
-#include <platform/webos/dbus/openthread/introspect.h>
+#include <platform/webos/dbus/openthread/DBusOpenthread.h>
 
 namespace chip {
 namespace DeviceLayer {
@@ -49,6 +48,11 @@ public:
     void _LockThreadStack() {}                              // Intentionally left blank
     bool _TryLockThreadStack() { return false; }            // Intentionally left blank
     void _UnlockThreadStack() {}                            // Intentionally left blank
+
+#if CHIP_DEVICE_CONFIG_ENABLE_THREAD_SRP_CLIENT
+    void _WaitOnSrpClearAllComplete() {}
+    void _NotifySrpClearAllComplete() {}
+#endif // CHIP_DEVICE_CONFIG_ENABLE_THREAD_SRP_CLIENT
 
     bool _HaveRouteToAddress(const Inet::IPAddress & destAddr);
 
@@ -86,12 +90,6 @@ public:
 
     CHIP_ERROR _SetThreadDeviceType(ConnectivityManager::ThreadDeviceType deviceType);
 
-#if CHIP_DEVICE_CONFIG_ENABLE_SED
-    CHIP_ERROR _GetSEDPollingConfig(ConnectivityManager::SEDPollingConfig & pollingConfig);
-    CHIP_ERROR _SetSEDPollingConfig(const ConnectivityManager::SEDPollingConfig & pollingConfig);
-    CHIP_ERROR _RequestSEDFastPollingMode(bool onOff);
-#endif
-
     bool _HaveMeshConnectivity();
 
     CHIP_ERROR _GetAndLogThreadStatsCounters();
@@ -103,14 +101,10 @@ public:
     CHIP_ERROR _GetPrimary802154MACAddress(uint8_t * buf);
 
     CHIP_ERROR _GetExternalIPv6Address(chip::Inet::IPAddress & addr);
-
+    CHIP_ERROR _GetThreadVersion(uint16_t & version);
     CHIP_ERROR _GetPollPeriod(uint32_t & buf);
 
-    CHIP_ERROR _JoinerStart();
-
     void _ResetThreadNetworkDiagnosticsCounts();
-
-    CHIP_ERROR _WriteThreadNetworkDiagnosticAttributeToTlv(AttributeId attributeId, app::AttributeValueEncoder & encoder);
 
     CHIP_ERROR _StartThreadScan(NetworkCommissioning::ThreadDriver::ScanCallback * callback);
 
@@ -147,7 +141,7 @@ private:
 
     static void OnDbusPropertiesChanged(OpenthreadIoOpenthreadBorderRouter * proxy, GVariant * changed_properties,
                                         const gchar * const * invalidated_properties, gpointer user_data);
-    void ThreadDevcieRoleChangedHandler(const gchar * role);
+    void ThreadDeviceRoleChangedHandler(const gchar * role);
 
     Thread::OperationalDataset mDataset = {};
 

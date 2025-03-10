@@ -23,10 +23,10 @@
 #include "StructBuilder.h"
 #include "StructParser.h"
 
-#include <app/AppBuildConfig.h>
+#include <app/AppConfig.h>
 #include <app/util/basic-types.h>
 #include <lib/core/CHIPCore.h>
-#include <lib/core/CHIPTLV.h>
+#include <lib/core/TLV.h>
 #include <lib/support/CodeUtils.h>
 #include <lib/support/logging/CHIPLogging.h>
 
@@ -37,27 +37,15 @@ enum class Tag : uint8_t
 {
     kPath   = 0,
     kFields = 1,
+    kRef    = 2,
 };
 
 class Parser : public StructParser
 {
 public:
-#if CHIP_CONFIG_IM_ENABLE_SCHEMA_CHECK
-    /**
-     *  @brief Roughly verify the message is correctly formed
-     *   1) all mandatory tags are present
-     *   2) all elements have expected data type
-     *   3) any tag can only appear once
-     *   4) At the top level of the structure, unknown tags are ignored for forward compatibility
-     *  @note The main use of this function is to print out what we're
-     *    receiving during protocol development and debugging.
-     *    The encoding rule has changed in IM encoding spec so this
-     *    check is only "roughly" conformant now.
-     *
-     *  @return #CHIP_NO_ERROR on success
-     */
-    CHIP_ERROR CheckSchemaValidity() const;
-#endif
+#if CHIP_CONFIG_IM_PRETTY_PRINT
+    CHIP_ERROR PrettyPrint() const;
+#endif // CHIP_CONFIG_IM_PRETTY_PRINT
 
     /**
      *  @brief Get a TLVReader for the CommandPathIB. Next() must be called before accessing them.
@@ -79,6 +67,17 @@ public:
      *          #CHIP_END_OF_TLV if there is no such element
      */
     CHIP_ERROR GetFields(TLV::TLVReader * const apReader) const;
+
+    /**
+     *  @brief Get the provided command reference associated with the CommandData
+     *
+     *  @param [out] apRef    A pointer to apRef
+     *
+     *  @return #CHIP_NO_ERROR on success
+     *          #CHIP_ERROR_WRONG_TLV_TYPE if there is such element but it's not any of the defined unsigned integer types
+     *          #CHIP_END_OF_TLV if there is no such element
+     */
+    CHIP_ERROR GetRef(uint16_t * const apRef) const;
 };
 
 class Builder : public StructBuilder
@@ -92,11 +91,21 @@ public:
     CommandPathIB::Builder & CreatePath();
 
     /**
+     *  @brief Inject Command Ref into the TLV stream.
+     *
+     *  @param [in] aRef refer to the CommandRef to set in CommandDataIB.
+     *
+     *  TODO What are some more errors
+     *  @return #CHIP_NO_ERROR on success
+     */
+    CHIP_ERROR Ref(const uint16_t aRef);
+
+    /**
      *  @brief Mark the end of this CommandDataIB
      *
-     *  @return A reference to *this
+     *  @return The builder's final status.
      */
-    CommandDataIB::Builder & EndOfCommandDataIB();
+    CHIP_ERROR EndOfCommandDataIB();
 
 private:
     CommandPathIB::Builder mPath;

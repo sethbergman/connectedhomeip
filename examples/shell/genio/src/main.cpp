@@ -20,7 +20,7 @@
 #include <lib/support/CHIPMem.h>
 #include <lib/support/CHIPPlatformMemory.h>
 #include <platform/CHIPDeviceLayer.h>
-//#include <lib/support/logging/CHIPLogging.h>
+// #include <lib/support/logging/CHIPLogging.h>
 
 #include <mbedtls/platform.h>
 
@@ -161,7 +161,7 @@ void vStartTask(void * pvParameters)
  * Main Function
  ****************************************************************************/
 
-extern "C" int main(void)
+int main(void)
 {
     mbedtls_platform_set_calloc_free(CHIPPlatformMemoryCalloc, CHIPPlatformMemoryFree);
 

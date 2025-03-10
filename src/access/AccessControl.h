@@ -18,12 +18,19 @@
 
 #pragma once
 
+#include <access/AccessConfig.h>
+
+#if CHIP_CONFIG_USE_ACCESS_RESTRICTIONS
+#include "AccessRestrictionProvider.h"
+#endif
+
 #include "Privilege.h"
 #include "RequestPath.h"
 #include "SubjectDescriptor.h"
 
-#include "lib/support/CodeUtils.h"
 #include <lib/core/CHIPCore.h>
+#include <lib/core/Global.h>
+#include <lib/support/CodeUtils.h>
 
 // Dump function for use during development only (0 for disabled, non-zero for enabled).
 #define CHIP_ACCESS_CONTROL_DUMP_ENABLED 0
@@ -70,7 +77,7 @@ public:
         public:
             Delegate() = default;
 
-            Delegate(const Delegate &) = delete;
+            Delegate(const Delegate &)             = delete;
             Delegate & operator=(const Delegate &) = delete;
 
             virtual ~Delegate() = default;
@@ -78,41 +85,33 @@ public:
             virtual void Release() {}
 
             // Simple getters
-            virtual CHIP_ERROR GetAuthMode(AuthMode & authMode) const { return CHIP_NO_ERROR; }
-            virtual CHIP_ERROR GetFabricIndex(FabricIndex & fabricIndex) const { return CHIP_NO_ERROR; }
-            virtual CHIP_ERROR GetPrivilege(Privilege & privilege) const { return CHIP_NO_ERROR; }
+            virtual CHIP_ERROR GetAuthMode(AuthMode & authMode) const { return CHIP_ERROR_NOT_IMPLEMENTED; }
+            virtual CHIP_ERROR GetFabricIndex(FabricIndex & fabricIndex) const { return CHIP_ERROR_NOT_IMPLEMENTED; }
+            virtual CHIP_ERROR GetPrivilege(Privilege & privilege) const { return CHIP_ERROR_NOT_IMPLEMENTED; }
 
             // Simple setters
-            virtual CHIP_ERROR SetAuthMode(AuthMode authMode) { return CHIP_NO_ERROR; }
-            virtual CHIP_ERROR SetFabricIndex(FabricIndex fabricIndex) { return CHIP_NO_ERROR; }
-            virtual CHIP_ERROR SetPrivilege(Privilege privilege) { return CHIP_NO_ERROR; }
+            virtual CHIP_ERROR SetAuthMode(AuthMode authMode) { return CHIP_ERROR_NOT_IMPLEMENTED; }
+            virtual CHIP_ERROR SetFabricIndex(FabricIndex fabricIndex) { return CHIP_ERROR_NOT_IMPLEMENTED; }
+            virtual CHIP_ERROR SetPrivilege(Privilege privilege) { return CHIP_ERROR_NOT_IMPLEMENTED; }
 
             // Subjects
-            virtual CHIP_ERROR GetSubjectCount(size_t & count) const
-            {
-                count = 0;
-                return CHIP_NO_ERROR;
-            }
-            virtual CHIP_ERROR GetSubject(size_t index, NodeId & subject) const { return CHIP_NO_ERROR; }
-            virtual CHIP_ERROR SetSubject(size_t index, NodeId subject) { return CHIP_NO_ERROR; }
-            virtual CHIP_ERROR AddSubject(size_t * index, NodeId subject) { return CHIP_NO_ERROR; }
-            virtual CHIP_ERROR RemoveSubject(size_t index) { return CHIP_NO_ERROR; }
+            virtual CHIP_ERROR GetSubjectCount(size_t & count) const { return CHIP_ERROR_NOT_IMPLEMENTED; }
+            virtual CHIP_ERROR GetSubject(size_t index, NodeId & subject) const { return CHIP_ERROR_NOT_IMPLEMENTED; }
+            virtual CHIP_ERROR SetSubject(size_t index, NodeId subject) { return CHIP_ERROR_NOT_IMPLEMENTED; }
+            virtual CHIP_ERROR AddSubject(size_t * index, NodeId subject) { return CHIP_ERROR_NOT_IMPLEMENTED; }
+            virtual CHIP_ERROR RemoveSubject(size_t index) { return CHIP_ERROR_NOT_IMPLEMENTED; }
 
             // Targets
-            virtual CHIP_ERROR GetTargetCount(size_t & count) const
-            {
-                count = 0;
-                return CHIP_NO_ERROR;
-            }
-            virtual CHIP_ERROR GetTarget(size_t index, Target & target) const { return CHIP_NO_ERROR; }
-            virtual CHIP_ERROR SetTarget(size_t index, const Target & target) { return CHIP_NO_ERROR; }
-            virtual CHIP_ERROR AddTarget(size_t * index, const Target & target) { return CHIP_NO_ERROR; }
-            virtual CHIP_ERROR RemoveTarget(size_t index) { return CHIP_NO_ERROR; }
+            virtual CHIP_ERROR GetTargetCount(size_t & count) const { return CHIP_ERROR_NOT_IMPLEMENTED; }
+            virtual CHIP_ERROR GetTarget(size_t index, Target & target) const { return CHIP_ERROR_NOT_IMPLEMENTED; }
+            virtual CHIP_ERROR SetTarget(size_t index, const Target & target) { return CHIP_ERROR_NOT_IMPLEMENTED; }
+            virtual CHIP_ERROR AddTarget(size_t * index, const Target & target) { return CHIP_ERROR_NOT_IMPLEMENTED; }
+            virtual CHIP_ERROR RemoveTarget(size_t index) { return CHIP_ERROR_NOT_IMPLEMENTED; }
         };
 
         Entry() = default;
 
-        Entry(Entry && other) : mDelegate(other.mDelegate) { other.mDelegate = &mDefaultDelegate; }
+        Entry(Entry && other) : mDelegate(other.mDelegate) { other.mDelegate = &mDefaultDelegate.get(); }
 
         Entry & operator=(Entry && other)
         {
@@ -120,12 +119,12 @@ public:
             {
                 mDelegate->Release();
                 mDelegate       = other.mDelegate;
-                other.mDelegate = &mDefaultDelegate;
+                other.mDelegate = &mDefaultDelegate.get();
             }
             return *this;
         }
 
-        Entry(const Entry &) = delete;
+        Entry(const Entry &)             = delete;
         Entry & operator=(const Entry &) = delete;
 
         ~Entry() { mDelegate->Release(); }
@@ -216,7 +215,7 @@ public:
          */
         CHIP_ERROR RemoveTarget(size_t index) { return mDelegate->RemoveTarget(index); }
 
-        bool HasDefaultDelegate() const { return mDelegate == &mDefaultDelegate; }
+        bool HasDefaultDelegate() const { return mDelegate == &mDefaultDelegate.get(); }
 
         const Delegate & GetDelegate() const { return *mDelegate; }
 
@@ -231,12 +230,12 @@ public:
         void ResetDelegate()
         {
             mDelegate->Release();
-            mDelegate = &mDefaultDelegate;
+            mDelegate = &mDefaultDelegate.get();
         }
 
     private:
-        static Delegate mDefaultDelegate;
-        Delegate * mDelegate = &mDefaultDelegate;
+        static Global<Delegate> mDefaultDelegate;
+        Delegate * mDelegate = &mDefaultDelegate.get();
     };
 
     /**
@@ -252,7 +251,7 @@ public:
         public:
             Delegate() = default;
 
-            Delegate(const Delegate &) = delete;
+            Delegate(const Delegate &)             = delete;
             Delegate & operator=(const Delegate &) = delete;
 
             virtual ~Delegate() = default;
@@ -264,7 +263,7 @@ public:
 
         EntryIterator() = default;
 
-        EntryIterator(const EntryIterator &) = delete;
+        EntryIterator(const EntryIterator &)             = delete;
         EntryIterator & operator=(const EntryIterator &) = delete;
 
         ~EntryIterator() { mDelegate->Release(); }
@@ -284,12 +283,12 @@ public:
         void ResetDelegate()
         {
             mDelegate->Release();
-            mDelegate = &mDefaultDelegate;
+            mDelegate = &mDefaultDelegate.get();
         }
 
     private:
-        static Delegate mDefaultDelegate;
-        Delegate * mDelegate = &mDefaultDelegate;
+        static Global<Delegate> mDefaultDelegate;
+        Delegate * mDelegate = &mDefaultDelegate.get();
     };
 
     /**
@@ -334,7 +333,7 @@ public:
     public:
         Delegate() = default;
 
-        Delegate(const Delegate &) = delete;
+        Delegate(const Delegate &)             = delete;
         Delegate & operator=(const Delegate &) = delete;
 
         virtual ~Delegate() = default;
@@ -407,7 +406,7 @@ public:
 
     AccessControl() = default;
 
-    AccessControl(const AccessControl &) = delete;
+    AccessControl(const AccessControl &)             = delete;
     AccessControl & operator=(const AccessControl &) = delete;
 
     ~AccessControl()
@@ -502,7 +501,7 @@ public:
      */
     CHIP_ERROR CreateEntry(size_t * index, const Entry & entry, FabricIndex * fabricIndex = nullptr)
     {
-        ReturnErrorCodeIf(!IsValid(entry), CHIP_ERROR_INVALID_ARGUMENT);
+        VerifyOrReturnError(IsValid(entry), CHIP_ERROR_INVALID_ARGUMENT);
         VerifyOrReturnError(IsInitialized(), CHIP_ERROR_INCORRECT_STATE);
         return mDelegate->CreateEntry(index, entry, fabricIndex);
     }
@@ -552,7 +551,7 @@ public:
      */
     CHIP_ERROR UpdateEntry(size_t index, const Entry & entry, const FabricIndex * fabricIndex = nullptr)
     {
-        ReturnErrorCodeIf(!IsValid(entry), CHIP_ERROR_INVALID_ARGUMENT);
+        VerifyOrReturnError(IsValid(entry), CHIP_ERROR_INVALID_ARGUMENT);
         VerifyOrReturnError(IsInitialized(), CHIP_ERROR_INCORRECT_STATE);
         return mDelegate->UpdateEntry(index, entry, fabricIndex);
     }
@@ -634,9 +633,28 @@ public:
     // Removes a listener from the listener list, if in the list.
     void RemoveEntryListener(EntryListener & listener);
 
+#if CHIP_CONFIG_USE_ACCESS_RESTRICTIONS
+    // Set an optional AcceessRestriction object for MNGD feature.
+    void SetAccessRestrictionProvider(AccessRestrictionProvider * accessRestrictionProvider)
+    {
+        mAccessRestrictionProvider = accessRestrictionProvider;
+    }
+
+    AccessRestrictionProvider * GetAccessRestrictionProvider() { return mAccessRestrictionProvider; }
+#endif
+
+    /**
+     * Check whether or not Access Restriction List is supported.
+     *
+     * @retval true if Access Restriction List is supported.
+     */
+    bool IsAccessRestrictionListSupported() const;
+
     /**
      * Check whether access (by a subject descriptor, to a request path,
      * requiring a privilege) should be allowed or denied.
+     *
+     * If an AccessRestrictionProvider object is set, it will be checked for additional access restrictions.
      *
      * @retval #CHIP_ERROR_ACCESS_DENIED if denied.
      * @retval other errors should also be treated as denied.
@@ -656,12 +674,29 @@ private:
     void NotifyEntryChanged(const SubjectDescriptor * subjectDescriptor, FabricIndex fabric, size_t index, const Entry * entry,
                             EntryListener::ChangeType changeType);
 
+    /**
+     * Check ACL for whether access (by a subject descriptor, to a request path,
+     * requiring a privilege) should be allowed or denied.
+     */
+    CHIP_ERROR CheckACL(const SubjectDescriptor & subjectDescriptor, const RequestPath & requestPath, Privilege requestPrivilege);
+
+    /**
+     * Check CommissioningARL or ARL (as appropriate) for whether access (by a
+     * subject descriptor, to a request path, requiring a privilege) should
+     * be allowed or denied.
+     */
+    CHIP_ERROR CheckARL(const SubjectDescriptor & subjectDescriptor, const RequestPath & requestPath, Privilege requestPrivilege);
+
 private:
     Delegate * mDelegate = nullptr;
 
     DeviceTypeResolver * mDeviceTypeResolver = nullptr;
 
     EntryListener * mEntryListener = nullptr;
+
+#if CHIP_CONFIG_USE_ACCESS_RESTRICTIONS
+    AccessRestrictionProvider * mAccessRestrictionProvider;
+#endif
 };
 
 /**
@@ -683,7 +718,7 @@ void SetAccessControl(AccessControl & accessControl);
  *
  * Calls to this function must be synchronized externally.
  */
-void ResetAccessControl();
+void ResetAccessControlToDefault();
 
 } // namespace Access
 } // namespace chip

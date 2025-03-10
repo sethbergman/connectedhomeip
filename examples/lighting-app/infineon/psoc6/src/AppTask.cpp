@@ -22,12 +22,10 @@
 #include "AppEvent.h"
 #include "ButtonHandler.h"
 #include "LEDWidget.h"
-#include "qrcodegen.h"
-#include <app-common/zap-generated/attribute-id.h>
-#include <app-common/zap-generated/attribute-type.h>
-#include <app-common/zap-generated/cluster-id.h>
+#include <app-common/zap-generated/attributes/Accessors.h>
+#include <app-common/zap-generated/ids/Attributes.h>
+#include <app-common/zap-generated/ids/Clusters.h>
 #include <app/server/Dnssd.h>
-#include <app/server/OnboardingCodesUtil.h>
 #include <app/server/Server.h>
 #include <app/util/attribute-storage.h>
 #include <assert.h>
@@ -35,12 +33,14 @@
 #include <credentials/examples/DeviceAttestationCredsExample.h>
 #include <cy_wcm.h>
 #include <platform/CHIPDeviceLayer.h>
+#include <setup_payload/OnboardingCodesUtil.h>
 #include <setup_payload/QRCodeSetupPayloadGenerator.h>
 #include <setup_payload/SetupPayload.h>
 
 #include <DeviceInfoProviderImpl.h>
 #include <app/clusters/identify-server/identify-server.h>
 #include <app/clusters/network-commissioning/network-commissioning.h>
+#include <data-model-providers/codegen/Instance.h>
 #include <platform/Infineon/PSOC6/NetworkCommissioningDriver.h>
 
 /* OTA related includes */
@@ -104,6 +104,7 @@ OTAImageProcessorImpl gImageProcessor;
 } // namespace
 
 using namespace ::chip;
+using namespace ::chip::app;
 using namespace chip::TLV;
 using namespace ::chip::Credentials;
 using namespace ::chip::DeviceLayer;
@@ -135,7 +136,7 @@ static Identify gIdentify1 = {
     chip::EndpointId{ 1 },
     OnIdentifyStart,
     OnIdentifyStop,
-    EMBER_ZCL_IDENTIFY_IDENTIFY_TYPE_NONE,
+    Clusters::Identify::IdentifyTypeEnum::kNone,
 };
 
 static void InitServer(intptr_t context)
@@ -143,6 +144,7 @@ static void InitServer(intptr_t context)
     // Init ZCL Data Model
     static chip::CommonCaseDeviceServerInitParams initParams;
     (void) initParams.InitializeStaticResourcesBeforeServerInit();
+    initParams.dataModelProvider = CodegenDataModelProviderInstance(initParams.persistentStorageDelegate);
     chip::Server::GetInstance().Init(initParams);
 
     gExampleDeviceInfoProvider.SetStorageDelegate(&Server::GetInstance().GetPersistentStorage());
@@ -160,12 +162,12 @@ CHIP_ERROR AppTask::StartAppTask()
     sAppEventQueue = xQueueCreateStatic(APP_EVENT_QUEUE_SIZE, sizeof(AppEvent), sAppEventQueueBuffer, &sAppEventQueueStruct);
     if (sAppEventQueue == NULL)
     {
-        P6_LOG("Failed to allocate app event queue");
+        PSOC6_LOG("Failed to allocate app event queue");
         appError(APP_ERROR_EVENT_QUEUE_FAILED);
     }
 
     // Start App task.
-    sAppTaskHandle = xTaskCreateStatic(AppTaskMain, APP_TASK_NAME, ArraySize(appStack), NULL, 1, appStack, &appTaskStruct);
+    sAppTaskHandle = xTaskCreateStatic(AppTaskMain, APP_TASK_NAME, MATTER_ARRAY_SIZE(appStack), NULL, 1, appStack, &appTaskStruct);
     return (sAppTaskHandle == nullptr) ? APP_ERROR_CREATE_TASK_FAILED : CHIP_NO_ERROR;
 }
 
@@ -173,11 +175,11 @@ CHIP_ERROR AppTask::Init()
 {
     CHIP_ERROR err = CHIP_NO_ERROR;
 #if CHIP_DEVICE_CONFIG_ENABLE_OTA_REQUESTOR
-    int rc = boot_set_confirmed();
+    int rc = flash_area_boot_set_confirmed();
     if (rc != 0)
     {
-        P6_LOG("boot_set_confirmed failed");
-        appError(CHIP_ERROR_WELL_UNINITIALIZED);
+        PSOC6_LOG("flash_area_boot_set_confirmed failed");
+        appError(CHIP_ERROR_UNINITIALIZED);
     }
 #endif
     // Register the callback to init the MDNS server when connectivity is available
@@ -209,15 +211,15 @@ CHIP_ERROR AppTask::Init()
     );
     if (sFunctionTimer == NULL)
     {
-        P6_LOG("funct timer create failed");
+        PSOC6_LOG("funct timer create failed");
         appError(APP_ERROR_CREATE_TIMER_FAILED);
     }
     NetWorkCommissioningInstInit();
-    P6_LOG("Current Firmware Version: %s", CHIP_DEVICE_CONFIG_DEVICE_SOFTWARE_VERSION_STRING);
+    PSOC6_LOG("Current Firmware Version: %s", CHIP_DEVICE_CONFIG_DEVICE_SOFTWARE_VERSION_STRING);
     err = LightMgr().Init();
     if (err != CHIP_NO_ERROR)
     {
-        P6_LOG("LightMgr().Init() failed");
+        PSOC6_LOG("LightMgr().Init() failed");
         appError(err);
     }
 
@@ -243,11 +245,11 @@ void AppTask::AppTaskMain(void * pvParameter)
     CHIP_ERROR err = sAppTask.Init();
     if (err != CHIP_NO_ERROR)
     {
-        P6_LOG("AppTask.Init() failed");
+        PSOC6_LOG("AppTask.Init() failed");
         appError(err);
     }
 
-    P6_LOG("App Task started");
+    PSOC6_LOG("App Task started");
 
     while (true)
     {
@@ -306,18 +308,18 @@ void AppTask::AppTaskMain(void * pvParameter)
 
 void AppTask::LightActionEventHandler(AppEvent * event)
 {
-    bool initiated = false;
     LightingManager::Action_t action;
-    int32_t actor  = 0;
-    CHIP_ERROR err = CHIP_NO_ERROR;
+    int32_t actor;
 
-    if (event->Type == AppEvent::kEventType_Light)
+    switch (event->Type)
     {
+    case AppEvent::kEventType_Light: {
         action = static_cast<LightingManager::Action_t>(event->LightEvent.Action);
         actor  = event->LightEvent.Actor;
+        break;
     }
-    else if (event->Type == AppEvent::kEventType_Button)
-    {
+
+    case AppEvent::kEventType_Button: {
         if (LightMgr().IsLightOn())
         {
             action = LightingManager::OFF_ACTION;
@@ -326,21 +328,18 @@ void AppTask::LightActionEventHandler(AppEvent * event)
         {
             action = LightingManager::ON_ACTION;
         }
+
         actor = AppEvent::kEventType_Button;
-    }
-    else
-    {
-        err = APP_ERROR_UNHANDLED_EVENT;
+        break;
     }
 
-    if (err == CHIP_NO_ERROR)
-    {
-        initiated = LightMgr().InitiateAction(actor, action);
+    default:
+        return;
+    }
 
-        if (!initiated)
-        {
-            P6_LOG("Action is already in progress or active.");
-        }
+    if (!LightMgr().InitiateAction(actor, action))
+    {
+        PSOC6_LOG("Action is already in progress or active.");
     }
 }
 
@@ -398,7 +397,8 @@ void AppTask::FunctionHandler(AppEvent * event)
     {
         if (!sAppTask.mFunctionTimerActive && sAppTask.mFunction == Function::kNoneSelected)
         {
-            P6_LOG("Factory Reset Triggered. Press button again within %us to cancel.", FACTORY_RESET_CANCEL_WINDOW_TIMEOUT / 1000);
+            PSOC6_LOG("Factory Reset Triggered. Press button again within %us to cancel.",
+                      FACTORY_RESET_CANCEL_WINDOW_TIMEOUT / 1000);
             // Start timer for FACTORY_RESET_CANCEL_WINDOW_TIMEOUT to allow user to
             // cancel, if required.
             sAppTask.StartTimer(FACTORY_RESET_CANCEL_WINDOW_TIMEOUT);
@@ -424,7 +424,7 @@ void AppTask::FunctionHandler(AppEvent * event)
             // canceled.
             sAppTask.mFunction = Function::kNoneSelected;
 
-            P6_LOG("Factory Reset has been Canceled");
+            PSOC6_LOG("Factory Reset has been Canceled");
         }
     }
 }
@@ -433,7 +433,7 @@ void AppTask::CancelTimer()
 {
     if (xTimerStop(sFunctionTimer, 0) == pdFAIL)
     {
-        P6_LOG("app timer stop() failed");
+        PSOC6_LOG("app timer stop() failed");
         appError(APP_ERROR_STOP_TIMER_FAILED);
     }
 
@@ -444,7 +444,7 @@ void AppTask::StartTimer(uint32_t aTimeoutInMs)
 {
     if (xTimerIsTimerActive(sFunctionTimer))
     {
-        P6_LOG("app timer already started!");
+        PSOC6_LOG("app timer already started!");
         CancelTimer();
     }
 
@@ -453,7 +453,7 @@ void AppTask::StartTimer(uint32_t aTimeoutInMs)
     // cannot immediately be sent to the timer command queue.
     if (xTimerChangePeriod(sFunctionTimer, aTimeoutInMs / portTICK_PERIOD_MS, 100) != pdPASS)
     {
-        P6_LOG("app timer start() failed");
+        PSOC6_LOG("app timer start() failed");
         appError(APP_ERROR_START_TIMER_FAILED);
     }
 
@@ -465,12 +465,12 @@ void AppTask::ActionInitiated(LightingManager::Action_t action, int32_t actor)
     // Action initiated, update the light led
     if (action == LightingManager::ON_ACTION)
     {
-        P6_LOG("Turning light ON");
+        PSOC6_LOG("Turning light ON");
         sLightLED.Set(true);
     }
     else if (action == LightingManager::OFF_ACTION)
     {
-        P6_LOG("Turning light OFF");
+        PSOC6_LOG("Turning light OFF");
         sLightLED.Set(false);
     }
 
@@ -485,11 +485,11 @@ void AppTask::ActionCompleted(LightingManager::Action_t action)
     // action has been completed bon the light
     if (action == LightingManager::ON_ACTION)
     {
-        P6_LOG("Light ON");
+        PSOC6_LOG("Light ON");
     }
     else if (action == LightingManager::OFF_ACTION)
     {
-        P6_LOG("Light OFF");
+        PSOC6_LOG("Light OFF");
     }
 
     if (sAppTask.mSyncClusterToButtonAction)
@@ -533,11 +533,11 @@ void AppTask::PostEvent(const AppEvent * event)
         }
 
         if (!status)
-            P6_LOG("Failed to post event to app task event queue");
+            PSOC6_LOG("Failed to post event to app task event queue");
     }
     else
     {
-        P6_LOG("Event Queue is NULL should never happen");
+        PSOC6_LOG("Event Queue is NULL should never happen");
     }
 }
 
@@ -549,7 +549,7 @@ void AppTask::DispatchEvent(AppEvent * event)
     }
     else
     {
-        P6_LOG("Event received with no handler. Dropping event.");
+        PSOC6_LOG("Event received with no handler. Dropping event.");
     }
 }
 
@@ -558,11 +558,10 @@ void AppTask::UpdateClusterState(intptr_t context)
     uint8_t newValue = LightMgr().IsLightOn();
 
     // write the new on/off value
-    EmberAfStatus status =
-        emberAfWriteAttribute(1, ZCL_ON_OFF_CLUSTER_ID, ZCL_ON_OFF_ATTRIBUTE_ID, (uint8_t *) &newValue, ZCL_BOOLEAN_ATTRIBUTE_TYPE);
-    if (status != EMBER_ZCL_STATUS_SUCCESS)
+    Protocols::InteractionModel::Status status = app::Clusters::OnOff::Attributes::OnOff::Set(1, newValue);
+    if (status != Protocols::InteractionModel::Status::Success)
     {
-        P6_LOG("ERR: updating on/off %x", status);
+        PSOC6_LOG("ERR: updating on/off %x", to_underlying(status));
     }
 }
 #if CHIP_DEVICE_CONFIG_ENABLE_OTA_REQUESTOR
@@ -577,7 +576,7 @@ void AppTask::InitOTARequestor()
 
     gRequestorUser.Init(&gRequestorCore, &gImageProcessor);
 
-    P6_LOG("Current Software Version: %u", CHIP_DEVICE_CONFIG_DEVICE_SOFTWARE_VERSION);
-    P6_LOG("Current Software Version String: %s", CHIP_DEVICE_CONFIG_DEVICE_SOFTWARE_VERSION_STRING);
+    PSOC6_LOG("Current Software Version: %u", CHIP_DEVICE_CONFIG_DEVICE_SOFTWARE_VERSION);
+    PSOC6_LOG("Current Software Version String: %s", CHIP_DEVICE_CONFIG_DEVICE_SOFTWARE_VERSION_STRING);
 }
 #endif

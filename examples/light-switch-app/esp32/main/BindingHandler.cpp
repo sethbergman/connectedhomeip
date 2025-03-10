@@ -109,7 +109,7 @@ void LightSwitchChangedHandler(const EmberBindingTableEntry & binding, Operation
     VerifyOrReturn(context != nullptr, ChipLogError(NotSpecified, "OnDeviceConnectedFn: context is null"));
     BindingCommandData * data = static_cast<BindingCommandData *>(context);
 
-    if (binding.type == EMBER_MULTICAST_BINDING && data->isGroup)
+    if (binding.type == MATTER_MULTICAST_BINDING && data->isGroup)
     {
         switch (data->clusterId)
         {
@@ -118,7 +118,7 @@ void LightSwitchChangedHandler(const EmberBindingTableEntry & binding, Operation
             break;
         }
     }
-    else if (binding.type == EMBER_UNICAST_BINDING && !data->isGroup)
+    else if (binding.type == MATTER_UNICAST_BINDING && !data->isGroup)
     {
         switch (data->clusterId)
         {
@@ -244,11 +244,11 @@ CHIP_ERROR BindingGroupBindCommandHandler(int argc, char ** argv)
     VerifyOrReturnError(argc == 2, CHIP_ERROR_INVALID_ARGUMENT);
 
     EmberBindingTableEntry * entry = Platform::New<EmberBindingTableEntry>();
-    entry->type                    = EMBER_MULTICAST_BINDING;
+    entry->type                    = MATTER_MULTICAST_BINDING;
     entry->fabricIndex             = atoi(argv[0]);
     entry->groupId                 = atoi(argv[1]);
     entry->local                   = 1; // Hardcoded to endpoint 1 for now
-    entry->clusterId.SetValue(6);       // Hardcoded to OnOff cluster for now
+    entry->clusterId.emplace(6);        // Hardcoded to OnOff cluster for now
 
     DeviceLayer::PlatformMgr().ScheduleWork(BindingWorkerFunction, reinterpret_cast<intptr_t>(entry));
     return CHIP_NO_ERROR;
@@ -259,12 +259,12 @@ CHIP_ERROR BindingUnicastBindCommandHandler(int argc, char ** argv)
     VerifyOrReturnError(argc == 3, CHIP_ERROR_INVALID_ARGUMENT);
 
     EmberBindingTableEntry * entry = Platform::New<EmberBindingTableEntry>();
-    entry->type                    = EMBER_UNICAST_BINDING;
+    entry->type                    = MATTER_UNICAST_BINDING;
     entry->fabricIndex             = atoi(argv[0]);
     entry->nodeId                  = atoi(argv[1]);
     entry->local                   = 1; // Hardcoded to endpoint 1 for now
     entry->remote                  = atoi(argv[2]);
-    entry->clusterId.SetValue(6); // Hardcode to OnOff cluster for now
+    entry->clusterId.emplace(6); // Hardcode to OnOff cluster for now
 
     DeviceLayer::PlatformMgr().ScheduleWork(BindingWorkerFunction, reinterpret_cast<intptr_t>(entry));
     return CHIP_NO_ERROR;
@@ -384,11 +384,12 @@ static void RegisterSwitchCommands()
     static const shell_command_t sSwitchCommand = { &SwitchCommandHandler, "switch",
                                                     "Light-switch commands. Usage: switch <subcommand>" };
 
-    sShellSwitchGroupsOnOffSubCommands.RegisterCommands(sSwitchGroupsOnOffSubCommands, ArraySize(sSwitchGroupsOnOffSubCommands));
-    sShellSwitchOnOffSubCommands.RegisterCommands(sSwitchOnOffSubCommands, ArraySize(sSwitchOnOffSubCommands));
-    sShellSwitchGroupsSubCommands.RegisterCommands(sSwitchGroupsSubCommands, ArraySize(sSwitchGroupsSubCommands));
-    sShellSwitchBindingSubCommands.RegisterCommands(sSwitchBindingSubCommands, ArraySize(sSwitchBindingSubCommands));
-    sShellSwitchSubCommands.RegisterCommands(sSwitchSubCommands, ArraySize(sSwitchSubCommands));
+    sShellSwitchGroupsOnOffSubCommands.RegisterCommands(sSwitchGroupsOnOffSubCommands,
+                                                        MATTER_ARRAY_SIZE(sSwitchGroupsOnOffSubCommands));
+    sShellSwitchOnOffSubCommands.RegisterCommands(sSwitchOnOffSubCommands, MATTER_ARRAY_SIZE(sSwitchOnOffSubCommands));
+    sShellSwitchGroupsSubCommands.RegisterCommands(sSwitchGroupsSubCommands, MATTER_ARRAY_SIZE(sSwitchGroupsSubCommands));
+    sShellSwitchBindingSubCommands.RegisterCommands(sSwitchBindingSubCommands, MATTER_ARRAY_SIZE(sSwitchBindingSubCommands));
+    sShellSwitchSubCommands.RegisterCommands(sSwitchSubCommands, MATTER_ARRAY_SIZE(sSwitchSubCommands));
 
     Engine::Root().RegisterCommands(&sSwitchCommand, 1);
 }

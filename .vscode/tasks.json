@@ -14,18 +14,6 @@
             }
         },
         {
-            "label": "Build examples (glob)",
-            "type": "shell",
-            "command": "scripts/run_in_build_env.sh",
-            "args": [
-                "./scripts/build/build_examples.py --target-glob \"${input:exampleGlob}\" build"
-            ],
-            "group": "build",
-            "problemMatcher": {
-                "base": "$gcc"
-            }
-        },
-        {
             "label": "Main Build",
             "type": "shell",
             "command": "scripts/build/default.sh",
@@ -122,19 +110,6 @@
             "problemMatcher": []
         },
         {
-            "label": "Build nRF Connect Pigweed Example (nRF52840)",
-            "type": "shell",
-            "command": "source scripts/activate.sh && scripts/examples/nrfconnect_example.sh pigweed-app nrf52840dk_nrf52840",
-            "group": "build",
-            "problemMatcher": {
-                "base": "$gcc",
-                "fileLocation": [
-                    "relative",
-                    "${workspaceFolder}/examples/pigweed-app/nrfconnect/build/nrf52840dk_nrf52840"
-                ]
-            }
-        },
-        {
             "label": "Build i.MX Linux examples",
             "type": "shell",
             "command": "./scripts/examples/imxlinux_example.sh ${input:imxExampleTarget} out/aarch64",
@@ -181,6 +156,30 @@
                     "${workspaceFolder}/src/test_driver/mbed/unit_tests/build"
                 ]
             }
+        },
+        {
+            "label": "Build EFR32 Unit Tests and Test Runner",
+            "type": "shell",
+            "command": "source scripts/activate.sh; scripts/build/build_examples.py --target efr32-${input:efr32Board}-unit-test build; scripts/build/build_examples.py --target linux-x64-efr32-test-runner build; pip3 install out/linux-x64-efr32-test-runner/chip_pw_test_runner_wheels/*.whl --force-reinstall",
+            "problemMatcher": []
+        },
+        {
+            "label": "Rebuild EFR32 Unit Tests and Test Runner",
+            "type": "shell",
+            "command": "source scripts/activate.sh; rm -rf out/efr32-brd*-unit-test out/linux-x64-efr32-test-runner; scripts/build/build_examples.py --target efr32-${input:efr32Board}-unit-test build; scripts/build/build_examples.py --target linux-x64-efr32-test-runner build; pip3 install out/linux-x64-efr32-test-runner/chip_pw_test_runner_wheels/*.whl --force-reinstall",
+            "problemMatcher": []
+        },
+        {
+            "label": "Clean EFR32 Unit Tests and Test Runner",
+            "type": "shell",
+            "command": "rm -rf out/efr32-brd*-unit-test out/linux-x64-efr32-test-runner",
+            "problemMatcher": []
+        },
+        {
+            "label": "Run EFR32 Unit Tests",
+            "type": "shell",
+            "command": "source scripts/activate.sh; python -m src.test_driver.efr32.py.pw_test_runner.pw_test_runner -d /dev/ttyACM1 -f out/efr32-brd2703a-unit-test/tests -o out.log",
+            "problemMatcher": []
         },
         {
             "label": "Flash EFR32 board",
@@ -254,6 +253,187 @@
                 "showReuseMessage": true,
                 "clear": true
             }
+        },
+        {
+            "label": "Setup Open IoT SDK network",
+            "type": "shell",
+            "command": "sudo scripts/setup/openiotsdk/network_setup.sh -n${input:openiotsdkNetworkSetupName} ${input:openiotsdkNetworkSetupCmd}",
+            "problemMatcher": {
+                "pattern": {
+                    "regexp": "^(.*):(\\d+):(\\d+):\\s+(warning|error):\\s+(.*)$",
+                    "file": 1,
+                    "line": 2,
+                    "message": 5
+                }
+            }
+        },
+        {
+            "label": "Build Open IoT SDK example",
+            "type": "shell",
+            "command": "scripts/examples/openiotsdk_example.sh",
+            "args": [
+                "-Cbuild",
+                "-d${input:openiotsdkDebugMode}",
+                "-l${input:openiotsdkLwipDebug}",
+                "-b${input:openiotsdkCryptoBackend}",
+                "${input:openiotsdkExample}"
+            ],
+            "group": "build",
+            "problemMatcher": {
+                "pattern": {
+                    "regexp": "^(.*):(\\d+):(\\d+):\\s+(warning|error):\\s+(.*)$",
+                    "file": 1,
+                    "line": 2,
+                    "message": 5
+                }
+            }
+        },
+        {
+            "label": "Build Open IoT SDK unit-tests",
+            "type": "shell",
+            "command": "scripts/examples/openiotsdk_example.sh",
+            "args": [
+                "-Cbuild",
+                "-d${input:openiotsdkDebugMode}",
+                "-l${input:openiotsdkLwipDebug}",
+                "-b${input:openiotsdkCryptoBackend}",
+                "unit-tests"
+            ],
+            "group": "build",
+            "problemMatcher": {
+                "pattern": {
+                    "regexp": "^(.*):(\\d+):(\\d+):\\s+(warning|error):\\s+(.*)$",
+                    "file": 1,
+                    "line": 2,
+                    "message": 5
+                }
+            }
+        },
+        {
+            "label": "Run Open IoT SDK example",
+            "type": "shell",
+            "command": "scripts/run_in_ns.sh",
+            "args": [
+                "${input:openiotsdkNetworkNamespace}",
+                "scripts/examples/openiotsdk_example.sh",
+                "-Crun",
+                "-n${input:openiotsdkNetworkInterface}",
+                "${input:openiotsdkExample}"
+            ],
+            "group": "test",
+            "problemMatcher": {
+                "pattern": {
+                    "regexp": "^(.*):(\\d+):(\\d+):\\s+(warning|error):\\s+(.*)$",
+                    "file": 1,
+                    "line": 2,
+                    "message": 5
+                }
+            }
+        },
+        {
+            "label": "Run Open IoT SDK unit-tests",
+            "type": "shell",
+            "command": "scripts/examples/openiotsdk_example.sh",
+            "args": ["-Crun", "unit-tests", "${input:openiotsdkUnitTest}"],
+            "group": "test",
+            "problemMatcher": {
+                "pattern": {
+                    "regexp": "^(.*):(\\d+):(\\d+):\\s+(warning|error):\\s+(.*)$",
+                    "file": 1,
+                    "line": 2,
+                    "message": 5
+                }
+            }
+        },
+        {
+            "label": "Test Open IoT SDK example",
+            "type": "shell",
+            "command": "scripts/run_in_ns.sh",
+            "args": [
+                "${input:openiotsdkNetworkNamespace}",
+                "scripts/examples/openiotsdk_example.sh",
+                "-Ctest",
+                "-n${input:openiotsdkNetworkInterface}",
+                "${input:openiotsdkExample}"
+            ],
+            "group": "test",
+            "problemMatcher": {
+                "pattern": {
+                    "regexp": "^(.*):(\\d+):(\\d+):\\s+(warning|error):\\s+(.*)$",
+                    "file": 1,
+                    "line": 2,
+                    "message": 5
+                }
+            }
+        },
+        {
+            "label": "Test Open IoT SDK unit-tests",
+            "type": "shell",
+            "command": "scripts/examples/openiotsdk_example.sh",
+            "args": ["-Ctest", "unit-tests", "${input:openiotsdkUnitTest}"],
+            "group": "test",
+            "problemMatcher": {
+                "pattern": {
+                    "regexp": "^(.*):(\\d+):(\\d+):\\s+(warning|error):\\s+(.*)$",
+                    "file": 1,
+                    "line": 2,
+                    "message": 5
+                }
+            }
+        },
+        {
+            "label": "Debug Open IoT SDK example",
+            "type": "shell",
+            "command": "scripts/run_in_ns.sh",
+            "args": [
+                "${input:openiotsdkNetworkNamespace}",
+                "scripts/examples/openiotsdk_example.sh",
+                "-Crun",
+                "-n${input:openiotsdkNetworkInterface}",
+                "-dtrue",
+                "${input:openiotsdkExample}"
+            ],
+            "group": "none",
+            "isBackground": true,
+            "problemMatcher": {
+                "pattern": {
+                    "regexp": "^(.*):(\\d+):(\\d+):\\s+(warning|error):\\s+(.*)$",
+                    "file": 1,
+                    "line": 2,
+                    "message": 5
+                },
+                "background": {
+                    "activeOnStart": true,
+                    "beginsPattern": "^.*Trying*",
+                    "endsPattern": "^.*Connected to localhost*"
+                }
+            }
+        },
+        {
+            "label": "Debug Open IoT SDK unit-tests",
+            "type": "shell",
+            "command": "scripts/examples/openiotsdk_example.sh",
+            "args": [
+                "-Crun",
+                "-dtrue",
+                "unit-tests",
+                "${input:openiotsdkUnitTest}"
+            ],
+            "group": "none",
+            "isBackground": true,
+            "problemMatcher": {
+                "pattern": {
+                    "regexp": "^(.*):(\\d+):(\\d+):\\s+(warning|error):\\s+(.*)$",
+                    "file": 1,
+                    "line": 2,
+                    "message": 5
+                },
+                "background": {
+                    "activeOnStart": true,
+                    "beginsPattern": "^.*Trying*",
+                    "endsPattern": "^.*Connected to localhost*"
+                }
+            }
         }
     ],
     "inputs": [
@@ -300,6 +480,70 @@
             "default": "simple"
         },
         {
+            "type": "pickString",
+            "id": "openiotsdkNetworkSetupCmd",
+            "description": "Which command do you wish to use?",
+            "options": ["up", "down", "restart"],
+            "default": "up"
+        },
+        {
+            "type": "promptString",
+            "id": "openiotsdkNetworkSetupName",
+            "description": "Type the network namespace name that you want to use.",
+            "default": "ARM"
+        },
+        {
+            "type": "pickString",
+            "id": "openiotsdkDebugMode",
+            "description": "Do you want to use debug mode?",
+            "options": ["false", "true"],
+            "default": "false"
+        },
+        {
+            "type": "pickString",
+            "id": "openiotsdkLwipDebug",
+            "description": "Do you want to use LwIP debug logs?",
+            "options": ["false", "true"],
+            "default": "false"
+        },
+        {
+            "type": "pickString",
+            "id": "openiotsdkCryptoBackend",
+            "description": "Which Crypto algorithm do you wish to use?",
+            "options": ["mbedtls", "psa"],
+            "default": "mbedtls"
+        },
+        {
+            "type": "command",
+            "id": "openiotsdkExample",
+            "command": "shellCommand.execute",
+            "args": {
+                "command": "cat examples/platform/openiotsdk/supported_examples.txt",
+                "description": "What Open IoT SDK example application do you want to use?"
+            }
+        },
+        {
+            "type": "command",
+            "id": "openiotsdkUnitTest",
+            "command": "shellCommand.execute",
+            "args": {
+                "command": "cat src/test_driver/openiotsdk/unit-tests/test_components.txt",
+                "description": "What Open IoT SDK unit test application do you want to use?"
+            }
+        },
+        {
+            "type": "promptString",
+            "id": "openiotsdkNetworkNamespace",
+            "description": "Type the network namespace that you want to use. \"default\" means host default network namespace",
+            "default": "default"
+        },
+        {
+            "type": "promptString",
+            "id": "openiotsdkNetworkInterface",
+            "description": "Type the network interface name that you want to use. \"user\" means user network mode",
+            "default": "user"
+        },
+        {
             "type": "promptString",
             "id": "exampleGlob",
             "description": "What applications to build (e.g. '*m5stack*' or 'esp32-*')"
@@ -331,60 +575,25 @@
                 "android-arm64-chip-tvserver",
                 "android-x64-chip-tool",
                 "android-x86-chip-tool",
-                "bl602-light",
-                "bouffalolab-BL702-IoT-DVK-light",
-                "bouffalolab-BL702-IoT-DVK-light-rpc",
-                "bouffalolab-BL706-IoT-DVK-BL706C-22-light",
-                "bouffalolab-BL706-IoT-DVK-BL706C-22-light-rpc",
-                "bouffalolab-BL706-NIGHT-LIGHT",
-                "efr32-brd4161a-light",
-                "efr32-brd4163a-light",
-                "efr32-brd4164a-light",
-                "efr32-brd4166a-light",
-                "efr32-brd4170a-light",
-                "efr32-brd4186a-light",
-                "efr32-brd4187a-light",
-                "efr32-brd4304a-light",
-                "efr32-brd4161a-light-rpc",
-                "efr32-brd4163a-light-rpc",
-                "efr32-brd4164a-light-rpc",
-                "efr32-brd4166a-light-rpc",
-                "efr32-brd4170a-light-rpc",
-                "efr32-brd4186a-light-rpc",
-                "efr32-brd4187a-light-rpc",
-                "efr32-brd4304a-light-rpc",
-                "efr32-brd4161a-lock",
-                "efr32-brd4163a-lock",
-                "efr32-brd4164a-lock",
-                "efr32-brd4166a-lock",
-                "efr32-brd4170a-lock",
-                "efr32-brd4186a-lock",
-                "efr32-brd4187a-lock",
-                "efr32-brd4304a-lock",
-                "efr32-brd4161a-unit-test",
-                "efr32-brd4163a-unit-test",
-                "efr32-brd4164a-unit-test",
-                "efr32-brd4166a-unit-test",
-                "efr32-brd4170a-unit-test",
-                "efr32-brd4186a-unit-test",
-                "efr32-brd4187a-unit-test",
-                "efr32-brd4304a-unit-test",
-                "efr32-brd4161a-switch",
-                "efr32-brd4163a-switch",
-                "efr32-brd4164a-switch",
-                "efr32-brd4166a-switch",
-                "efr32-brd4170a-switch",
-                "efr32-brd4186a-switch",
-                "efr32-brd4187a-switch",
-                "efr32-brd4304a-switch",
-                "efr32-brd4161a-window-covering",
-                "efr32-brd4163a-window-covering",
-                "efr32-brd4164a-window-covering",
-                "efr32-brd4166a-window-covering",
-                "efr32-brd4170a-window-covering",
-                "efr32-brd4186a-window-covering",
-                "efr32-brd4187a-window-covering",
-                "efr32-brd4304a-window-covering",
+                "bouffalolab-bl602-iot-matter-v1-light",
+                "bouffalolab-bl602-iot-matter-v1-light-rpc-115200",
+                "bouffalolab-bl602-night-light-light",
+                "bouffalolab-xt-zb6-devkit-light",
+                "bouffalolab-xt-zb6-devkit-light-rpc-115200",
+                "bouffalolab-bl706-night-light-light",
+                "efr32-brd4186c-light",
+                "efr32-brd4186c-light-rpc",
+                "efr32-brd4186c-lock",
+                "efr32-brd4186c-unit-test",
+                "efr32-brd4186c-switch",
+                "efr32-brd4186c-window-covering",
+                "efr32-brd4187c-light",
+                "efr32-brd4187c-light-rpc",
+                "efr32-brd4187c-lock",
+                "efr32-brd4187c-unit-test",
+                "efr32-brd4187c-switch",
+                "efr32-brd4187c-window-covering",
+                "efr32-brd4338a-light-wifi-917_soc-skip_rps_generation",
                 "esp32-c3devkit-all-clusters",
                 "esp32-devkitc-all-clusters",
                 "esp32-devkitc-all-clusters-ipv6only",
@@ -394,8 +603,6 @@
                 "esp32-devkitc-temperature-measurement",
                 "esp32-m5stack-all-clusters",
                 "esp32-m5stack-all-clusters-ipv6only",
-                "esp32-m5stack-all-clusters-rpc",
-                "esp32-m5stack-all-clusters-rpc-ipv6only",
                 "infineon-psoc6-all-clusters",
                 "infineon-psoc6-lock",
                 "infineon-psoc6-light",
@@ -428,23 +635,60 @@
                 "mbed-CY8CPROTO_062_4343W-shell-debug",
                 "mbed-CY8CPROTO_062_4343W-shell-develop",
                 "mbed-CY8CPROTO_062_4343W-shell-release",
-                "nrf-nrf52840-light",
-                "nrf-nrf52840-light-rpc",
-                "nrf-nrf52840-lock",
-                "nrf-nrf52840-pump",
-                "nrf-nrf52840-pump-controller",
-                "nrf-nrf52840-shell",
-                "nrf-nrf5340-light",
-                "nrf-nrf5340-light-rpc",
-                "nrf-nrf5340-lock",
-                "nrf-nrf5340-pump",
-                "nrf-nrf5340-pump-controller",
-                "nrf-nrf5340-shell",
+                "nrf-nrf52840dk-light",
+                "nrf-nrf52840dk-light-rpc",
+                "nrf-nrf52840dk-lock",
+                "nrf-nrf52840dk-pump",
+                "nrf-nrf52840dk-pump-controller",
+                "nrf-nrf52840dk-shell",
+                "nrf-nrf5340dk-light",
+                "nrf-nrf5340dk-light-rpc",
+                "nrf-nrf5340dk-lock",
+                "nrf-nrf5340dk-pump",
+                "nrf-nrf5340dk-pump-controller",
+                "nrf-nrf5340dk-shell",
+                "openiotsdk-lock",
+                "openiotsdk-shell",
                 "qpg-qpg6100-lock",
+                "telink-tlsr9518adk80d-air-quality-sensor",
+                "telink-tlsr9518adk80d-all-clusters",
+                "telink-tlsr9518adk80d-all-clusters-minimal",
+                "telink-tlsr9518adk80d-bridge",
+                "telink-tlsr9518adk80d-contact-sensor",
                 "telink-tlsr9518adk80d-light",
                 "telink-tlsr9518adk80d-light-switch",
+                "telink-tlsr9518adk80d-lock-app",
                 "telink-tlsr9518adk80d-ota-requestor",
+                "telink-tlsr9518adk80d-pump-app",
+                "telink-tlsr9518adk80d-pump-controller-app",
+                "telink-tlsr9518adk80d-resource-monitoring-app",
+                "telink-tlsr9518adk80d-shell",
+                "telink-tlsr9518adk80d-smoke-co-alarm-app",
+                "telink-tlsr9518adk80d-temperature-measurement",
+                "telink-tlsr9518adk80d-thermostat",
+                "telink-tlsr9518adk80d-window-covering",
                 "tizen-arm-light"
+            ]
+        },
+        {
+            "type": "pickString",
+            "id": "efr32Board",
+            "description": "Which board",
+            "options": [
+                "brd2704b",
+                "brd4316a",
+                "brd4317a",
+                "brd4318a",
+                "brd4319a",
+                "brd4186a",
+                "brd4187a",
+                "brd2601b",
+                "brd4187c",
+                "brd4186c",
+                "brd2703a",
+                "brd4338a",
+                "brd2605a",
+                "brd4343a"
             ]
         },
         {

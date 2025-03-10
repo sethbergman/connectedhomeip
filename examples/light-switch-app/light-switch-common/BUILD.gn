@@ -13,14 +13,14 @@
 # limitations under the License.
 
 import("//build_overrides/chip.gni")
-import("${chip_root}/examples/common/pigweed/pigweed_rpcs.gni")
 import("${chip_root}/src/app/chip_data_model.gni")
+import("${chip_root}/src/app/icd/icd.gni")
 
 chip_data_model("light-switch-common") {
-  zap_file = "light-switch-app.zap"
-
-  zap_pregenerated_dir =
-      "${chip_root}/zzz_generated/light-switch-app/zap-generated"
-
+  if (chip_enable_icd_lit) {
+    zap_file = "icd-lit-light-switch-app.zap"
+  } else {
+    zap_file = "light-switch-app.zap"
+  }
   is_server = true
 }

@@ -15,13 +15,5 @@
 #    limitations under the License.
 #
 
-#
-#    @file
-#      Provides Python APIs for CHIP.
-#
-
-"""Provides Python APIs for CHIP."""
-from . import Command
-from . import Attribute
-from .Objects import *
-from . import CHIPClusters
+from . import Attribute, CHIPClusters, Command, Objects  # noqa: F401
+from .Objects import *  # noqa: F401, F403

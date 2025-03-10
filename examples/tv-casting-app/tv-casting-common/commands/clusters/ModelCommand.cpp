@@ -53,7 +53,8 @@ CHIP_ERROR ModelCommand::RunCommand()
     return CHIP_NO_ERROR;
 }
 
-void ModelCommand::OnDeviceConnectedFn(void * context, Messaging::ExchangeManager & exchangeMgr, SessionHandle & sessionHandle)
+void ModelCommand::OnDeviceConnectedFn(void * context, Messaging::ExchangeManager & exchangeMgr,
+                                       const SessionHandle & sessionHandle)
 {
     ChipLogProgress(chipTool, "ModelCommand::OnDeviceConnectedFn");
     ModelCommand * command = reinterpret_cast<ModelCommand *>(context);
@@ -79,4 +80,20 @@ void ModelCommand::Shutdown()
     ResetArguments();
     mOnDeviceConnectedCallback.Cancel();
     mOnDeviceConnectionFailureCallback.Cancel();
+}
+
+void ModelCommand::ClearICDEntry(const ScopedNodeId & nodeId)
+{
+    ChipLogError(chipTool, "ClearICDEntry is not implemented in tv-casting-app");
+}
+
+void ModelCommand::StoreICDEntryWithKey(app::ICDClientInfo & clientinfo, ByteSpan key)
+{
+    ChipLogError(chipTool, "StoreICDEntryWithKey is not implemented in tv-casting-app");
+}
+
+bool ModelCommand::IsPeerLIT()
+{
+    // Does not support tv-casting-app
+    return false;
 }

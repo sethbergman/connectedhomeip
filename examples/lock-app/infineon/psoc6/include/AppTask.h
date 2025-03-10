@@ -27,8 +27,12 @@
 
 #include "FreeRTOS.h"
 #include "timers.h" // provides FreeRTOS timer support
-#include <ble/BLEEndPoint.h>
+#include <ble/Ble.h>
 #include <platform/CHIPDeviceLayer.h>
+
+extern "C" {
+#include "flash_map_backend.h"
+}
 
 // Application-defined error codes in the CHIP_ERROR space.
 #define APP_ERROR_EVENT_QUEUE_FAILED CHIP_APPLICATION_ERROR(0x01)
@@ -52,11 +56,12 @@ public:
     void ButtonEventHandler(uint8_t btnIdx, uint8_t btnAction);
     void UpdateClusterState(void);
     void InitOTARequestor();
+    void lockMgr_Init();
 
 private:
     friend AppTask & GetAppTask(void);
 
-    CHIP_ERROR Init();
+    void Init();
 
     static void ActionInitiated(LockManager::Action_t aAction, int32_t aActor);
     static void ActionCompleted(LockManager::Action_t aAction);

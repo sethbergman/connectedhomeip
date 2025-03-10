@@ -19,14 +19,14 @@
         <meta-data android:name="com.matter.tv.app.api.clusters" android:resource="@raw/static_matter_clusters" />
         <meta-data android:name="com.matter.tv.app.api.vendor_name" android:value="CSA" />
         <meta-data android:name="com.matter.tv.app.api.vendor_id" android:value="65521" />
-        <meta-data android:name="com.matter.tv.app.api.product_id" android:value="5678" />
+        <meta-data android:name="com.matter.tv.app.api.product_id" android:value="32769" />
         <activity
             android:name="com.example.contentapp.MainActivity"
             android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
-
                 <category android:name="android.intent.category.LAUNCHER" />
+                <category android:name="android.intent.category.LEANBACK_LAUNCHER" />
             </intent-filter>
         </activity>
         <receiver

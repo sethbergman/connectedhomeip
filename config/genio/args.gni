@@ -24,10 +24,10 @@ lwip_platform = "external"
 
 chip_build_tests = true
 
-chip_inet_config_enable_tcp_endpoint = true
+chip_inet_config_enable_tcp_endpoint = false
 chip_inet_config_enable_udp_endpoint = true
 
 custom_toolchain = "//third_party/connectedhomeip/config/genio/toolchain:genio"
 
 pw_build_PIP_CONSTRAINTS =
-    [ "//third_party/connectedhomeip/scripts/constraints.txt" ]
+    [ "//third_party/connectedhomeip/scripts/setup/constraints.txt" ]

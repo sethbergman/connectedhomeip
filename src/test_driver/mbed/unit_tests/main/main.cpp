@@ -17,9 +17,8 @@
  */
 
 #include "netsocket/WiFiInterface.h"
+#include <lib/support/logging/CHIPLogging.h>
 #include <platform/mbed/Logging.h>
-#include <support/UnitTestRegistration.h>
-#include <support/logging/CHIPLogging.h>
 
 using namespace ::chip;
 using namespace ::chip::Logging::Platform;
@@ -63,8 +62,15 @@ int main()
 
     ChipLogProgress(NotSpecified, "Mbed unit-tests application run");
 
-    int status = RunRegisteredUnitTests();
-    ChipLogProgress(NotSpecified, "CHIP test status: %d", status);
+    // TODO Issue #33978
+    //  Migration to pw_unit_tests was not done for mbed since the unit-testing FW used to run out of flash and was disabled from
+    //  GitHub Actions workflow
+
+    // int status = RunRegisteredUnitTests();
+    // ChipLogProgress(NotSpecified, "CHIP test status: %d", status);
+
+    ChipLogError(NotSpecified, "Unit Tests are currently DISABLED for Mbed");
+    int status = 1;
 
     return status;
 }

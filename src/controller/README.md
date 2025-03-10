@@ -11,7 +11,8 @@ The iOS chip-tool is located in [../darwin/CHIPTool](../darwin/CHIPTool).
 
 ### Android
 
-The Android chip-tool is located in [../android/CHIPTool](../android/CHIPTool).
+The Android chip-tool is located in
+[../../examples/android/CHIPTool](../../examples/android/CHIPTool).
 
 ### POSIX CLI
 
@@ -25,7 +26,7 @@ The POSIX CLI chip-tool is located in
 
 ### Python
 
-The Python chip-device-ctrl is located in
+The Python CHIP Controller library is located in
 [../controller/python/](../controller/python).
 
 ## Feature Overview

@@ -1,4 +1,4 @@
-# Copyright (c) 2021 Project CHIP Authors
+# Copyright (c) 2023 Project CHIP Authors
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -11,7 +11,6 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-# Auto-generated scripts for harness use only, please review before automation. The endpoints and cluster names are currently set to default
 
 name:
     4.4.20. [TC-CNET-4.22] [Thread] Verification for ScanNetworks command
@@ -22,42 +21,53 @@ PICS:
 
 config:
     nodeId: 0x12344321
-    cluster: "Basic"
+    cluster: "Network Commissioning"
+    #PIXIT.CNET.ENDPOINT_THREAD
     endpoint: 0
+    PIXIT.CNET.THREAD_1ST_OPERATIONALDATASET:
+        type: octet_string
+        defaultValue: "hex:1111111122222222"
 
 tests:
-    - label: "DUT supports CNET.S.F01(TH)"
-      verification: |
-
-      disabled: true
-
     - label:
-          "DUT has a Network Commissioning cluster on endpoint
-          PIXIT.CNET.ENDPOINT_THREAD with FeatureMap attribute of 2"
-      verification: |
-
-      disabled: true
-
-    - label: "DUT is commissioned on PIXIT.CNET.THREAD_1ST_OPERATIONALDATASET"
-      verification: |
-
-      disabled: true
-
-    - label:
-          "TH can communicate with the DUT on
-          PIXIT.CNET.THREAD_1ST_OPERATIONALDATASET"
-      verification: |
-
-      disabled: true
-
-    - label:
-          "TH sends ScanNetworks command to the DUT with the SSID field omitted
-          and the Breadcrumb field set to 1"
+          "Step 1: TH sends ScanNetworks command to the DUT with the SSID field
+          omitted and the Breadcrumb field set to 1"
       PICS: CNET.S.C00.Rsp && CNET.S.C01.Tx
+      command: "ScanNetworks"
+      arguments:
+          values:
+              - name: "SSID"
+                value: ""
+              - name: "Breadcrumb"
+                value: 1
+      response:
+          values:
+              - name: "NetworkingStatus"
+                constraints:
+                    anyOf: [0, 1, 5, 6, 12]
+              - name: "DebugText"
+                constraints:
+                    maxLength: 512
+              - name: "ThreadScanResults"
+                constraints:
+                    type: list
+
+    - label:
+          "Step 1: Verify each element in the ThreadScanResults list will have
+          the following fields:"
       verification: |
           ./chip-tool networkcommissioning scan-networks 54 0 --Breadcrumb 1
 
-          Verify  "ScanNetworksResponse and its arguments" on the TH(Chip-tool) Log:
+          Via the TH (chip-tool), verify:
+          -the NetworkingStatus value as 0 that mentions success.
+          -the PanId value is in the range of 0 to 65534.
+          -the ExtendedPanId value is type of uint64.
+          -the NetworkName value is type of string with a size of 1 to 16 bytes.
+          -the Channel is type of uint16 with range 0 to 65535.
+          -the version value is type of uint8(0 to 255).
+          -the ExtendedAddress is a hwaddr with a size of 8 bytes
+          -the RSSI is of type int8 with a range of -120 to 0.
+          -the LQI is type of uint8(0 to 255).
 
           [1658297246.000815][7679:7684] CHIP:DMG: Received Command Response Data, Endpoint=0 Cluster=0x0000_0031 Command=0x0000_0001
           [1658297246.001029][7679:7684] CHIP:TOO: Endpoint: 0 Cluster: 0x0000_0031 Command 0x0000_0001
@@ -77,28 +87,66 @@ tests:
           [1658297246.002070][7679:7684] CHIP:TOO:    }
           [1658297246.002181][7679:7684] CHIP:DMG: ICR moving to [AwaitingDe]
           [1658297246.002298][7679:7684] CHIP:EM: Sending Standalone Ack for MessageCounter:124278362 on exchange 24525i
-      disabled: true
+      cluster: "LogCommands"
+      command: "UserPrompt"
+      PICS: PICS_USER_PROMPT && CNET.S.C00.Rsp && CNET.S.C01.Tx
+      arguments:
+          values:
+              - name: "message"
+                value: "Please enter 'y' for success"
+              - name: "expectedValue"
+                value: "y"
 
     - label:
-          "TH reads Breadcumb attribute from the General Commissioning Cluster"
-      verification: |
-          ./chip-tool generalcommissioning read breadcrumb 54 0
-
-          Verify Breadcrumb: 1 on the TH/All-cluster-app Log:
-
-          [1657688310.986593][1613:1618] CHIP:TOO: Endpoint: 0 Cluster: 0x0000_0030 Attribute 0x0000_0000 DataVersion: 829017612
-          [1657688310.989412][1613:1618] CHIP:TOO:   Breadcrumb: 1
-          [1657688310.989586][1613:1618] CHIP:EM: Sending Standalone Ack for MessageCounter:63605306 on exchange 55886i
-      disabled: true
+          "Step 2: TH reads Breadcrumb attribute from the General Commissioning
+          Cluster"
+      cluster: "General Commissioning"
+      command: "readAttribute"
+      attribute: "Breadcrumb"
+      response:
+          value: 1
+          constraints:
+              type: int64u
 
     - label:
-          "TH sends ScanNetworks command to the DUT with the SSID field set to
-          null and the Breadcrumb field set to 2"
+          "Step 3: TH sends ScanNetworks command to the DUT with the SSID field
+          set to null and the Breadcrumb field set to 2"
       PICS: CNET.S.C00.Rsp && CNET.S.C01.Tx
+      command: "ScanNetworks"
+      arguments:
+          values:
+              - name: "SSID"
+                value: null
+              - name: "Breadcrumb"
+                value: 2
+      response:
+          values:
+              - name: "NetworkingStatus"
+                constraints:
+                    anyOf: [0, 1, 5, 6, 12]
+              - name: "DebugText"
+                constraints:
+                    maxLength: 512
+              - name: "ThreadScanResults"
+                constraints:
+                    type: list
+
+    - label:
+          "Step 3: Verify each element in the ThreadScanResults list will have
+          the following fields:"
       verification: |
           ./chip-tool networkcommissioning scan-networks 54 0 --Breadcrumb 2
 
-          Verify  ScanNetworksResponse and its arguments on the TH/All-cluster-app Log:
+          Via the TH (chip-tool), verify:
+          -the NetworkingStatus value as 0 that mentions success.
+          -the PanId value is in the range of 0 to 65534.
+          -the ExtendedPanId value is type of uint64.
+          -the NetworkName value is type of string with a size of 1 to 16 bytes.
+          -the Channel is type of uint16 with range 0 to 65535.
+          -the version value is type of uint8(0 to 255).
+          -the ExtendedAddress is a hwaddr with a size of 8 bytes
+          -the RSSI is of type int8 with a range of -120 to 0.
+          -the LQI is type of uint8(0 to 255).
 
           [1658297283.141075][7695:7700] CHIP:DMG: Received Command Response Data, Endpoint=0 Cluster=0x0000_0031 Command=0x0000_0001
           [1658297283.141183][7695:7700] CHIP:TOO: Endpoint: 0 Cluster: 0x0000_0031 Command 0x0000_0001
@@ -128,30 +176,66 @@ tests:
           [1658297283.142828][7695:7700] CHIP:TOO:    }
           [1658297283.142958][7695:7700] CHIP:DMG: ICR moving to [AwaitingDe]
           [1658297283.143074][7695:7700] CHIP:EM: Sending Standalone Ack for MessageCounter:115607423 on exchange 55136i
-      disabled: true
+      cluster: "LogCommands"
+      command: "UserPrompt"
+      PICS: PICS_USER_PROMPT && CNET.S.C00.Rsp && CNET.S.C01.Tx
+      arguments:
+          values:
+              - name: "message"
+                value: "Please enter 'y' for success"
+              - name: "expectedValue"
+                value: "y"
 
     - label:
-          "TH reads Breadcumb attribute from the General Commissioning Cluster"
-      verification: |
-          ./chip-tool generalcommissioning read breadcrumb 54 0
-
-          Verify "Breadcrumb: 2" on the TH(Chip-tool)  Log:
-
-
-          [1657688397.398564][1626:1631] CHIP:TOO: Endpoint: 0 Cluster: 0x0000_0030 Attribute 0x0000_0000 DataVersion: 829017613
-          [1657688397.398697][1626:1631] CHIP:TOO:   Breadcrumb: 2
-          [1657688397.398852][1626:1631] CHIP:EM: Sending Standalone Ack for MessageCounter:129342305 on exchange 25970i
-      disabled: true
-
+          "Step 4: TH reads Breadcrumb attribute from the General Commissioning
+          Cluster"
+      cluster: "General Commissioning"
+      command: "readAttribute"
+      attribute: "Breadcrumb"
+      response:
+          value: 2
+          constraints:
+              type: int64u
     - label:
-          "TH sends ScanNetworks command to the DUT with the SSID field set to a
-          random string of ASCII characters with a size of between 1 and 31
-          characters and the Breadcrumb field set to 3"
+          "Step 5: TH sends ScanNetworks command to the DUT with the SSID field
+          set to a random string of ASCII characters with a size of between 1
+          and 31 characters and the Breadcrumb field set to 3"
       PICS: CNET.S.C00.Rsp && CNET.S.C01.Tx
+      command: "ScanNetworks"
+      arguments:
+          values:
+              - name: "SSID"
+                value: "hex:1111111522222222"
+              - name: "Breadcrumb"
+                value: 3
+      response:
+          values:
+              - name: "NetworkingStatus"
+                constraints:
+                    anyOf: [0, 1, 5, 6, 12]
+              - name: "DebugText"
+                constraints:
+                    maxLength: 512
+              - name: "ThreadScanResults"
+                constraints:
+                    type: list
+
+    - label:
+          "Step 5: Verify each element in the ThreadScanResults list will have
+          the following fields:"
       verification: |
           ./chip-tool networkcommissioning scan-networks 54 0 --Breadcrumb 3
 
-          Verify  "ScanNetworksResponse and its arguments" on the TH(Chip-tool)  Log:
+          Via the TH (chip-tool), verify:
+          -the NetworkingStatus value should be as 0 that mentions success.
+          -the PanId value should be with in the range of 0 to 65534.
+          -the ExtendedPanId value is type of uint64.
+          -the NetworkName value is type of string with a size of 1 to 16 bytes.
+          -the Channel is type of uint16 with range 0 to 65535.
+          -the version value is type of uint8(0 to 255).
+          -the ExtendedAddress is a hwaddr with a size of 8 bytes
+          -the RSSI is of type int8 with a range of -120 to 0.
+          -the LQI is type of uint8(0 to 255).
 
           [1658297312.201709][7708:7713] CHIP:DMG: },
           [1658297312.201898][7708:7713] CHIP:DMG: Received Command Response Data, Endpoint=0 Cluster=0x0000_0031 Command=0x0000_0001
@@ -172,16 +256,23 @@ tests:
           [1658297312.203066][7708:7713] CHIP:TOO:    }
           [1658297312.203176][7708:7713] CHIP:DMG: ICR moving to [AwaitingDe]
           [1658297312.203284][7708:7713] CHIP:EM: Sending Standalone Ack for MessageCounter:217378941 on exchange 37389i
-      disabled: true
+      cluster: "LogCommands"
+      command: "UserPrompt"
+      PICS: PICS_USER_PROMPT && CNET.S.C00.Rsp && CNET.S.C01.Tx
+      arguments:
+          values:
+              - name: "message"
+                value: "Please enter 'y' for success"
+              - name: "expectedValue"
+                value: "y"
 
     - label:
-          "TH reads Breadcumb attribute from the General Commissioning Cluster"
-      verification: |
-          ./chip-tool generalcommissioning read breadcrumb 54 0
-
-          Verify "Breadcrumb: 3" on the TH(Chip-tool)  Log:
-
-          [1657688489.553742][1639:1644] CHIP:TOO: Endpoint: 0 Cluster: 0x0000_0030 Attribute 0x0000_0000 DataVersion: 829017614
-          [1657688489.553897][1639:1644] CHIP:TOO:   Breadcrumb: 3
-          [1657688489.554053][1639:1644] CHIP:EM: Sending Standalone Ack for MessageCounter:86525470 on exchange 7368i
-      disabled: true
+          "Step 6: TH reads Breadcrumb attribute from the General Commissioning
+          Cluster"
+      cluster: "General Commissioning"
+      command: "readAttribute"
+      attribute: "Breadcrumb"
+      response:
+          value: 3
+          constraints:
+              type: int64u

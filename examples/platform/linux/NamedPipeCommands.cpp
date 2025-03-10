@@ -18,12 +18,15 @@
 
 #include "NamedPipeCommands.h"
 
+#include <errno.h>
 #include <fcntl.h>
 #include <lib/support/CodeUtils.h>
 #include <pthread.h>
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <unistd.h>
+
+#include <string>
 
 static constexpr const size_t kChipEventCmdBufSize = 256;
 
@@ -78,12 +81,15 @@ void * NamedPipeCommands::EventCommandListenerTask(void * arg)
             break;
         }
 
-        ssize_t readBytes      = read(fd, readbuf, kChipEventCmdBufSize);
-        readbuf[readBytes - 1] = '\0';
-        ChipLogProgress(NotSpecified, "Received payload: \"%s\"", readbuf);
+        ssize_t readBytes = read(fd, readbuf, kChipEventCmdBufSize);
+        if (readBytes > 0)
+        {
+            readbuf[readBytes - 1] = '\0';
+            ChipLogProgress(NotSpecified, "Received payload: \"%s\"", readbuf);
 
-        // Process the received command request from event fifo
-        self->mDelegate->OnEventCommandReceived(readbuf);
+            // Process the received command request from event fifo
+            self->mDelegate->OnEventCommandReceived(readbuf);
+        }
 
         close(fd);
     }

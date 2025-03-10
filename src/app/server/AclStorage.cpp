@@ -25,9 +25,9 @@ using namespace chip::Access;
 
 using Entry            = AccessControl::Entry;
 using EntryListener    = AccessControl::EntryListener;
-using StagingAuthMode  = Clusters::AccessControl::AuthMode;
-using StagingPrivilege = Clusters::AccessControl::Privilege;
-using StagingTarget    = Clusters::AccessControl::Structs::Target::Type;
+using StagingAuthMode  = Clusters::AccessControl::AccessControlEntryAuthModeEnum;
+using StagingPrivilege = Clusters::AccessControl::AccessControlEntryPrivilegeEnum;
+using StagingTarget    = Clusters::AccessControl::Structs::AccessControlTargetStruct::Type;
 using Target           = AccessControl::Entry::Target;
 
 namespace {
@@ -152,14 +152,14 @@ CHIP_ERROR Convert(StagingSubject from, NodeId & to)
     switch (from.authMode)
     {
     case StagingAuthMode::kPase:
-        ReturnErrorCodeIf((from.nodeId & ~kMaskPAKEKeyId) != 0, CHIP_ERROR_INVALID_ARGUMENT);
+        VerifyOrReturnError((from.nodeId & ~kMaskPAKEKeyId) == 0, CHIP_ERROR_INVALID_ARGUMENT);
         to = NodeIdFromPAKEKeyId(static_cast<PasscodeId>(from.nodeId));
         break;
     case StagingAuthMode::kCase:
         to = from.nodeId;
         break;
     case StagingAuthMode::kGroup:
-        ReturnErrorCodeIf((from.nodeId & ~kMaskGroupId) != 0, CHIP_ERROR_INVALID_ARGUMENT);
+        VerifyOrReturnError((from.nodeId & ~kMaskGroupId) == 0, CHIP_ERROR_INVALID_ARGUMENT);
         to = NodeIdFromGroupId(static_cast<GroupId>(from.nodeId));
         break;
     default:

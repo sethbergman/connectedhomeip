@@ -61,9 +61,9 @@ public:
 
     // Allow the GenericConfigurationManagerImpl base class to access helper methods and types
     // defined on this class.
-    //#ifndef DOXYGEN_SHOULD_SKIP_THIS
+    // #ifndef DOXYGEN_SHOULD_SKIP_THIS
     //    friend class Internal::GenericConfigurationManagerImpl<ConfigurationManagerImpl>;
-    //#endif
+    // #endif
 
 private:
     // ===== Members that implement the ConfigurationManager public interface.
@@ -74,6 +74,10 @@ private:
     void InitiateFactoryReset(void) override;
     CHIP_ERROR ReadPersistedStorageValue(::chip::Platform::PersistedStorage::Key key, uint32_t & value) override;
     CHIP_ERROR WritePersistedStorageValue(::chip::Platform::PersistedStorage::Key key, uint32_t value) override;
+    CHIP_ERROR GetRebootCount(uint32_t & rebootCount) override;
+    CHIP_ERROR StoreRebootCount(uint32_t rebootCount) override;
+    CHIP_ERROR GetBootReason(uint32_t & bootReasons) override;
+    CHIP_ERROR StoreBootReason(uint32_t bootReasons) override;
 
     // NOTE: Other public interface methods are implemented by GenericConfigurationManagerImpl<>.
 

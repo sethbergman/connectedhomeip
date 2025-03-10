@@ -19,7 +19,7 @@
 #include <algorithm>
 #include <controller/ExampleOperationalCredentialsIssuer.h>
 #include <credentials/CHIPCert.h>
-#include <lib/core/CHIPTLV.h>
+#include <lib/core/TLV.h>
 #include <lib/support/CHIPMem.h>
 #include <lib/support/CodeUtils.h>
 #include <lib/support/PersistentStorageMacros.h>
@@ -30,10 +30,10 @@
 namespace chip {
 namespace Controller {
 
-constexpr const char kOperationalCredentialsIssuerKeypairStorage[]             = "ExampleOpCredsCAKey";
-constexpr const char kOperationalCredentialsIntermediateIssuerKeypairStorage[] = "ExampleOpCredsICAKey";
-constexpr const char kOperationalCredentialsRootCertificateStorage[]           = "ExampleCARootCert";
-constexpr const char kOperationalCredentialsIntermediateCertificateStorage[]   = "ExampleCAIntermediateCert";
+constexpr char kOperationalCredentialsIssuerKeypairStorage[]             = "ExampleOpCredsCAKey";
+constexpr char kOperationalCredentialsIntermediateIssuerKeypairStorage[] = "ExampleOpCredsICAKey";
+constexpr char kOperationalCredentialsRootCertificateStorage[]           = "ExampleCARootCert";
+constexpr char kOperationalCredentialsIntermediateCertificateStorage[]   = "ExampleCAIntermediateCert";
 
 using namespace Credentials;
 using namespace Crypto;
@@ -59,7 +59,7 @@ CHIP_ERROR IssueX509Cert(uint32_t now, uint32_t validity, ChipDN issuerDn, ChipD
     constexpr uint8_t sOID_Extension_SubjectAltName[]  = { 0x55, 0x1d, 0x11 };
 
     Platform::ScopedMemoryBuffer<uint8_t> derBuf;
-    ReturnErrorCodeIf(!derBuf.Alloc(kMaxDERCertLength), CHIP_ERROR_NO_MEMORY);
+    VerifyOrReturnError(derBuf.Alloc(kMaxDERCertLength), CHIP_ERROR_NO_MEMORY);
     MutableByteSpan derSpan{ derBuf.Get(), kMaxDERCertLength };
 
     int64_t serialNumber = 1;
@@ -88,16 +88,16 @@ CHIP_ERROR IssueX509Cert(uint32_t now, uint32_t validity, ChipDN issuerDn, ChipD
     if (maximizeSize)
     {
         Platform::ScopedMemoryBuffer<uint8_t> paddedTlvBuf;
-        ReturnErrorCodeIf(!paddedTlvBuf.Alloc(kMaxCHIPCertLength + kMaxCertPaddingLength), CHIP_ERROR_NO_MEMORY);
+        VerifyOrReturnError(paddedTlvBuf.Alloc(kMaxCHIPCertLength + kMaxCertPaddingLength), CHIP_ERROR_NO_MEMORY);
         MutableByteSpan paddedTlvSpan{ paddedTlvBuf.Get(), kMaxCHIPCertLength + kMaxCertPaddingLength };
         ReturnErrorOnFailure(ConvertX509CertToChipCert(derSpan, paddedTlvSpan));
 
         Platform::ScopedMemoryBuffer<uint8_t> paddedDerBuf;
-        ReturnErrorCodeIf(!paddedDerBuf.Alloc(kMaxDERCertLength + kMaxCertPaddingLength), CHIP_ERROR_NO_MEMORY);
+        VerifyOrReturnError(paddedDerBuf.Alloc(kMaxDERCertLength + kMaxCertPaddingLength), CHIP_ERROR_NO_MEMORY);
         MutableByteSpan paddedDerSpan{ paddedDerBuf.Get(), kMaxDERCertLength + kMaxCertPaddingLength };
 
         Platform::ScopedMemoryBuffer<char> fillerBuf;
-        ReturnErrorCodeIf(!fillerBuf.Alloc(kMaxCertPaddingLength), CHIP_ERROR_NO_MEMORY);
+        VerifyOrReturnError(fillerBuf.Alloc(kMaxCertPaddingLength), CHIP_ERROR_NO_MEMORY);
         memset(fillerBuf.Get(), 'A', kMaxCertPaddingLength);
 
         int derPaddingLen = static_cast<int>(kMaxDERCertLength - kDERCertFutureExtEncodingOverhead - derSpan.size());
@@ -182,7 +182,7 @@ CHIP_ERROR ExampleOperationalCredentialsIssuer::Initialize(PersistentStorageDele
     {
         ChipLogProgress(Controller, "Couldn't get %s from storage: %s", kOperationalCredentialsIssuerKeypairStorage, ErrorStr(err));
         // Storage doesn't have an existing keypair. Let's create one and add it to the storage.
-        ReturnErrorOnFailure(mIssuer.Initialize());
+        ReturnErrorOnFailure(mIssuer.Initialize(Crypto::ECPKeyTarget::ECDSA));
         ReturnErrorOnFailure(mIssuer.Serialize(serializedKey));
 
         PERSISTENT_KEY_OP(mIndex, kOperationalCredentialsIssuerKeypairStorage, key,
@@ -209,7 +209,7 @@ CHIP_ERROR ExampleOperationalCredentialsIssuer::Initialize(PersistentStorageDele
         ChipLogProgress(Controller, "Couldn't get %s from storage: %s", kOperationalCredentialsIntermediateIssuerKeypairStorage,
                         ErrorStr(err));
         // Storage doesn't have an existing keypair. Let's create one and add it to the storage.
-        ReturnErrorOnFailure(mIntermediateIssuer.Initialize());
+        ReturnErrorOnFailure(mIntermediateIssuer.Initialize(Crypto::ECPKeyTarget::ECDSA));
         ReturnErrorOnFailure(mIntermediateIssuer.Serialize(serializedKey));
 
         PERSISTENT_KEY_OP(mIndex, kOperationalCredentialsIntermediateIssuerKeypairStorage, key,
@@ -323,7 +323,7 @@ CHIP_ERROR ExampleOperationalCredentialsIssuer::GenerateNOCChain(const ByteSpan 
                                                                  const ByteSpan & PAI,
                                                                  Callback::Callback<OnNOCChainGeneration> * onCompletion)
 {
-    VerifyOrReturnError(mInitialized, CHIP_ERROR_WELL_UNINITIALIZED);
+    VerifyOrReturnError(mInitialized, CHIP_ERROR_UNINITIALIZED);
     // At this point, Credential issuer may wish to validate the CSR information
     (void) attestationChallenge;
     (void) csrNonce;
@@ -348,8 +348,7 @@ CHIP_ERROR ExampleOperationalCredentialsIssuer::GenerateNOCChain(const ByteSpan 
         ReturnErrorOnFailure(reader.Next());
     }
 
-    VerifyOrReturnError(reader.GetType() == kTLVType_Structure, CHIP_ERROR_WRONG_TLV_TYPE);
-    VerifyOrReturnError(reader.GetTag() == AnonymousTag(), CHIP_ERROR_UNEXPECTED_TLV_ELEMENT);
+    ReturnErrorOnFailure(reader.Expect(kTLVType_Structure, AnonymousTag()));
 
     TLVType containerType;
     ReturnErrorOnFailure(reader.EnterContainer(containerType));
@@ -362,19 +361,19 @@ CHIP_ERROR ExampleOperationalCredentialsIssuer::GenerateNOCChain(const ByteSpan 
     ReturnErrorOnFailure(VerifyCertificateSigningRequest(csr.data(), csr.size(), pubkey));
 
     chip::Platform::ScopedMemoryBuffer<uint8_t> noc;
-    ReturnErrorCodeIf(!noc.Alloc(kMaxDERCertLength), CHIP_ERROR_NO_MEMORY);
+    VerifyOrReturnError(noc.Alloc(kMaxDERCertLength), CHIP_ERROR_NO_MEMORY);
     MutableByteSpan nocSpan(noc.Get(), kMaxDERCertLength);
 
     chip::Platform::ScopedMemoryBuffer<uint8_t> icac;
-    ReturnErrorCodeIf(!icac.Alloc(kMaxDERCertLength), CHIP_ERROR_NO_MEMORY);
+    VerifyOrReturnError(icac.Alloc(kMaxDERCertLength), CHIP_ERROR_NO_MEMORY);
     MutableByteSpan icacSpan(icac.Get(), kMaxDERCertLength);
 
     chip::Platform::ScopedMemoryBuffer<uint8_t> rcac;
-    ReturnErrorCodeIf(!rcac.Alloc(kMaxDERCertLength), CHIP_ERROR_NO_MEMORY);
+    VerifyOrReturnError(rcac.Alloc(kMaxDERCertLength), CHIP_ERROR_NO_MEMORY);
     MutableByteSpan rcacSpan(rcac.Get(), kMaxDERCertLength);
 
     ReturnErrorOnFailure(
-        GenerateNOCChainAfterValidation(assignedId, mNextFabricId, chip::kUndefinedCATs, pubkey, rcacSpan, icacSpan, nocSpan));
+        GenerateNOCChainAfterValidation(assignedId, mNextFabricId, mNextCATs, pubkey, rcacSpan, icacSpan, nocSpan));
 
     // TODO(#13825): Should always generate some IPK. Using a temporary fixed value until APIs are plumbed in to set it end-to-end
     // TODO: Force callers to set IPK if used before GenerateNOCChain will succeed.
@@ -386,9 +385,9 @@ CHIP_ERROR ExampleOperationalCredentialsIssuer::GenerateNOCChain(const ByteSpan 
     // Prepare IPK to be sent back. A more fully-fledged operational credentials delegate
     // would obtain a suitable key per fabric.
     uint8_t ipkValue[CHIP_CRYPTO_SYMMETRIC_KEY_LENGTH_BYTES];
-    Crypto::AesCcm128KeySpan ipkSpan(ipkValue);
+    Crypto::IdentityProtectionKeySpan ipkSpan(ipkValue);
 
-    ReturnErrorCodeIf(defaultIpkSpan.size() != sizeof(ipkValue), CHIP_ERROR_INTERNAL);
+    VerifyOrReturnError(defaultIpkSpan.size() == sizeof(ipkValue), CHIP_ERROR_INTERNAL);
     memcpy(&ipkValue[0], defaultIpkSpan.data(), defaultIpkSpan.size());
 
     // Callback onto commissioner.

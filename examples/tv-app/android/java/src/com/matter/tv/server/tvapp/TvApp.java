@@ -28,7 +28,7 @@ public class TvApp {
     nativeInit();
   }
 
-  private void postClusterInit(int clusterId, int endpoint) {
+  private void postClusterInit(long clusterId, int endpoint) {
     Log.d(TAG, "postClusterInit for " + clusterId + " at " + endpoint);
     if (mCallback != null) {
       mCallback.onClusterInit(this, clusterId, endpoint);
@@ -47,6 +47,9 @@ public class TvApp {
 
   public native void setKeypadInputManager(int endpoint, KeypadInputManager manager);
 
+  public native void setApplicationLauncherManager(
+      int endpoint, ApplicationLauncherManager manager);
+
   public native void setWakeOnLanManager(int endpoint, WakeOnLanManager manager);
 
   public native void setMediaInputManager(int endpoint, MediaInputManager manager);
@@ -56,6 +59,8 @@ public class TvApp {
   public native void setLowPowerManager(int endpoint, LowPowerManager manager);
 
   public native void setMediaPlaybackManager(int endpoint, MediaPlaybackManager manager);
+
+  public native void setMessagesManager(int endpoint, MessagesManager manager);
 
   public native void setChannelManager(int endpoint, ChannelManager manager);
 

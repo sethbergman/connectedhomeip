@@ -21,7 +21,6 @@
 #include "DeviceCallbacks.h"
 #include "Globals.h"
 #include "LEDWidget.h"
-#include "OpenThreadLaunch.h"
 #include "QRCodeScreen.h"
 #include "ShellCommands.h"
 #include "WiFiWidget.h"
@@ -34,13 +33,17 @@
 #include "nvs_flash.h"
 #include "platform/PlatformManager.h"
 #include "shell_extension/launch.h"
-#include <app/server/OnboardingCodesUtil.h>
-#include <app/util/af.h>
+#include <app/util/endpoint-config-api.h>
 #include <binding-handler.h>
 #include <common/CHIPDeviceManager.h>
 #include <common/Esp32AppServer.h>
+#include <common/Esp32ThreadInit.h>
 #include <credentials/DeviceAttestationCredsProvider.h>
 #include <credentials/examples/DeviceAttestationCredsExample.h>
+#include <platform/ESP32/ESP32Utils.h>
+#include <setup_payload/OnboardingCodesUtil.h>
+#include <static-supported-modes-manager.h>
+#include <static-supported-temperature-levels.h>
 
 #if CONFIG_HAVE_DISPLAY
 #include "DeviceWithDisplay.h"
@@ -48,10 +51,6 @@
 
 #if CONFIG_ENABLE_PW_RPC
 #include "Rpc.h"
-#endif
-
-#if CONFIG_OPENTHREAD_ENABLED
-#include <platform/ThreadStackManager.h>
 #endif
 
 #if CONFIG_ENABLE_ESP32_FACTORY_DATA_PROVIDER
@@ -67,12 +66,13 @@
 using namespace ::chip;
 using namespace ::chip::Shell;
 using namespace ::chip::DeviceManager;
+using namespace ::chip::DeviceLayer;
 using namespace ::chip::Credentials;
 
 // Used to indicate that an IP address has been added to the QRCode
 #define EXAMPLE_VENDOR_TAG_IP 1
 
-const char * TAG = "all-clusters-app";
+extern const char TAG[] = "all-clusters-app";
 
 static AppDeviceCallbacks EchoCallbacks;
 static AppDeviceCallbacksDelegate sAppDeviceCallbacksDelegate;
@@ -81,6 +81,7 @@ namespace {
 class AppCallbacks : public AppDelegate
 {
 public:
+    void OnCommissioningSessionEstablishmentStarted() {}
     void OnCommissioningSessionStarted() override { bluetoothLED.Set(true); }
     void OnCommissioningSessionStopped() override
     {
@@ -92,6 +93,9 @@ public:
 };
 
 AppCallbacks sCallbacks;
+
+app::Clusters::TemperatureControl::AppSupportedTemperatureLevelsDelegate sAppSupportedTemperatureLevelsDelegate;
+app::Clusters::ModeSelect::StaticSupportedModesManager sStaticSupportedModesManager;
 
 constexpr EndpointId kNetworkCommissioningEndpointSecondary = 0xFFFE;
 
@@ -111,13 +115,34 @@ static void InitServer(intptr_t context)
 {
     Esp32AppServer::Init(&sCallbacks); // Init ZCL Data Model and CHIP App Server AND Initialize device attestation config
 
+#if !(CHIP_DEVICE_CONFIG_ENABLE_WIFI && (CHIP_DEVICE_CONFIG_ENABLE_THREAD || CHIP_DEVICE_CONFIG_ENABLE_ETHERNET))
     // We only have network commissioning on endpoint 0.
     emberAfEndpointEnableDisable(kNetworkCommissioningEndpointSecondary, false);
+#endif
 
-    InitBindingHandlers();
 #if CONFIG_DEVICE_TYPE_M5STACK
     SetupPretendDevices();
 #endif
+
+    app::Clusters::TemperatureControl::SetInstance(&sAppSupportedTemperatureLevelsDelegate);
+    app::Clusters::ModeSelect::setSupportedModesManager(&sStaticSupportedModesManager);
+}
+
+#include <examples/all-clusters-app/all-clusters-common/include/laundry-washer-controls-delegate-impl.h>
+#include <src/app/clusters/laundry-washer-controls-server/laundry-washer-controls-server.h>
+
+using namespace chip::app::Clusters::LaundryWasherControls;
+void emberAfLaundryWasherControlsClusterInitCallback(EndpointId endpoint)
+{
+    LaundryWasherControlsServer::SetDefaultDelegate(1, &LaundryWasherControlDelegate::getLaundryWasherControlDelegate());
+}
+
+#include <examples/all-clusters-app/all-clusters-common/include/laundry-dryer-controls-delegate-impl.h>
+#include <src/app/clusters/laundry-dryer-controls-server/laundry-dryer-controls-server.h>
+using namespace chip::app::Clusters::LaundryDryerControls;
+void emberAfLaundryDryerControlsClusterInitCallback(EndpointId endpoint)
+{
+    LaundryDryerControlsServer::SetDefaultDelegate(endpoint, &LaundryDryerControlDelegate::getLaundryDryerControlDelegate());
 }
 
 extern "C" void app_main()
@@ -127,6 +152,12 @@ extern "C" void app_main()
     if (err != ESP_OK)
     {
         ESP_LOGE(TAG, "nvs_flash_init() failed: %s", esp_err_to_name(err));
+        return;
+    }
+    err = esp_event_loop_create_default();
+    if (err != ESP_OK)
+    {
+        ESP_LOGE(TAG, "esp_event_loop_create_default() failed: %s", esp_err_to_name(err));
         return;
     }
 #if CONFIG_ENABLE_PW_RPC
@@ -143,10 +174,13 @@ extern "C" void app_main()
     CASECommands::GetInstance().Register();
 #endif // CONFIG_ENABLE_CHIP_SHELL
 
-#if CONFIG_OPENTHREAD_ENABLED
-    LaunchOpenThread();
-    ThreadStackMgr().InitThreadStack();
-#endif
+#if CHIP_DEVICE_CONFIG_ENABLE_WIFI
+    if (DeviceLayer::Internal::ESP32Utils::InitWiFiStack() != CHIP_NO_ERROR)
+    {
+        ESP_LOGE(TAG, "Failed to initialize the Wi-Fi stack");
+        return;
+    }
+#endif // CHIP_DEVICE_CONFIG_ENABLE_WIFI
 
     DeviceLayer::SetDeviceInfoProvider(&gExampleDeviceInfoProvider);
 
@@ -155,7 +189,7 @@ extern "C" void app_main()
     DeviceCallbacksDelegate::Instance().SetAppDelegate(&sAppDeviceCallbacksDelegate);
     if (error != CHIP_NO_ERROR)
     {
-        ESP_LOGE(TAG, "device.Init() failed: %s", ErrorStr(error));
+        ESP_LOGE(TAG, "device.Init() failed: %" CHIP_ERROR_FORMAT, error.Format());
         return;
     }
 
@@ -173,7 +207,7 @@ extern "C" void app_main()
     error = GetAppTask().StartAppTask();
     if (error != CHIP_NO_ERROR)
     {
-        ESP_LOGE(TAG, "GetAppTask().StartAppTask() failed : %s", ErrorStr(error));
+        ESP_LOGE(TAG, "GetAppTask().StartAppTask() failed : %" CHIP_ERROR_FORMAT, error.Format());
     }
 
     chip::DeviceLayer::PlatformMgr().ScheduleWork(InitServer, reinterpret_cast<intptr_t>(nullptr));

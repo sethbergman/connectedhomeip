@@ -19,34 +19,37 @@
 from __future__ import annotations
 
 import ctypes
-from dataclasses import dataclass, field
-from typing import *
-from ctypes import *
-from rich.pretty import pprint
-import json
 import logging
-import builtins
-import base64
+from ctypes import c_void_p
+from datetime import timedelta
+from typing import List, Optional
+
 import chip.exceptions
-from chip import ChipDeviceCtrl
-from chip import ChipStack
-from chip import FabricAdmin
+from chip import ChipStack, FabricAdmin
+from chip.native import PyChipError
 from chip.storage import PersistentStorage
+
+LOGGER = logging.getLogger(__name__)
+
+# By default, let's set certificate validity to 10 years.
+CERTIFICATE_VALIDITY_PERIOD_SEC = int(timedelta(days=10*365).total_seconds())
 
 
 class CertificateAuthority:
-    '''  This represents an operational Root Certificate Authority (CA) with a root key key pair with associated public key (i.e "Root PK") . This manages
-         a set of FabricAdmin objects, each administering a fabric identified by a unique FabricId scoped to it.
+    '''  This represents an operational Root Certificate Authority (CA) with a root key key pair with associated
+         public key (i.e "Root PK") . This manages a set of FabricAdmin objects, each administering a fabric identified
+         by a unique FabricId scoped to it.
 
-         Each CertificateAuthority instance is tied to a 'CA index' that is used to look-up the list of fabrics already setup previously
-         in the provided PersistentStorage object.
+         Each CertificateAuthority instance is tied to a 'CA index' that is used to look-up the list of fabrics already setup
+         previously in the provided PersistentStorage object.
 
          >> C++ Binding Details
 
-         Each CertificateAuthority instance is associated with a single instance of the OperationalCredentialsAdapter. This adapter instance implements
-         the OperationalCredentialsDelegate and is meant to provide a Python adapter to the functions in that delegate. It relies on the in-built
-         ExampleOperationalCredentialsIssuer to then generate certificate material for the CA.  This instance also uses the 'CA index' to
-         store/look-up the associated credential material from the provided PersistentStorage object.
+         Each CertificateAuthority instance is associated with a single instance of the OperationalCredentialsAdapter.
+         This adapter instance implements the OperationalCredentialsDelegate and is meant to provide a Python adapter to the
+         functions in that delegate. It relies on the in-built ExampleOperationalCredentialsIssuer to then generate certificate
+         material for the CA.  This instance also uses the 'CA index' to store/look-up the associated credential material from
+         the provided PersistentStorage object.
     '''
     @classmethod
     def _Handle(cls):
@@ -62,11 +65,12 @@ class CertificateAuthority:
 
              Arguments:
                 chipStack:          A reference to a chip.ChipStack object.
-                caIndex:            An index used to look-up details about stored credential material and fabrics from persistent storage.
+                caIndex:            An index used to look-up details about stored credential material and fabrics
+                                    from persistent storage.
                 persistentStorage:  An optional reference to a PersistentStorage object. If one is provided, it will pick that over
                                     the default PersistentStorage object retrieved from the chipStack.
         '''
-        self.logger().warning(f"New CertificateAuthority at index {caIndex}")
+        LOGGER.info(f"New CertificateAuthority at index {caIndex}")
 
         self._chipStack = chipStack
         self._caIndex = caIndex
@@ -74,14 +78,18 @@ class CertificateAuthority:
         self._Handle().pychip_OpCreds_InitializeDelegate.restype = c_void_p
         self._Handle().pychip_OpCreds_InitializeDelegate.argtypes = [ctypes.py_object, ctypes.c_uint32, ctypes.c_void_p]
 
-        self._Handle().pychip_OpCreds_SetMaximallyLargeCertsUsed.restype = c_uint32
+        self._Handle().pychip_OpCreds_SetMaximallyLargeCertsUsed.restype = PyChipError
         self._Handle().pychip_OpCreds_SetMaximallyLargeCertsUsed.argtypes = [ctypes.c_void_p, ctypes.c_bool]
+
+        self._Handle().pychip_OpCreds_SetCertificateValidityPeriod.restype = PyChipError
+        self._Handle().pychip_OpCreds_SetCertificateValidityPeriod.argtypes = [ctypes.c_void_p, ctypes.c_uint32]
 
         if (persistentStorage is None):
             persistentStorage = self._chipStack.GetStorageManager()
 
         self._persistentStorage = persistentStorage
         self._maximizeCertChains = False
+        self._certificateValidityPeriodSec = CERTIFICATE_VALIDITY_PERIOD_SEC
 
         self._closure = self._chipStack.Call(
             lambda: self._Handle().pychip_OpCreds_InitializeDelegate(
@@ -92,7 +100,7 @@ class CertificateAuthority:
             raise ValueError("Encountered error initializing OpCreds adapter")
 
         self._isActive = True
-        self._activeAdmins = []
+        self._activeAdmins: List[FabricAdmin.FabricAdmin] = []
 
     def LoadFabricAdminsFromStorage(self):
         ''' If FabricAdmins had been setup previously, this re-creates them using information from persistent storage.
@@ -104,10 +112,10 @@ class CertificateAuthority:
             Each FabricAdmin that is added there-after will insert a dictionary item into that list containing
             'fabricId' and 'vendorId' keys.
         '''
-        if (not(self._isActive)):
+        if (not (self._isActive)):
             raise RuntimeError("Object isn't active")
 
-        self.logger().warning("Loading fabric admins from storage...")
+        LOGGER.info("Loading fabric admins from storage...")
 
         caList = self._persistentStorage.GetReplKey(key='caList')
         if (str(self._caIndex) not in caList):
@@ -124,12 +132,12 @@ class CertificateAuthority:
             This will update the REPL keys in persistent storage IF a 'caList' key is present. If it isn't,
             will avoid making any updates.
         '''
-        if (not(self._isActive)):
+        if (not (self._isActive)):
             raise RuntimeError(
-                f"CertificateAuthority object was previously shutdown and is no longer valid!")
+                "CertificateAuthority object was previously shutdown and is no longer valid!")
 
         if (vendorId is None or fabricId is None):
-            raise ValueError(f"Invalid values for fabricId and vendorId")
+            raise ValueError("Invalid values for fabricId and vendorId")
 
         for existingAdmin in self._activeAdmins:
             if (existingAdmin.fabricId == fabricId):
@@ -172,7 +180,7 @@ class CertificateAuthority:
     def GetOpCredsContext(self):
         ''' Returns a pointer to the underlying C++ OperationalCredentialsAdapter.
         '''
-        if (not(self._isActive)):
+        if (not (self._isActive)):
             raise RuntimeError("Object isn't active")
 
         return self._closure
@@ -189,16 +197,28 @@ class CertificateAuthority:
     def maximizeCertChains(self) -> bool:
         return self._maximizeCertChains
 
+    @property
+    def certificateValidityPeriodSec(self) -> int:
+        return self._certificateValidityPeriodSec
+
     @maximizeCertChains.setter
     def maximizeCertChains(self, enabled: bool):
-        res = self._chipStack.Call(
+        self._chipStack.Call(
             lambda: self._Handle().pychip_OpCreds_SetMaximallyLargeCertsUsed(ctypes.c_void_p(self._closure), ctypes.c_bool(enabled))
-        )
-
-        if res != 0:
-            raise self._chipStack.ErrorToException(res)
+        ).raise_on_error()
 
         self._maximizeCertChains = enabled
+
+    @certificateValidityPeriodSec.setter
+    def certificateValidityPeriodSec(self, validity: int):
+        if validity < 0:
+            raise ValueError("Validity period must be a non-negative integer")
+
+        self._chipStack.Call(
+            lambda: self._Handle().pychip_OpCreds_SetCertificateValidityPeriod(ctypes.c_void_p(self._closure), ctypes.c_uint32(validity))
+        ).raise_on_error()
+
+        self._certificateValidityPeriodSec = validity
 
     def __del__(self):
         self.Shutdown()
@@ -224,14 +244,13 @@ class CertificateAuthorityManager:
             persistentStorage:  If provided, over-rides the default instance in the provided chipStack
                                 when initializing CertificateAuthority instances.
         '''
-        self._activeCaIndexList = []
         self._chipStack = chipStack
 
         if (persistentStorage is None):
             persistentStorage = self._chipStack.GetStorageManager()
 
         self._persistentStorage = persistentStorage
-        self._activeCaList = []
+        self._activeCaList: List[CertificateAuthority] = []
         self._isActive = True
 
     def _AllocateNextCaIndex(self):
@@ -246,10 +265,10 @@ class CertificateAuthorityManager:
         ''' Loads any existing CertificateAuthority instances present in persistent storage.
             If the 'caList' key is not present in the REPL config, it will create one.
         '''
-        if (not(self._isActive)):
+        if (not (self._isActive)):
             raise RuntimeError("Object is not active")
 
-        self.logger().warning("Loading certificate authorities from storage...")
+        LOGGER.info("Loading certificate authorities from storage...")
 
         #
         # Persist details to storage (read modify write).
@@ -262,14 +281,14 @@ class CertificateAuthorityManager:
             ca = self.NewCertificateAuthority(int(caIndex))
             ca.LoadFabricAdminsFromStorage()
 
-    def NewCertificateAuthority(self, caIndex: int = None, maximizeCertChains: bool = False):
+    def NewCertificateAuthority(self, caIndex: Optional[int] = None, maximizeCertChains: bool = False, certificateValidityPeriodSec: Optional[int] = None):
         ''' Creates a new CertificateAuthority instance with the provided CA Index and the PersistentStorage
             instance previously setup in the constructor.
 
             This will write to the REPL keys in persistent storage to setup an empty list for the 'CA Index'
             item.
         '''
-        if (not(self._isActive)):
+        if (not (self._isActive)):
             raise RuntimeError("Object is not active")
 
         if (caIndex is None):
@@ -286,8 +305,12 @@ class CertificateAuthorityManager:
             caList[str(caIndex)] = []
             self._persistentStorage.SetReplKey(key='caList', value=caList)
 
+        if certificateValidityPeriodSec is None:
+            certificateValidityPeriodSec = CERTIFICATE_VALIDITY_PERIOD_SEC
+
         ca = CertificateAuthority(chipStack=self._chipStack, caIndex=caIndex, persistentStorage=self._persistentStorage)
         ca.maximizeCertChains = maximizeCertChains
+        ca.certificateValidityPeriodSec = certificateValidityPeriodSec
         self._activeCaList.append(ca)
 
         return ca

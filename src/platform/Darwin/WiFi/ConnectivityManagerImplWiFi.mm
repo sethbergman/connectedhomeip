@@ -39,7 +39,7 @@ CWInterface * GetDefaultWiFiInterface()
 
     return interface;
 }
-}
+} // namespace
 
 namespace chip {
 namespace DeviceLayer {
@@ -79,7 +79,7 @@ namespace DeviceLayer {
         bool status = false;
 
         if (_GetWiFiStationMode() == kWiFiStationMode_Enabled) {
-            char interfaceName[IFNAMSIZ];
+            char interfaceName[Inet::InterfaceId::kMaxIfNameLength];
             VerifyOrReturnError(CHIP_NO_ERROR == GetWiFiInterfaceName(interfaceName, sizeof(interfaceName)), false);
             VerifyOrReturnError(CHIP_NO_ERROR == GetInterfaceStatus(interfaceName, &status), false);
         }
@@ -108,5 +108,5 @@ namespace DeviceLayer {
         return CHIP_NO_ERROR;
     }
 
-}
-}
+} // namespace DeviceLayer
+} // namespace chip

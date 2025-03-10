@@ -30,14 +30,20 @@
 #include <lib/support/SafeInt.h>
 #include <lib/support/logging/CHIPLogging.h>
 
+#if CHIP_SYSTEM_CONFIG_USE_POSIX_SOCKETS
 #if HAVE_SYS_SOCKET_H
 #include <sys/socket.h>
 #endif // HAVE_SYS_SOCKET_H
-
-#include <cerrno>
 #include <net/if.h>
 #include <netinet/in.h>
 #include <sys/ioctl.h>
+#endif // CHIP_SYSTEM_CONFIG_USE_POSIX_SOCKETS
+
+#if CHIP_SYSTEM_CONFIG_USE_ZEPHYR_SOCKETS || CHIP_SYSTEM_CONFIG_USE_ZEPHYR_SOCKET_EXTENSIONS
+#include "ZephyrSocket.h" // nogncheck
+#endif
+
+#include <cerrno>
 #include <unistd.h>
 #include <utility>
 
@@ -51,10 +57,6 @@
 #define INADDR_ANY 0
 #endif
 
-#if CHIP_SYSTEM_CONFIG_USE_ZEPHYR_SOCKET_EXTENSIONS
-#include "ZephyrSocket.h"
-#endif // CHIP_SYSTEM_CONFIG_USE_ZEPHYR_SOCKET_EXTENSIONS
-
 /*
  * Some systems define both IPV6_{ADD,DROP}_MEMBERSHIP and
  * IPV6_{JOIN,LEAVE}_GROUP while others only define
@@ -66,7 +68,7 @@
 #define INET_IPV6_ADD_MEMBERSHIP IPV6_ADD_MEMBERSHIP
 #elif defined(IPV6_JOIN_GROUP)
 #define INET_IPV6_ADD_MEMBERSHIP IPV6_JOIN_GROUP
-#elif !__ZEPHYR__
+#elif !CHIP_SYSTEM_CONFIG_USE_PLATFORM_MULTICAST_API
 #error                                                                                                                             \
     "Neither IPV6_ADD_MEMBERSHIP nor IPV6_JOIN_GROUP are defined which are required for generalized IPv6 multicast group support."
 #endif // IPV6_ADD_MEMBERSHIP
@@ -75,7 +77,7 @@
 #define INET_IPV6_DROP_MEMBERSHIP IPV6_DROP_MEMBERSHIP
 #elif defined(IPV6_LEAVE_GROUP)
 #define INET_IPV6_DROP_MEMBERSHIP IPV6_LEAVE_GROUP
-#elif !__ZEPHYR__
+#elif !CHIP_SYSTEM_CONFIG_USE_PLATFORM_MULTICAST_API
 #error                                                                                                                             \
     "Neither IPV6_DROP_MEMBERSHIP nor IPV6_LEAVE_GROUP are defined which are required for generalized IPv6 multicast group support."
 #endif // IPV6_DROP_MEMBERSHIP
@@ -100,6 +102,8 @@ CHIP_ERROR IPv6Bind(int socket, const IPAddress & address, uint16_t port, Interf
     sa.sin6_scope_id = static_cast<decltype(sa.sin6_scope_id)>(interfaceId);
 
     CHIP_ERROR status = CHIP_NO_ERROR;
+
+    // NOLINTNEXTLINE(clang-analyzer-unix.StdCLibraryFunctions): Function called only with valid socket after GetSocket
     if (bind(socket, reinterpret_cast<const sockaddr *>(&sa), static_cast<unsigned>(sizeof(sa))) != 0)
     {
         status = CHIP_ERROR_POSIX(errno);
@@ -133,6 +137,8 @@ CHIP_ERROR IPv4Bind(int socket, const IPAddress & address, uint16_t port)
     sa.sin_addr   = address.ToIPv4();
 
     CHIP_ERROR status = CHIP_NO_ERROR;
+
+    // NOLINTNEXTLINE(clang-analyzer-unix.StdCLibraryFunctions): Function called only with valid socket after GetSocket
     if (bind(socket, reinterpret_cast<const sockaddr *>(&sa), static_cast<unsigned>(sizeof(sa))) != 0)
     {
         status = CHIP_ERROR_POSIX(errno);
@@ -164,8 +170,7 @@ CHIP_ERROR IPv4Bind(int socket, const IPAddress & address, uint16_t port)
 } // anonymous namespace
 
 #if CHIP_SYSTEM_CONFIG_USE_PLATFORM_MULTICAST_API
-UDPEndPointImplSockets::MulticastGroupHandler UDPEndPointImplSockets::sJoinMulticastGroupHandler;
-UDPEndPointImplSockets::MulticastGroupHandler UDPEndPointImplSockets::sLeaveMulticastGroupHandler;
+UDPEndPointImplSockets::MulticastGroupHandler UDPEndPointImplSockets::sMulticastGroupHandler;
 #endif // CHIP_SYSTEM_CONFIG_USE_PLATFORM_MULTICAST_API
 
 CHIP_ERROR UDPEndPointImplSockets::BindImpl(IPAddressType addressType, const IPAddress & addr, uint16_t port, InterfaceId interface)
@@ -337,6 +342,7 @@ CHIP_ERROR UDPEndPointImplSockets::SendMsgImpl(const IPPacketInfo * aPktInfo, Sy
         intf = mBoundIntfId;
     }
 
+#if INET_CONFIG_UDP_SOCKET_PKTINFO
     // If the packet should be sent over a specific interface, or with a specific source
     // address, construct an IP_PKTINFO/IPV6_PKTINFO "control message" to that effect
     // add add it to the message header.  If the local OS doesn't support IP_PKTINFO/IPV6_PKTINFO
@@ -401,14 +407,19 @@ CHIP_ERROR UDPEndPointImplSockets::SendMsgImpl(const IPPacketInfo * aPktInfo, Sy
         return CHIP_ERROR_UNSUPPORTED_CHIP_FEATURE;
 #endif // !(defined(IP_PKTINFO) && defined(IPV6_PKTINFO))
     }
+#endif // INET_CONFIG_UDP_SOCKET_PKTINFO
 
     // Send IP packet.
+    // NOLINTNEXTLINE(clang-analyzer-unix.StdCLibraryFunctions): GetSocket calls ensure mSocket is valid
     const ssize_t lenSent = sendmsg(mSocket, &msgHeader, 0);
     if (lenSent == -1)
     {
         return CHIP_ERROR_POSIX(errno);
     }
-    if (lenSent != msg->DataLength())
+
+    size_t len = static_cast<size_t>(lenSent);
+
+    if (len != msg->DataLength())
     {
         return CHIP_ERROR_OUTBOUND_MESSAGE_TOO_BIG;
     }
@@ -461,7 +472,14 @@ CHIP_ERROR UDPEndPointImplSockets::GetSocket(IPAddressType addressType)
         {
             return CHIP_ERROR_POSIX(errno);
         }
-        ReturnErrorOnFailure(static_cast<System::LayerSockets *>(&GetSystemLayer())->StartWatchingSocket(mSocket, &mWatch));
+        CHIP_ERROR err = static_cast<System::LayerSockets *>(&GetSystemLayer())->StartWatchingSocket(mSocket, &mWatch);
+        if (err != CHIP_NO_ERROR)
+        {
+            // Our mWatch is not valid; make sure we never use it.
+            close(mSocket);
+            mSocket = kInvalidSocketFd;
+            return err;
+        }
 
         mAddrType = addressType;
 
@@ -565,7 +583,8 @@ void UDPEndPointImplSockets::HandlePendingIO(System::SocketEvents events)
     System::PacketBufferHandle lBuffer;
 
     lPacketInfo.Clear();
-    lPacketInfo.DestPort = mBoundPort;
+    lPacketInfo.DestPort  = mBoundPort;
+    lPacketInfo.Interface = mBoundIntfId;
 
     lBuffer = System::PacketBufferHandle::New(System::PacketBuffer::kMaxSizeWithoutReserve, 0);
 
@@ -592,11 +611,11 @@ void UDPEndPointImplSockets::HandlePendingIO(System::SocketEvents events)
 
         ssize_t rcvLen = recvmsg(mSocket, &msgHeader, MSG_DONTWAIT);
 
-        if (rcvLen < 0)
+        if (rcvLen == -1)
         {
             lStatus = CHIP_ERROR_POSIX(errno);
         }
-        else if (rcvLen > lBuffer->AvailableDataLength())
+        else if (lBuffer->AvailableDataLength() < static_cast<size_t>(rcvLen))
         {
             lStatus = CHIP_ERROR_INBOUND_MESSAGE_TOO_BIG;
         }
@@ -680,7 +699,7 @@ void UDPEndPointImplSockets::HandlePendingIO(System::SocketEvents events)
     }
 }
 
-#if IP_MULTICAST_LOOP || IPV6_MULTICAST_LOOP
+#ifdef IPV6_MULTICAST_LOOP
 static CHIP_ERROR SocketsSetMulticastLoopback(int aSocket, bool aLoopback, int aProtocol, int aOption)
 {
     const unsigned int lValue = static_cast<unsigned int>(aLoopback);
@@ -691,7 +710,7 @@ static CHIP_ERROR SocketsSetMulticastLoopback(int aSocket, bool aLoopback, int a
 
     return CHIP_NO_ERROR;
 }
-#endif // IP_MULTICAST_LOOP || IPV6_MULTICAST_LOOP
+#endif // IPV6_MULTICAST_LOOP
 
 static CHIP_ERROR SocketsSetMulticastLoopback(int aSocket, IPVersion aIPVersion, bool aLoopback)
 {
@@ -705,11 +724,11 @@ static CHIP_ERROR SocketsSetMulticastLoopback(int aSocket, IPVersion aIPVersion,
         lRetval = SocketsSetMulticastLoopback(aSocket, aLoopback, IPPROTO_IPV6, IPV6_MULTICAST_LOOP);
         break;
 
-#if INET_CONFIG_ENABLE_IPV4
+#if INET_CONFIG_ENABLE_IPV4 && defined(IP_MULTICAST_LOOP)
     case kIPVersion_4:
         lRetval = SocketsSetMulticastLoopback(aSocket, aLoopback, IPPROTO_IP, IP_MULTICAST_LOOP);
         break;
-#endif // INET_CONFIG_ENABLE_IPV4
+#endif // INET_CONFIG_ENABLE_IPV4 && defined(IP_MULTICAST_LOOP)
 
     default:
         lRetval = INET_ERROR_WRONG_ADDRESS_TYPE;
@@ -767,10 +786,21 @@ CHIP_ERROR UDPEndPointImplSockets::IPv4JoinLeaveMulticastGroupImpl(InterfaceId a
         interfaceAddr.s_addr = htonl(INADDR_ANY);
     }
 
+#if INET_CONFIG_UDP_SOCKET_MREQN
+    struct ip_mreqn lMulticastRequest;
+    memset(&lMulticastRequest, 0, sizeof(lMulticastRequest));
+    lMulticastRequest.imr_ifindex   = aInterfaceId.GetPlatformInterface(); /* Network interface index */
+    lMulticastRequest.imr_address   = interfaceAddr;                       /* IP address of local interface */
+    lMulticastRequest.imr_multiaddr = aAddress.ToIPv4();                   /* IP multicast group address*/
+
+#else
+
     struct ip_mreq lMulticastRequest;
     memset(&lMulticastRequest, 0, sizeof(lMulticastRequest));
     lMulticastRequest.imr_interface = interfaceAddr;
     lMulticastRequest.imr_multiaddr = aAddress.ToIPv4();
+
+#endif
 
     const int command = join ? IP_ADD_MEMBERSHIP : IP_DROP_MEMBERSHIP;
     if (setsockopt(mSocket, IPPROTO_IP, command, &lMulticastRequest, sizeof(lMulticastRequest)) != 0)
@@ -785,10 +815,9 @@ CHIP_ERROR UDPEndPointImplSockets::IPv4JoinLeaveMulticastGroupImpl(InterfaceId a
 CHIP_ERROR UDPEndPointImplSockets::IPv6JoinLeaveMulticastGroupImpl(InterfaceId aInterfaceId, const IPAddress & aAddress, bool join)
 {
 #if CHIP_SYSTEM_CONFIG_USE_PLATFORM_MULTICAST_API
-    MulticastGroupHandler handler = join ? sJoinMulticastGroupHandler : sLeaveMulticastGroupHandler;
-    if (handler != nullptr)
+    if (sMulticastGroupHandler != nullptr)
     {
-        return handler(aInterfaceId, aAddress);
+        return sMulticastGroupHandler(aInterfaceId, aAddress, join ? MulticastOperation::kJoin : MulticastOperation::kLeave);
     }
 #endif // CHIP_SYSTEM_CONFIG_USE_PLATFORM_MULTICAST_API
 

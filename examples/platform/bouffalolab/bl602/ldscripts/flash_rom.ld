@@ -11,19 +11,18 @@ __RFTLV_HEAD1_L = (0x41524150); /* PAPA */
 __RAM_START = 0x4200C000;
 __RAM_END = 0x4200C000 + 256K - __EM_SIZE; /* leave 8K left for BLE */
 
-__RAM_TCM_LEN = (16K + 16K + 48K + 64K + 64K - 16K - 16K);
+__RAM_PBUF_POOL = DEFINED(__RAM_PBUF_POOL) ? __RAM_PBUF_POOL : 30K;
+
+__RAM_TCM_LEN = (16K + 16K + 48K + 64K + 64K - 16K - 16K + 30K - 12K - __RAM_PBUF_POOL);
 __RAM_WIFI_LEN = (__RAM_END - __RAM_START - __RAM_TCM_LEN);
 
 MEMORY
 {
   rom       (rxai!w) : ORIGIN = 0x21015000, LENGTH = 44K
   flash     (rxai!w) : ORIGIN = 0x23000000, LENGTH = 4M
-  
-  /* ram_tcm   (wxa)    : ORIGIN = 0x4200C000, LENGTH = (16K + 16K + 48K + 64K + 64K + 8K - __EM_SIZE) put itcm with dtam and also OCRAM*/
-  /* ram_wifi  (wxa)    : ORIGIN = 0x42042000 - __EM_SIZE, LENGTH = (8K + 104K - 64K - 8K) leave 8K left for BLE*/
-  
   ram_tcm   (wxa)    : ORIGIN = __RAM_START, LENGTH = __RAM_TCM_LEN
   ram_wifi  (wxa)    : ORIGIN = __RAM_START + __RAM_TCM_LEN, LENGTH = __RAM_WIFI_LEN
+  bugkill   (rxai!w) : ORIGIN = 0xD0000000, LENGTH = 16M
 }
 
 SECTIONS
@@ -48,7 +47,17 @@ SECTIONS
       . = ORIGIN(flash) + __RFTLV_SIZE_OFFSET + __RFTLV_SIZE_HOLE;
   } > flash
 
-  .text           :
+  .blverinf 0 : AT (ORIGIN(flash) + 3K)
+  {
+    LONG(0x42464c42); /* BLFB */
+    LONG(0x46524556); /* VERF */
+    KEEP (*component_version.obj(.blverinf))
+    LONG(0x42464c42); /* BLFB */
+    LONG(0x46524556); /* VERF */
+    KEEP (*component_version.obj(.rodata*))
+  }
+
+  .text ORIGIN(flash) + 4K: AT(ORIGIN(flash) + 4K)
   {
     *(.text.unlikely .text.unlikely.*)
     *(.text.startup .text.startup.*)
@@ -56,8 +65,21 @@ SECTIONS
     *(.gnu.linkonce.t.*)
   } > flash
 
+  .bugkiller_command :
+  {
+    PROVIDE( __bugkiller_command_start = ADDR(.bugkiller_command) );
+    PROVIDE( __bugkiller_command_end = ADDR(.bugkiller_command) + SIZEOF(.bugkiller_command) );
+    KEEP (*(.static_bugkiller_command))
+  } > bugkill
+  .bugkiller  :
+  {
+    KEEP (*(.bugkiller_code))
+    KEEP (*bugkiller*.o(.rodata* .text* .data* .sdata* .sbss*))
+  } > bugkill
+
   .rodata         :
   {
+
     *(.rdata)
     *(.rodata .rodata.*)
     *(.sdata2.*)
@@ -100,6 +122,12 @@ SECTIONS
     *(.static_blogpri_code*)
     _bl_static_blogpri_code_end = .;
 
+    /* section information for components's version */
+    . = ALIGN(4);
+    _version_info_section_start = .;
+    KEEP(*(.version.*))
+    _version_info_section_end = .;
+    
     *(.gnu.linkonce.r.*)
 
     /*Framework table section, use ALIGN here to avoid fill section*/
@@ -146,6 +174,9 @@ SECTIONS
     *libwifi_drv.a:bl_utils.o(COMMON)
     *libwifi_drv.a:bl_utils.o(.bss*)
     *(.wifi_ram*)
+    . = ALIGN(16);
+
+    KEEP(*libCHIP.a:*(.bss.*PlatformManagerImp*))
     . = ALIGN(16);
   } > ram_wifi
 
@@ -264,6 +295,59 @@ SECTIONS
   PROVIDE ( __boot2_pt_addr_src = BOOT2_PT_ADDR );
   PROVIDE ( __boot2_flashCfg_src = BOOT2_FLASHCFG_ADDR );
 
+  PROVIDE(xTaskGetTickCount = 0x0000000021017694);
+  PROVIDE(xTaskGetTickCountFromISR = 0x00000000210176aa);
+  PROVIDE(pvPortMalloc = 0x0000000021019662);
+  PROVIDE(vPortFree = 0x000000002101973a);
+  PROVIDE(vTaskNotifyGiveFromISR = 0x00000000210188e8);
+  PROVIDE(vTaskSwitchContext = 0x0000000021017a04);
+  PROVIDE(ulTaskNotifyTake = 0x0000000021018548);
+  PROVIDE(vTaskExitCritical = 0x00000000210183f4);
+  PROVIDE(vTaskEnterCritical = 0x00000000210183e4);
+  PROVIDE(xTaskGetCurrentTaskHandle = 0x0000000021018152);
+  PROVIDE(xQueueSemaphoreTake = 0x0000000021015ce8);
+  PROVIDE(xQueueGenericSend = 0x0000000021015834);
+  PROVIDE(xQueueGenericSendFromISR = 0x0000000021015a4c);
+  PROVIDE(xTaskCreateStatic = 0x00000000210170a2);
+  PROVIDE(xTaskCreate = 0x000000002101713a);
+  PROVIDE(xQueueCreateMutex = 0x0000000021015a1c);
+  PROVIDE(xQueueCreateMutexStatic = 0x0000000021015994);
+  PROVIDE(vQueueDelete = 0x00000000210161d8);
+  PROVIDE(xQueueGenericCreateStatic = 0x00000000210156c2);
+  PROVIDE(xQueueGenericCreate = 0x0000000021015744);
+  PROVIDE(xQueueReceive = 0x0000000021015b8a);
+  PROVIDE(uxQueueMessagesWaiting = 0x0000000021016168);
+  PROVIDE(vTaskDelay = 0x00000000210179c6);
+  PROVIDE(vTaskDelayUntil = 0x0000000021017952);
+  PROVIDE(xPortGetFreeHeapSize = 0x00000000210197ce);
+  PROVIDE(vTaskList = 0x0000000021018408);
+  PROVIDE(xTimerGenericCommand = 0x0000000021018bec);
+  PROVIDE(xTimerCreateTimerTask = 0x0000000021018a9e);
+  PROVIDE(xTimerCreate = 0x0000000021018af6);
+  PROVIDE(xTimerCreateStatic = 0x0000000021018b66);
+  PROVIDE(xQueueCreateCountingSemaphoreStatic = 0x00000000210157c2);
+  PROVIDE(xQueueCreateCountingSemaphore = 0x0000000021015800);
+  PROVIDE(pTrapNetCounter = __global_pointer_head$);
+  PROVIDE(TrapNetCounter = __global_pointer_head$ + 0x58);
+  PROVIDE(vEventGroupDelete = 0x00000000210153be);
+  PROVIDE(xEventGroupWaitBits = 0x0000000021015086);
+  PROVIDE(xEventGroupCreateStatic = 0x0000000021015000);
+  PROVIDE(xEventGroupSetBits = 0x00000000210151e0);
+  PROVIDE(xStreamBufferGenericCreateStatic = 0x00000000210165c0);
+  PROVIDE(xStreamBufferReceive = 0x00000000210169ae);
+  PROVIDE(xStreamBufferSend = 0x00000000210167a8);
+  PROVIDE(pvTimerGetTimerID = 0x0000000021018fd4);
+  PROVIDE(xTaskGenericNotify = 0x00000000210186be);
+  PROVIDE(xTaskGenericNotifyFromISR = 0x00000000210187de);
+  PROVIDE(xQueueGiveMutexRecursive = 0x00000000210159c8);
+  PROVIDE(xQueueTakeMutexRecursive = 0x0000000021015e70);
+  PROVIDE(xTaskGetTickCount2 = 0x000000002101769a);
+  PROVIDE(xQueueGiveFromISR = 0x0000000021015b0e);
+  PROVIDE(vTaskDelete = 0x00000000210171b6);
+  PROVIDE(uxTaskGetStackHighWaterMark = 0x0000000021018110);
+  PROVIDE(pcTaskGetName = 0x00000000210176b6);
+  PROVIDE(vTaskStartScheduler = 0x0000000021017610);
+  PROVIDE(vPortDefineHeapRegions = 0x00000000210197da);
   PROVIDE(__LD_CONFIG_EM_SEL = __EM_SIZE);
 
   PROVIDE( _ld_symbol_rom_framework_audio_device_start = _rom_framework_audio_device_start);

@@ -20,10 +20,10 @@
 #import <Matter/Matter.h>
 
 #import <app/MessageDef/StatusIB.h>
-#import <app/util/af-enums.h>
-#import <app/util/error-mapping.h>
 #import <inet/InetError.h>
 #import <lib/support/TypeTraits.h>
+
+#import <objc/runtime.h>
 
 CHIP_ERROR MTRErrorToCHIPErrorCode(NSError * error)
 {
@@ -43,8 +43,9 @@ CHIP_ERROR MTRErrorToCHIPErrorCode(NSError * error)
         return CHIP_ERROR_INTERNAL;
     }
 
-    if (error.userInfo != nil) {
-        id underlyingError = error.userInfo[@"underlyingError"];
+    {
+        void * key = (__bridge void *) NSClassFromString(@"MTRErrorHolder");
+        id underlyingError = objc_getAssociatedObject(error, key);
         if (underlyingError != nil) {
             NSValue * chipErrorValue = [underlyingError valueForKey:@"error"];
             if (chipErrorValue != nil) {
@@ -84,6 +85,7 @@ CHIP_ERROR MTRErrorToCHIPErrorCode(NSError * error)
             break;
         }
         // Weird error we did not create.  Fall through.
+        FALLTHROUGH;
     default:
         code = CHIP_ERROR_INTERNAL.AsInteger();
         break;

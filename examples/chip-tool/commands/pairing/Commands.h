@@ -19,8 +19,9 @@
 #pragma once
 
 #include "commands/common/Commands.h"
-#include "commands/pairing/CloseSessionCommand.h"
-#include "commands/pairing/CommissionedListCommand.h"
+#include "commands/pairing/GetCommissionerNodeIdCommand.h"
+#include "commands/pairing/GetCommissionerRootCertificateCommand.h"
+#include "commands/pairing/IssueNOCChainCommand.h"
 #include "commands/pairing/OpenCommissioningWindowCommand.h"
 #include "commands/pairing/PairingCommand.h"
 
@@ -65,6 +66,14 @@ class PairCodeThread : public PairingCommand
 public:
     PairCodeThread(CredentialIssuerCommands * credsIssuerConfig) :
         PairingCommand("code-thread", PairingMode::Code, PairingNetworkType::Thread, credsIssuerConfig)
+    {}
+};
+
+class PairCodeWiFiThread : public PairingCommand
+{
+public:
+    PairCodeWiFiThread(CredentialIssuerCommands * credsIssuerConfig) :
+        PairingCommand("code-wifi-thread", PairingMode::Code, PairingNetworkType::WiFiOrThread, credsIssuerConfig)
     {}
 };
 
@@ -172,11 +181,48 @@ public:
     {}
 };
 
-class Ethernet : public PairingCommand
+#if CHIP_DEVICE_CONFIG_ENABLE_WIFIPAF
+class PairWiFiPAF : public PairingCommand
 {
 public:
-    Ethernet(CredentialIssuerCommands * credsIssuerConfig) :
-        PairingCommand("ethernet", PairingMode::Ethernet, PairingNetworkType::Ethernet, credsIssuerConfig)
+    PairWiFiPAF(CredentialIssuerCommands * credsIssuerConfig) :
+        PairingCommand("wifipaf-wifi", PairingMode::WiFiPAF, PairingNetworkType::WiFi, credsIssuerConfig)
+    {}
+};
+#endif
+
+class PairAlreadyDiscovered : public PairingCommand
+{
+public:
+    PairAlreadyDiscovered(CredentialIssuerCommands * credsIssuerConfig) :
+        PairingCommand("already-discovered", PairingMode::AlreadyDiscovered, PairingNetworkType::None, credsIssuerConfig)
+    {}
+};
+
+class PairAlreadyDiscoveredByIndex : public PairingCommand
+{
+public:
+    PairAlreadyDiscoveredByIndex(CredentialIssuerCommands * credsIssuerConfig) :
+        PairingCommand("already-discovered-by-index", PairingMode::AlreadyDiscoveredByIndex, PairingNetworkType::None,
+                       credsIssuerConfig)
+    {}
+};
+
+class PairAlreadyDiscoveredByIndexWithWiFi : public PairingCommand
+{
+public:
+    PairAlreadyDiscoveredByIndexWithWiFi(CredentialIssuerCommands * credsIssuerConfig) :
+        PairingCommand("already-discovered-by-index-with-wifi", PairingMode::AlreadyDiscoveredByIndex, PairingNetworkType::WiFi,
+                       credsIssuerConfig)
+    {}
+};
+
+class PairAlreadyDiscoveredByIndexWithCode : public PairingCommand
+{
+public:
+    PairAlreadyDiscoveredByIndexWithCode(CredentialIssuerCommands * credsIssuerConfig) :
+        PairingCommand("already-discovered-by-index-with-code", PairingMode::AlreadyDiscoveredByIndexWithCode,
+                       PairingNetworkType::None, credsIssuerConfig)
     {}
 };
 
@@ -203,10 +249,17 @@ void registerCommandsPairing(Commands & commands, CredentialIssuerCommands * cre
         make_unique<PairCodePase>(credsIssuerConfig),
         make_unique<PairCodeWifi>(credsIssuerConfig),
         make_unique<PairCodeThread>(credsIssuerConfig),
+        make_unique<PairCodeWiFiThread>(credsIssuerConfig),
         make_unique<PairBleWiFi>(credsIssuerConfig),
         make_unique<PairBleThread>(credsIssuerConfig),
         make_unique<PairSoftAP>(credsIssuerConfig),
-        make_unique<Ethernet>(credsIssuerConfig),
+#if CHIP_DEVICE_CONFIG_ENABLE_WIFIPAF
+        make_unique<PairWiFiPAF>(credsIssuerConfig),
+#endif
+        make_unique<PairAlreadyDiscovered>(credsIssuerConfig),
+        make_unique<PairAlreadyDiscoveredByIndex>(credsIssuerConfig),
+        make_unique<PairAlreadyDiscoveredByIndexWithWiFi>(credsIssuerConfig),
+        make_unique<PairAlreadyDiscoveredByIndexWithCode>(credsIssuerConfig),
         make_unique<PairOnNetwork>(credsIssuerConfig),
         make_unique<PairOnNetworkShort>(credsIssuerConfig),
         make_unique<PairOnNetworkLong>(credsIssuerConfig),
@@ -214,14 +267,15 @@ void registerCommandsPairing(Commands & commands, CredentialIssuerCommands * cre
         make_unique<PairOnNetworkCommissioningMode>(credsIssuerConfig),
         make_unique<PairOnNetworkCommissioner>(credsIssuerConfig),
         make_unique<PairOnNetworkDeviceType>(credsIssuerConfig),
-        make_unique<PairOnNetworkDeviceType>(credsIssuerConfig),
         make_unique<PairOnNetworkInstanceName>(credsIssuerConfig),
         // TODO(#13973) - enable CommissionedListCommand once DNS Cache is implemented
         //        make_unique<CommissionedListCommand>(),
         make_unique<StartUdcServerCommand>(credsIssuerConfig),
         make_unique<OpenCommissioningWindowCommand>(credsIssuerConfig),
-        make_unique<CloseSessionCommand>(credsIssuerConfig),
+        make_unique<GetCommissionerNodeIdCommand>(credsIssuerConfig),
+        make_unique<GetCommissionerRootCertificateCommand>(credsIssuerConfig),
+        make_unique<IssueNOCChainCommand>(credsIssuerConfig),
     };
 
-    commands.Register(clusterName, clusterCommands);
+    commands.RegisterCommandSet(clusterName, clusterCommands, "Commands for commissioning devices.");
 }

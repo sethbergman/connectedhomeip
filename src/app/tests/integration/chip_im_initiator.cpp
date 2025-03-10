@@ -27,11 +27,13 @@
 #include <app/CommandHandler.h>
 #include <app/CommandSender.h>
 #include <app/ConcreteAttributePath.h>
+#include <app/ConcreteEventPath.h>
 #include <app/InteractionModelEngine.h>
+#include <app/reporting/tests/MockReportScheduler.h>
 #include <app/tests/integration/common.h>
 #include <chrono>
 #include <lib/core/CHIPCore.h>
-#include <lib/support/ErrorStr.h>
+#include <lib/core/ErrorStr.h>
 #include <lib/support/TypeTraits.h>
 #include <memory>
 #include <mutex>
@@ -347,7 +349,7 @@ CHIP_ERROR SendReadRequest()
         chip::Platform::MakeUnique<chip::app::ReadClient>(chip::app::InteractionModelEngine::GetInstance(), &gExchangeManager,
                                                           gMockDelegate, chip::app::ReadClient::InteractionType::Read);
 
-    SuccessOrExit(readClient->SendRequest(readPrepareParams));
+    SuccessOrExit(err = readClient->SendRequest(readPrepareParams));
 
     gMockDelegate.AdoptReadClient(std::move(readClient));
 
@@ -615,73 +617,11 @@ exit:
 
 namespace chip {
 namespace app {
-Protocols::InteractionModel::Status ServerClusterCommandExists(const ConcreteCommandPath & aCommandPath)
-{
-    // Always return success in test.
-    return Protocols::InteractionModel::Status::Success;
-}
 
 void DispatchSingleClusterCommand(const ConcreteCommandPath & aCommandPath, chip::TLV::TLVReader & aReader,
                                   CommandHandler * apCommandObj)
 {
     // Nothing todo.
-}
-
-CHIP_ERROR ReadSingleClusterData(const Access::SubjectDescriptor & aSubjectDescriptor, bool aIsFabricFiltered,
-                                 const ConcreteReadAttributePath & aPath, AttributeReportIBs::Builder & aAttributeReports,
-                                 AttributeValueEncoder::AttributeEncodeState * apEncoderState)
-{
-    AttributeReportIB::Builder & attributeReport = aAttributeReports.CreateAttributeReport();
-    ReturnErrorOnFailure(aAttributeReports.GetError());
-    AttributeStatusIB::Builder & attributeStatus = attributeReport.CreateAttributeStatus();
-    ReturnErrorOnFailure(attributeReport.GetError());
-    AttributePathIB::Builder & attributePath = attributeStatus.CreatePath();
-    ReturnErrorOnFailure(attributeStatus.GetError());
-    attributePath.Endpoint(aPath.mEndpointId).Cluster(aPath.mClusterId).Attribute(aPath.mAttributeId).EndOfAttributePathIB();
-    ReturnErrorOnFailure(attributePath.GetError());
-    StatusIB::Builder & errorStatus = attributeStatus.CreateErrorStatus();
-    errorStatus.EncodeStatusIB(StatusIB(Protocols::InteractionModel::Status::UnsupportedAttribute));
-    ReturnErrorOnFailure(errorStatus.GetError());
-    attributeStatus.EndOfAttributeStatusIB();
-    ReturnErrorOnFailure(attributeStatus.GetError());
-    return attributeReport.EndOfAttributeReportIB().GetError();
-}
-
-const EmberAfAttributeMetadata * GetAttributeMetadata(const ConcreteAttributePath & aConcreteClusterPath)
-{
-    // Note: This test does not make use of the real attribute metadata.
-    static EmberAfAttributeMetadata stub = { .defaultValue = EmberAfDefaultOrMinMaxAttributeValue(uint32_t(0)) };
-    return &stub;
-}
-
-bool ConcreteAttributePathExists(const ConcreteAttributePath & aPath)
-{
-    return true;
-}
-
-CHIP_ERROR WriteSingleClusterData(const Access::SubjectDescriptor & aSubjectDescriptor, const ConcreteDataAttributePath & aPath,
-                                  TLV::TLVReader & aReader, WriteHandler *)
-{
-    if (aPath.mClusterId != kTestClusterId || aPath.mEndpointId != kTestEndpointId)
-    {
-        return CHIP_ERROR_INVALID_ARGUMENT;
-    }
-
-    if (aReader.GetLength() != 0)
-    {
-        chip::TLV::Debug::Dump(aReader, TLVPrettyPrinter);
-    }
-    return CHIP_NO_ERROR;
-}
-
-bool IsClusterDataVersionEqual(const ConcreteClusterPath & aConcreteClusterPath, DataVersion aRequiredVersion)
-{
-    return true;
-}
-
-bool IsDeviceTypeOnEndpoint(DeviceTypeId deviceType, EndpointId endpoint)
-{
-    return false;
 }
 
 } // namespace app
@@ -716,7 +656,7 @@ int main(int argc, char * argv[])
     SuccessOrExit(err);
 
     err = gSessionManager.Init(&chip::DeviceLayer::SystemLayer(), &gTransportManager, &gMessageCounterManager, &gStorage,
-                               &gFabricTable);
+                               &gFabricTable, gSessionKeystore);
     SuccessOrExit(err);
 
     err = gExchangeManager.Init(&gSessionManager);
@@ -725,7 +665,8 @@ int main(int argc, char * argv[])
     err = gMessageCounterManager.Init(&gExchangeManager);
     SuccessOrExit(err);
 
-    err = chip::app::InteractionModelEngine::GetInstance()->Init(&gExchangeManager, &gFabricTable);
+    err = chip::app::InteractionModelEngine::GetInstance()->Init(&gExchangeManager, &gFabricTable,
+                                                                 chip::app::reporting::GetDefaultReportScheduler());
     SuccessOrExit(err);
 
     // Start the CHIP connection to the CHIP im responder.

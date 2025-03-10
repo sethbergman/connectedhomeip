@@ -13,7 +13,6 @@
 #include <lib/core/ClusterEnums.h>
 #include <lib/support/BitMask.h>
 #include <protocols/interaction_model/Constants.h>
-#include <app-common/zap-generated/enums.h>
 #include <app-common/zap-generated/ids/Attributes.h>
 #include <app-common/zap-generated/ids/Clusters.h>
 #include <app-common/zap-generated/ids/Commands.h>
@@ -26,6 +25,7 @@ namespace Clusters {
 namespace detail {
 // Structs shared across multiple clusters.
 namespace Structs {
+
 {{#zcl_structs}}
 {{#if has_more_than_one_cluster}}
 {{> cluster_objects_struct header=true}}
@@ -35,6 +35,18 @@ namespace Structs {
 } // namespace detail
 
 namespace Globals {
+
+// Global structs.
+namespace Structs {
+
+{{#zcl_structs}}
+{{#if has_no_clusters}}
+{{> cluster_objects_struct header=true}}
+
+{{/if}}
+{{/zcl_structs}}
+} // namespace Structs
+
 namespace Attributes {
 {{#zcl_attributes_server}}
 {{#unless clusterRef}}
@@ -84,7 +96,7 @@ namespace {{asUpperCamelCase name}} {
 namespace Commands {
 {{/first}}
 namespace {{asUpperCamelCase name}} {
-enum class Fields {
+enum class Fields : uint8_t {
     {{#zcl_command_arguments}}
     k{{asUpperCamelCase label}} = {{fieldIdentifier}},
     {{/zcl_command_arguments}}
@@ -101,11 +113,11 @@ public:
     {{zapTypeToEncodableClusterObjectType type}} {{asLowerCamelCase label}}{{> cluster_objects_field_init}};
     {{/zcl_command_arguments}}
 
-    CHIP_ERROR Encode(TLV::TLVWriter &writer, TLV::Tag tag) const;
+    CHIP_ERROR Encode(TLV::TLVWriter & aWriter, TLV::Tag aTag) const;
 
     using ResponseType =
     {{~#if responseName}}
-      Clusters::{{asUpperCamelCase parent.name}}::Commands::{{responseName}}::DecodableType;
+      Clusters::{{asUpperCamelCase parent.name}}::Commands::{{asUpperCamelCase responseName}}::DecodableType;
     {{else}}
       DataModel::NullObjectType;
     {{/if}}
@@ -165,7 +177,7 @@ namespace Events {
 namespace {{asUpperCamelCase name}} {
 static constexpr PriorityLevel kPriorityLevel = PriorityLevel::{{asUpperCamelCase priority}};
 
-enum class Fields {
+enum class Fields : uint8_t {
     {{#zcl_event_fields}}
     k{{asUpperCamelCase name}} = {{fieldIdentifier}},
     {{/zcl_event_fields}}
@@ -189,7 +201,7 @@ public:
     }
     {{/if}}
 
-    CHIP_ERROR Encode(TLV::TLVWriter &writer, TLV::Tag tag) const;
+    CHIP_ERROR Encode(TLV::TLVWriter & aWriter, TLV::Tag aTag) const;
 };
 
 struct DecodableType {
@@ -216,6 +228,7 @@ public:
 
 bool CommandNeedsTimedInvoke(ClusterId aCluster, CommandId aCommand);
 bool CommandIsFabricScoped(ClusterId aCluster, CommandId aCommand);
+bool CommandHasLargePayload(ClusterId aCluster, CommandId aCommand);
 
 } // namespace app
 } // namespace chip

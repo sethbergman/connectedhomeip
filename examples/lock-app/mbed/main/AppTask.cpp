@@ -21,21 +21,21 @@
 #include <LEDWidget.h>
 
 #include <app/server/Dnssd.h>
-#include <app/server/OnboardingCodesUtil.h>
 #include <app/server/Server.h>
 #include <credentials/DeviceAttestationCredsProvider.h>
 #include <credentials/examples/DeviceAttestationCredsExample.h>
+#include <data-model-providers/codegen/Instance.h>
 #include <lib/support/logging/CHIPLogging.h>
 #include <platform/CHIPDeviceLayer.h>
+#include <setup_payload/OnboardingCodesUtil.h>
 
 // mbed-os headers
 #include "drivers/Timeout.h"
 #include "events/EventQueue.h"
 
 // ZAP -- ZCL Advanced Platform
-#include <app-common/zap-generated/attribute-id.h>
-#include <app-common/zap-generated/attribute-type.h>
-#include <app-common/zap-generated/cluster-id.h>
+#include <app-common/zap-generated/attributes/Accessors.h>
+#include <app-common/zap-generated/ids/Clusters.h>
 #include <app/util/attribute-storage.h>
 
 #ifdef CAPSENSE_ENABLED
@@ -120,6 +120,7 @@ int AppTask::Init()
     // Init ZCL Data Model and start server
     static chip::CommonCaseDeviceServerInitParams initParams;
     (void) initParams.InitializeStaticResourcesBeforeServerInit();
+    initParams.dataModelProvider = app::CodegenDataModelProviderInstance(initParams.persistentStorageDelegate);
 
     error = Server::GetInstance().Init(initParams);
     if (error != CHIP_NO_ERROR)
@@ -462,10 +463,9 @@ void AppTask::UpdateClusterState()
     uint8_t newValue = !BoltLockMgr().IsUnlocked();
 
     // write the new on/off value
-    EmberAfStatus status =
-        emberAfWriteAttribute(1, ZCL_ON_OFF_CLUSTER_ID, ZCL_ON_OFF_ATTRIBUTE_ID, &newValue, ZCL_BOOLEAN_ATTRIBUTE_TYPE);
-    if (status != EMBER_ZCL_STATUS_SUCCESS)
+    Protocols::InteractionModel::Status status = app::Clusters::OnOff::Attributes::OnOff::Set(1, newValue);
+    if (status != Protocols::InteractionModel::Status::Success)
     {
-        ChipLogError(NotSpecified, "ZCL update failed: %lx", status);
+        ChipLogError(NotSpecified, "ZCL update failed: %lx", to_underlying(status));
     }
 }

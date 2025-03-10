@@ -18,8 +18,8 @@
 #include <credentials/CHIPCert.h>
 #include <lib/core/CHIPError.h>
 #include <lib/core/CHIPPersistentStorageDelegate.h>
-#include <lib/core/CHIPTLV.h>
 #include <lib/core/DataModelTypes.h>
+#include <lib/core/TLV.h>
 #include <lib/support/CHIPMem.h>
 #include <lib/support/CodeUtils.h>
 #include <lib/support/DefaultStorageKeyAllocator.h>
@@ -35,34 +35,31 @@ namespace {
 
 using CertChainElement = OperationalCertificateStore::CertChainElement;
 
-const char * GetStorageKeyForCert(DefaultStorageKeyAllocator & keyAllocator, FabricIndex fabricIndex, CertChainElement element)
+StorageKeyName GetStorageKeyForCert(FabricIndex fabricIndex, CertChainElement element)
 {
-    const char * storageKey = nullptr;
-
     switch (element)
     {
     case CertChainElement::kNoc:
-        storageKey = keyAllocator.FabricNOC(fabricIndex);
+        return DefaultStorageKeyAllocator::FabricNOC(fabricIndex);
         break;
     case CertChainElement::kIcac:
-        storageKey = keyAllocator.FabricICAC(fabricIndex);
+        return DefaultStorageKeyAllocator::FabricICAC(fabricIndex);
         break;
     case CertChainElement::kRcac:
-        storageKey = keyAllocator.FabricRCAC(fabricIndex);
+        return DefaultStorageKeyAllocator::FabricRCAC(fabricIndex);
         break;
     default:
         break;
     }
 
-    return storageKey;
+    return StorageKeyName::Uninitialized();
 }
 
 bool StorageHasCertificate(PersistentStorageDelegate * storage, FabricIndex fabricIndex, CertChainElement element)
 {
-    DefaultStorageKeyAllocator keyAllocator;
-    const char * storageKey = GetStorageKeyForCert(keyAllocator, fabricIndex, element);
+    StorageKeyName storageKey = GetStorageKeyForCert(fabricIndex, element);
 
-    if (storageKey == nullptr)
+    if (!storageKey)
     {
         return false;
     }
@@ -73,7 +70,7 @@ bool StorageHasCertificate(PersistentStorageDelegate * storage, FabricIndex fabr
     uint8_t placeHolderCertBuffer[kMaxCHIPCertLength];
 
     uint16_t keySize = sizeof(placeHolderCertBuffer);
-    CHIP_ERROR err   = storage->SyncGetKeyValue(storageKey, &placeHolderCertBuffer[0], keySize);
+    CHIP_ERROR err   = storage->SyncGetKeyValue(storageKey.KeyName(), &placeHolderCertBuffer[0], keySize);
 
     return (err == CHIP_NO_ERROR);
 }
@@ -81,11 +78,14 @@ bool StorageHasCertificate(PersistentStorageDelegate * storage, FabricIndex fabr
 CHIP_ERROR LoadCertFromStorage(PersistentStorageDelegate * storage, FabricIndex fabricIndex, CertChainElement element,
                                MutableByteSpan & outCert)
 {
-    DefaultStorageKeyAllocator keyAllocator;
-    const char * storageKey = GetStorageKeyForCert(keyAllocator, fabricIndex, element);
+    StorageKeyName storageKey = GetStorageKeyForCert(fabricIndex, element);
+    if (!storageKey)
+    {
+        return CHIP_ERROR_INTERNAL;
+    }
 
     uint16_t keySize = static_cast<uint16_t>(outCert.size());
-    CHIP_ERROR err   = storage->SyncGetKeyValue(storageKey, outCert.data(), keySize);
+    CHIP_ERROR err   = storage->SyncGetKeyValue(storageKey.KeyName(), outCert.data(), keySize);
 
     // Not finding an ICAC means we don't have one, so adjust to meet the API contract, where
     // outCert.empty() will be true;
@@ -112,13 +112,16 @@ CHIP_ERROR LoadCertFromStorage(PersistentStorageDelegate * storage, FabricIndex 
 CHIP_ERROR SaveCertToStorage(PersistentStorageDelegate * storage, FabricIndex fabricIndex, CertChainElement element,
                              const ByteSpan & cert)
 {
-    DefaultStorageKeyAllocator keyAllocator;
-    const char * storageKey = GetStorageKeyForCert(keyAllocator, fabricIndex, element);
+    StorageKeyName storageKey = GetStorageKeyForCert(fabricIndex, element);
+    if (!storageKey)
+    {
+        return CHIP_ERROR_INTERNAL;
+    }
 
     // If provided an empty ICAC, we delete the ICAC key previously used. If not there, it's OK
     if ((element == CertChainElement::kIcac) && (cert.empty()))
     {
-        CHIP_ERROR err = storage->SyncDeleteKeyValue(storageKey);
+        CHIP_ERROR err = storage->SyncDeleteKeyValue(storageKey.KeyName());
         if ((err == CHIP_NO_ERROR) || (err == CHIP_ERROR_PERSISTED_STORAGE_VALUE_NOT_FOUND))
         {
             return CHIP_NO_ERROR;
@@ -126,14 +129,17 @@ CHIP_ERROR SaveCertToStorage(PersistentStorageDelegate * storage, FabricIndex fa
         return err;
     }
 
-    return storage->SyncSetKeyValue(storageKey, cert.data(), static_cast<uint16_t>(cert.size()));
+    return storage->SyncSetKeyValue(storageKey.KeyName(), cert.data(), static_cast<uint16_t>(cert.size()));
 }
 
 CHIP_ERROR DeleteCertFromStorage(PersistentStorageDelegate * storage, FabricIndex fabricIndex, CertChainElement element)
 {
-    DefaultStorageKeyAllocator keyAllocator;
-    const char * storageKey = GetStorageKeyForCert(keyAllocator, fabricIndex, element);
-    return storage->SyncDeleteKeyValue(storageKey);
+    StorageKeyName storageKey = GetStorageKeyForCert(fabricIndex, element);
+    if (!storageKey)
+    {
+        return CHIP_ERROR_INTERNAL;
+    }
+    return storage->SyncDeleteKeyValue(storageKey.KeyName());
 }
 
 } // namespace
@@ -204,17 +210,17 @@ bool PersistentStorageOpCertStore::HasCertificateForFabric(FabricIndex fabricInd
 
 CHIP_ERROR PersistentStorageOpCertStore::AddNewTrustedRootCertForFabric(FabricIndex fabricIndex, const ByteSpan & rcac)
 {
-    ReturnErrorCodeIf(mStorage == nullptr, CHIP_ERROR_INCORRECT_STATE);
-    ReturnErrorCodeIf(!IsValidFabricIndex(fabricIndex), CHIP_ERROR_INVALID_FABRIC_INDEX);
-    ReturnErrorCodeIf(rcac.empty() || (rcac.size() > Credentials::kMaxCHIPCertLength), CHIP_ERROR_INVALID_ARGUMENT);
+    VerifyOrReturnError(mStorage != nullptr, CHIP_ERROR_INCORRECT_STATE);
+    VerifyOrReturnError(IsValidFabricIndex(fabricIndex), CHIP_ERROR_INVALID_FABRIC_INDEX);
+    VerifyOrReturnError(!rcac.empty() && (rcac.size() <= Credentials::kMaxCHIPCertLength), CHIP_ERROR_INVALID_ARGUMENT);
 
-    ReturnErrorCodeIf(mStateFlags.HasAny(StateFlags::kUpdateOpCertsCalled, StateFlags::kAddNewTrustedRootCalled,
-                                         StateFlags::kAddNewOpCertsCalled),
-                      CHIP_ERROR_INCORRECT_STATE);
-    ReturnErrorCodeIf(StorageHasCertificate(mStorage, fabricIndex, CertChainElement::kRcac), CHIP_ERROR_INCORRECT_STATE);
+    VerifyOrReturnError(!mStateFlags.HasAny(StateFlags::kUpdateOpCertsCalled, StateFlags::kAddNewTrustedRootCalled,
+                                            StateFlags::kAddNewOpCertsCalled),
+                        CHIP_ERROR_INCORRECT_STATE);
+    VerifyOrReturnError(!StorageHasCertificate(mStorage, fabricIndex, CertChainElement::kRcac), CHIP_ERROR_INCORRECT_STATE);
 
     Platform::ScopedMemoryBufferWithSize<uint8_t> rcacBuf;
-    ReturnErrorCodeIf(!rcacBuf.Alloc(rcac.size()), CHIP_ERROR_NO_MEMORY);
+    VerifyOrReturnError(rcacBuf.Alloc(rcac.size()), CHIP_ERROR_NO_MEMORY);
     memcpy(rcacBuf.Get(), rcac.data(), rcac.size());
 
     mPendingRcac = std::move(rcacBuf);
@@ -228,33 +234,33 @@ CHIP_ERROR PersistentStorageOpCertStore::AddNewTrustedRootCertForFabric(FabricIn
 CHIP_ERROR PersistentStorageOpCertStore::AddNewOpCertsForFabric(FabricIndex fabricIndex, const ByteSpan & noc,
                                                                 const ByteSpan & icac)
 {
-    ReturnErrorCodeIf(mStorage == nullptr, CHIP_ERROR_INCORRECT_STATE);
-    ReturnErrorCodeIf(!IsValidFabricIndex(fabricIndex), CHIP_ERROR_INVALID_FABRIC_INDEX);
-    ReturnErrorCodeIf(noc.empty() || (noc.size() > Credentials::kMaxCHIPCertLength), CHIP_ERROR_INVALID_ARGUMENT);
-    ReturnErrorCodeIf(icac.size() > Credentials::kMaxCHIPCertLength, CHIP_ERROR_INVALID_ARGUMENT);
+    VerifyOrReturnError(mStorage != nullptr, CHIP_ERROR_INCORRECT_STATE);
+    VerifyOrReturnError(IsValidFabricIndex(fabricIndex), CHIP_ERROR_INVALID_FABRIC_INDEX);
+    VerifyOrReturnError(!noc.empty() && (noc.size() <= Credentials::kMaxCHIPCertLength), CHIP_ERROR_INVALID_ARGUMENT);
+    VerifyOrReturnError(icac.size() <= Credentials::kMaxCHIPCertLength, CHIP_ERROR_INVALID_ARGUMENT);
 
     // Can't have called UpdateOpCertsForFabric first, or called with pending certs
-    ReturnErrorCodeIf(mStateFlags.HasAny(StateFlags::kUpdateOpCertsCalled, StateFlags::kAddNewOpCertsCalled),
-                      CHIP_ERROR_INCORRECT_STATE);
+    VerifyOrReturnError(!mStateFlags.HasAny(StateFlags::kUpdateOpCertsCalled, StateFlags::kAddNewOpCertsCalled),
+                        CHIP_ERROR_INCORRECT_STATE);
 
     // Need to have trusted roots installed to make the chain valid
-    ReturnErrorCodeIf(!mStateFlags.Has(StateFlags::kAddNewTrustedRootCalled), CHIP_ERROR_INCORRECT_STATE);
+    VerifyOrReturnError(mStateFlags.Has(StateFlags::kAddNewTrustedRootCalled), CHIP_ERROR_INCORRECT_STATE);
 
     // fabricIndex must match the current pending fabric
-    ReturnErrorCodeIf(fabricIndex != mPendingFabricIndex, CHIP_ERROR_INVALID_FABRIC_INDEX);
+    VerifyOrReturnError(fabricIndex == mPendingFabricIndex, CHIP_ERROR_INVALID_FABRIC_INDEX);
 
     // Can't have persisted NOC/ICAC for same fabric if adding
-    ReturnErrorCodeIf(StorageHasCertificate(mStorage, fabricIndex, CertChainElement::kNoc), CHIP_ERROR_INCORRECT_STATE);
-    ReturnErrorCodeIf(StorageHasCertificate(mStorage, fabricIndex, CertChainElement::kIcac), CHIP_ERROR_INCORRECT_STATE);
+    VerifyOrReturnError(!StorageHasCertificate(mStorage, fabricIndex, CertChainElement::kNoc), CHIP_ERROR_INCORRECT_STATE);
+    VerifyOrReturnError(!StorageHasCertificate(mStorage, fabricIndex, CertChainElement::kIcac), CHIP_ERROR_INCORRECT_STATE);
 
     Platform::ScopedMemoryBufferWithSize<uint8_t> nocBuf;
-    ReturnErrorCodeIf(!nocBuf.Alloc(noc.size()), CHIP_ERROR_NO_MEMORY);
+    VerifyOrReturnError(nocBuf.Alloc(noc.size()), CHIP_ERROR_NO_MEMORY);
     memcpy(nocBuf.Get(), noc.data(), noc.size());
 
     Platform::ScopedMemoryBufferWithSize<uint8_t> icacBuf;
     if (icac.size() > 0)
     {
-        ReturnErrorCodeIf(!icacBuf.Alloc(icac.size()), CHIP_ERROR_NO_MEMORY);
+        VerifyOrReturnError(icacBuf.Alloc(icac.size()), CHIP_ERROR_NO_MEMORY);
         memcpy(icacBuf.Get(), icac.data(), icac.size());
     }
 
@@ -269,35 +275,35 @@ CHIP_ERROR PersistentStorageOpCertStore::AddNewOpCertsForFabric(FabricIndex fabr
 CHIP_ERROR PersistentStorageOpCertStore::UpdateOpCertsForFabric(FabricIndex fabricIndex, const ByteSpan & noc,
                                                                 const ByteSpan & icac)
 {
-    ReturnErrorCodeIf(mStorage == nullptr, CHIP_ERROR_INCORRECT_STATE);
-    ReturnErrorCodeIf(!IsValidFabricIndex(fabricIndex), CHIP_ERROR_INVALID_FABRIC_INDEX);
-    ReturnErrorCodeIf(noc.empty() || (noc.size() > Credentials::kMaxCHIPCertLength), CHIP_ERROR_INVALID_ARGUMENT);
-    ReturnErrorCodeIf(icac.size() > Credentials::kMaxCHIPCertLength, CHIP_ERROR_INVALID_ARGUMENT);
+    VerifyOrReturnError(mStorage != nullptr, CHIP_ERROR_INCORRECT_STATE);
+    VerifyOrReturnError(IsValidFabricIndex(fabricIndex), CHIP_ERROR_INVALID_FABRIC_INDEX);
+    VerifyOrReturnError(!noc.empty() && (noc.size() <= Credentials::kMaxCHIPCertLength), CHIP_ERROR_INVALID_ARGUMENT);
+    VerifyOrReturnError(icac.size() <= Credentials::kMaxCHIPCertLength, CHIP_ERROR_INVALID_ARGUMENT);
 
     // Can't have called AddNewOpCertsForFabric first, and should never get here after AddNewTrustedRootCertForFabric.
-    ReturnErrorCodeIf(mStateFlags.HasAny(StateFlags::kAddNewOpCertsCalled, StateFlags::kAddNewTrustedRootCalled),
-                      CHIP_ERROR_INCORRECT_STATE);
+    VerifyOrReturnError(!mStateFlags.HasAny(StateFlags::kAddNewOpCertsCalled, StateFlags::kAddNewTrustedRootCalled),
+                        CHIP_ERROR_INCORRECT_STATE);
 
     // Can't have already pending NOC from UpdateOpCerts not yet committed
-    ReturnErrorCodeIf(mStateFlags.Has(StateFlags::kUpdateOpCertsCalled), CHIP_ERROR_INCORRECT_STATE);
+    VerifyOrReturnError(!mStateFlags.Has(StateFlags::kUpdateOpCertsCalled), CHIP_ERROR_INCORRECT_STATE);
 
     // Need to have trusted roots installed to make the chain valid
-    ReturnErrorCodeIf(!StorageHasCertificate(mStorage, fabricIndex, CertChainElement::kRcac), CHIP_ERROR_INCORRECT_STATE);
+    VerifyOrReturnError(StorageHasCertificate(mStorage, fabricIndex, CertChainElement::kRcac), CHIP_ERROR_INCORRECT_STATE);
 
     // Must have persisted NOC for same fabric if updating
-    ReturnErrorCodeIf(!StorageHasCertificate(mStorage, fabricIndex, CertChainElement::kNoc), CHIP_ERROR_INCORRECT_STATE);
+    VerifyOrReturnError(StorageHasCertificate(mStorage, fabricIndex, CertChainElement::kNoc), CHIP_ERROR_INCORRECT_STATE);
 
     // Don't check for ICAC, we may not have had one before, but assume that if NOC is there, a
     // previous chain was at least partially there
 
     Platform::ScopedMemoryBufferWithSize<uint8_t> nocBuf;
-    ReturnErrorCodeIf(!nocBuf.Alloc(noc.size()), CHIP_ERROR_NO_MEMORY);
+    VerifyOrReturnError(nocBuf.Alloc(noc.size()), CHIP_ERROR_NO_MEMORY);
     memcpy(nocBuf.Get(), noc.data(), noc.size());
 
     Platform::ScopedMemoryBufferWithSize<uint8_t> icacBuf;
     if (icac.size() > 0)
     {
-        ReturnErrorCodeIf(!icacBuf.Alloc(icac.size()), CHIP_ERROR_NO_MEMORY);
+        VerifyOrReturnError(icacBuf.Alloc(icac.size()), CHIP_ERROR_NO_MEMORY);
         memcpy(icacBuf.Get(), icac.data(), icac.size());
     }
 
@@ -323,8 +329,8 @@ CHIP_ERROR PersistentStorageOpCertStore::CommitOpCertsForFabric(FabricIndex fabr
     {
         // Neither of these conditions should have occurred based on other interlocks, but since
         // committing certificates is a dangerous operation, we absolutely validate our assumptions.
-        ReturnErrorCodeIf(mStateFlags.Has(StateFlags::kUpdateOpCertsCalled), CHIP_ERROR_INCORRECT_STATE);
-        ReturnErrorCodeIf(!mStateFlags.Has(StateFlags::kAddNewTrustedRootCalled), CHIP_ERROR_INCORRECT_STATE);
+        VerifyOrReturnError(!mStateFlags.Has(StateFlags::kUpdateOpCertsCalled), CHIP_ERROR_INCORRECT_STATE);
+        VerifyOrReturnError(mStateFlags.Has(StateFlags::kAddNewTrustedRootCalled), CHIP_ERROR_INCORRECT_STATE);
     }
 
     // TODO: Handle transaction marking to revert partial certs at next boot if we get interrupted by reboot.
@@ -399,7 +405,7 @@ CHIP_ERROR PersistentStorageOpCertStore::RemoveOpCertsForFabric(FabricIndex fabr
     VerifyOrReturnError(IsValidFabricIndex(fabricIndex), CHIP_ERROR_INVALID_FABRIC_INDEX);
 
     // If there was *no* state, pending or persisted, we have an error
-    ReturnErrorCodeIf(!HasAnyCertificateForFabric(fabricIndex), CHIP_ERROR_INVALID_FABRIC_INDEX);
+    VerifyOrReturnError(HasAnyCertificateForFabric(fabricIndex), CHIP_ERROR_INVALID_FABRIC_INDEX);
 
     // Clear any pending state
     RevertPendingOpCerts();

@@ -18,15 +18,17 @@
 
 #include "PWMDevice.h"
 
+#include <algorithm>
+
 #include "AppConfig.h"
 
 #include <lib/support/CodeUtils.h>
 
 #include <zephyr/drivers/pwm.h>
+#include <zephyr/kernel.h>
 #include <zephyr/logging/log.h>
-#include <zephyr/zephyr.h>
 
-LOG_MODULE_DECLARE(app, CONFIG_MATTER_LOG_LEVEL);
+LOG_MODULE_DECLARE(app, CONFIG_CHIP_APP_LOG_LEVEL);
 
 int PWMDevice::Init(const pwm_dt_spec * aPWMDevice, uint8_t aMinLevel, uint8_t aMaxLevel, uint8_t aDefaultLevel)
 {
@@ -112,19 +114,24 @@ void PWMDevice::SetLevel(uint8_t aLevel)
 {
     LOG_INF("Setting brightness level to %u", aLevel);
     mLevel = aLevel;
-    UpdateLight();
+    ApplyLevel();
 }
 
 void PWMDevice::Set(bool aOn)
 {
     mState = aOn ? kState_On : kState_Off;
-    UpdateLight();
+    ApplyLevel();
 }
 
-void PWMDevice::UpdateLight()
+void PWMDevice::SuppressOutput()
+{
+    pwm_set_pulse_dt(mPwmDevice, 0);
+}
+
+void PWMDevice::ApplyLevel()
 {
     const uint8_t maxEffectiveLevel = mMaxLevel - mMinLevel;
-    const uint8_t effectiveLevel    = mState == kState_On ? chip::min<uint8_t>(mLevel - mMinLevel, maxEffectiveLevel) : 0;
+    const uint8_t effectiveLevel    = mState == kState_On ? std::min<uint8_t>(mLevel - mMinLevel, maxEffectiveLevel) : 0;
 
     pwm_set_pulse_dt(mPwmDevice,
                      static_cast<uint32_t>(static_cast<const uint64_t>(mPwmDevice->period) * effectiveLevel / maxEffectiveLevel));

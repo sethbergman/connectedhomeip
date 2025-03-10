@@ -22,11 +22,11 @@
 #define GPIO_INPUT_PIN_SEL (1ULL << GPIO_INPUT_IO_0)
 #define ESP_INTR_FLAG_DEFAULT 0
 
-static const char * TAG = "Button";
+static const char TAG[] = "Button";
 
 static Button::ButtonPressCallback button_press_handler = nullptr;
 
-static void IRAM_ATTR gpio_isr_handler(void * arg)
+static void gpio_isr_handler(void * arg)
 {
     if (button_press_handler != nullptr)
     {

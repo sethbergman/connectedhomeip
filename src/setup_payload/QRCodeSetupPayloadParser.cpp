@@ -24,14 +24,13 @@
 #include "QRCodeSetupPayloadParser.h"
 #include "Base38Decode.h"
 
-#include <memory>
 #include <string.h>
 #include <vector>
 
 #include <lib/core/CHIPCore.h>
 #include <lib/core/CHIPError.h>
-#include <lib/core/CHIPTLVData.hpp>
-#include <lib/core/CHIPTLVUtilities.hpp>
+#include <lib/core/TLVData.h>
+#include <lib/core/TLVUtilities.h>
 #include <lib/support/CodeUtils.h>
 #include <lib/support/SafeInt.h>
 #include <lib/support/ScopedBuffer.h>
@@ -268,10 +267,10 @@ CHIP_ERROR QRCodeSetupPayloadParser::populateTLV(SetupPayload & outPayload, cons
     size_t tlvBytesLength = (bitsLeftToRead + 7) / 8; // ceil(bitsLeftToRead/8)
     chip::Platform::ScopedMemoryBuffer<uint8_t> tlvArray;
 
-    ReturnErrorCodeIf(tlvBytesLength == 0, CHIP_NO_ERROR);
+    VerifyOrReturnError(tlvBytesLength != 0, CHIP_NO_ERROR);
 
     tlvArray.Alloc(tlvBytesLength);
-    ReturnErrorCodeIf(!tlvArray, CHIP_ERROR_NO_MEMORY);
+    VerifyOrReturnError(tlvArray, CHIP_ERROR_NO_MEMORY);
 
     for (size_t i = 0; i < tlvBytesLength; i++)
     {

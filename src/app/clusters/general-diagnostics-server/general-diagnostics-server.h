@@ -19,9 +19,7 @@
 #pragma once
 
 #include <app-common/zap-generated/cluster-objects.h>
-#include <app/AttributeAccessInterface.h>
 #include <app/CommandResponseHelper.h>
-#include <app/util/af.h>
 #include <platform/GeneralFaults.h>
 
 namespace chip {
@@ -40,7 +38,7 @@ public:
      * @brief
      *   Called after the current device is rebooted.
      */
-    void OnDeviceReboot(GeneralDiagnostics::BootReasonType bootReason);
+    void OnDeviceReboot(GeneralDiagnostics::BootReasonEnum bootReason);
 
     /**
      * @brief

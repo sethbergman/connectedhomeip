@@ -20,7 +20,8 @@
 
 #include <ButtonHandler.h>
 #include <LockManager.h>
-#include <stdio.h>
+#include <cycfg_pins.h>
+#include <platform/CHIPDeviceLayer.h>
 #include <wiced.h>
 #include <wiced_button_manager.h>
 #include <wiced_platform.h>
@@ -55,15 +56,16 @@ wiced_result_t app_button_init(void)
     memset(app_button_configurations, 0, (sizeof(wiced_button_configuration_t) * APP_MAX_BUTTON_DEF));
     memset(app_buttons, 0, (sizeof(button_manager_button_t) * APP_MAX_BUTTON_DEF));
 
-    app_button_configurations[ON_OFF_BUTTON].button            = PLATFORM_BUTTON_1;
-    app_button_configurations[ON_OFF_BUTTON].button_event_mask = BUTTON_CLICK_EVENT;
-    app_buttons[ON_OFF_BUTTON].configuration                   = &app_button_configurations[ON_OFF_BUTTON];
+    app_button_configurations[ON_OFF_BUTTON].gpio = PLATFORM_BUTTON_USER;
+    app_button_configurations[ON_OFF_BUTTON].button_event_mask =
+        (BUTTON_CLICK_EVENT | BUTTON_LONG_DURATION_EVENT | BUTTON_HOLDING_EVENT);
+    app_buttons[ON_OFF_BUTTON].configuration = &app_button_configurations[ON_OFF_BUTTON];
 
     result = wiced_button_manager_init(&app_button_manager, &app_button_manager_configuration, app_buttons, 1);
 
     if (result != WICED_SUCCESS)
     {
-        printf("button_manager_init failed (%d)\n", result);
+        ChipLogProgress(Zcl, "button_manager_init failed (%d)\n", result);
     }
     return result;
 }
@@ -71,35 +73,39 @@ wiced_result_t app_button_init(void)
 void app_button_event_handler(const button_manager_button_t * button_mgr, button_manager_event_t event,
                               button_manager_button_state_t state)
 {
-    // printf("app_button_event_handler. button=%d, event=%d, state=%d\n", button_mgr[ON_OFF_BUTTON].configuration->button, event,
-    // state);
     bool initiated = false;
     LockManager::Action_t action;
-    int32_t actor;
-    CHIP_ERROR err = CHIP_NO_ERROR;
-    if (button_mgr[0].configuration->button == PLATFORM_BUTTON_1 && event == BUTTON_CLICK_EVENT && state == BUTTON_STATE_RELEASED)
+
+    ChipLogProgress(Zcl, "app_button_event_handler. gpio=%d, event=%d, state=%d\n", button_mgr[ON_OFF_BUTTON].configuration->gpio,
+                    event, state);
+
+    /* single click to Lock/Unlock
+       long press to generate Jammed event */
+    if (button_mgr[0].configuration->gpio == PLATFORM_BUTTON_USER)
     {
-        if (LockMgr().NextState() == true)
+        if (event == BUTTON_CLICK_EVENT && state == BUTTON_STATE_RELEASED)
         {
-            action = LockManager::LOCK_ACTION;
+            action = (LockMgr().NextState() == true) ? LockManager::LOCK_ACTION : LockManager::UNLOCK_ACTION;
+        }
+        else if (event == BUTTON_LONG_DURATION_EVENT && state == BUTTON_STATE_RELEASED)
+        {
+            action = LockManager::LOCK_JAMMED;
+        }
+        else if (event == BUTTON_HOLDING_EVENT)
+        {
+            printf("Button Performing factory reset ...\r\n");
+            chip::DeviceLayer::ConfigurationMgr().InitiateFactoryReset();
+            return;
         }
         else
         {
-            action = LockManager::UNLOCK_ACTION;
+            return;
         }
-        actor = AppEvent::kEventType_Button;
     }
-    else
-    {
-        err = CHIP_ERROR_UNEXPECTED_EVENT;
-    }
-    if (err == CHIP_NO_ERROR)
-    {
-        initiated = LockMgr().InitiateAction(AppEvent::kEventType_Button, action);
 
-        if (!initiated)
-        {
-            printf("Action is already in progress or active.");
-        }
+    initiated = LockMgr().InitiateAction(AppEvent::kEventType_Button, action);
+    if (!initiated)
+    {
+        ChipLogProgress(Zcl, "Action is already in progress or active.");
     }
 }

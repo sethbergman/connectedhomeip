@@ -17,7 +17,7 @@
 #pragma once
 
 #include <lib/core/CHIPError.h>
-#include <lib/core/CHIPTLV.h>
+#include <lib/core/TLV.h>
 #include <lib/support/Span.h>
 
 #include <cstdint>
@@ -88,7 +88,7 @@ public:
      */
     CHIP_ERROR GetNextVendorReservedElement(struct VendorReservedElement & element)
     {
-        VerifyOrReturnError(mIsInitialized, CHIP_ERROR_WELL_UNINITIALIZED);
+        VerifyOrReturnError(mIsInitialized, CHIP_ERROR_UNINITIALIZED);
         if (mIsDone)
         {
             return CHIP_END_OF_TLV;

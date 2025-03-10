@@ -32,12 +32,11 @@ public:
         VerifyOrDieWithMsg(mTargetVideoPlayerInfo != nullptr, AppServer, "Target unknown");
 
         auto deviceProxy = mTargetVideoPlayerInfo->GetOperationalDeviceProxy();
-        ReturnErrorCodeIf(deviceProxy == nullptr || !deviceProxy->ConnectionReady(), CHIP_ERROR_PEER_NODE_NOT_FOUND);
+        VerifyOrReturnError(deviceProxy != nullptr && deviceProxy->ConnectionReady(), CHIP_ERROR_PEER_NODE_NOT_FOUND);
 
         sResponseCallback = responseCallback;
 
-        MediaClusterBase cluster(*deviceProxy->GetExchangeManager(), deviceProxy->GetSecureSession().Value(), mClusterId,
-                                 mTvEndpoint);
+        MediaClusterBase cluster(*deviceProxy->GetExchangeManager(), deviceProxy->GetSecureSession().Value(), mTvEndpoint);
         return cluster.InvokeCommand(request, nullptr, OnSuccess, OnFailure);
     }
 

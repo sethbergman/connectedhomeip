@@ -34,17 +34,54 @@
 #include <lib/core/Optional.h>
 #include <lib/core/PeerId.h>
 #include <lib/support/BitFlags.h>
+#include <lib/support/BufferReader.h>
+#include <lib/support/CodeUtils.h>
 #include <lib/support/TypeTraits.h>
 #include <protocols/Protocols.h>
 #include <system/SystemPacketBuffer.h>
 
 namespace chip {
 
+namespace detail {
+// Figure out the max size of a packet we can allocate, including all headers.
+static constexpr size_t kMaxIPPacketSizeBytes       = 1280;
+static constexpr size_t kMaxUDPAndIPHeaderSizeBytes = 48;
+
+static_assert(kMaxIPPacketSizeBytes >= kMaxUDPAndIPHeaderSizeBytes + CHIP_SYSTEM_HEADER_RESERVE_SIZE,
+              "Matter headers and IP headers must fit in an MTU.");
+
+// Max space we have for our Application Payload and MIC, per spec.
+static constexpr size_t kMaxPerSpecApplicationPayloadAndMICSizeBytes =
+    kMaxIPPacketSizeBytes - kMaxUDPAndIPHeaderSizeBytes - CHIP_SYSTEM_HEADER_RESERVE_SIZE;
+
+// Max space we have for our Application Payload and MIC in our actual packet
+// buffers.  This is the size _excluding_ the header reserve.
+static constexpr size_t kMaxPacketBufferApplicationPayloadAndMICSizeBytes = System::PacketBuffer::kMaxSize;
+
+static constexpr size_t kMaxApplicationPayloadAndMICSizeBytes =
+    std::min(kMaxPerSpecApplicationPayloadAndMICSizeBytes, kMaxPacketBufferApplicationPayloadAndMICSizeBytes);
+} // namespace detail
+
 static constexpr size_t kMaxTagLen = 16;
 
-static constexpr size_t kMaxAppMessageLen = 1200;
+static_assert(detail::kMaxApplicationPayloadAndMICSizeBytes > kMaxTagLen, "Need to be able to fit our tag in a message");
+
+// This is somewhat of an under-estimate, because in practice any time we have a
+// tag we will not have source/destination node IDs, but above we are including
+// those in the header sizes.
+static constexpr size_t kMaxAppMessageLen = detail::kMaxApplicationPayloadAndMICSizeBytes - kMaxTagLen;
 
 static constexpr uint16_t kMsgUnicastSessionIdUnsecured = 0x0000;
+
+// Minimum header size of TCP + IPv6 without options.
+static constexpr size_t kMaxTCPAndIPHeaderSizeBytes = 60;
+
+// Max space for the Application Payload and MIC for large packet buffers
+// This is the size _excluding_ the header reserve.
+static constexpr size_t kMaxLargeApplicationPayloadAndMICSizeBytes =
+    System::PacketBuffer::kLargeBufMaxSize - kMaxTCPAndIPHeaderSizeBytes;
+
+static constexpr size_t kMaxLargeAppMessageLen = kMaxLargeApplicationPayloadAndMICSizeBytes - kMaxTagLen;
 
 typedef int PacketHeaderFlags;
 
@@ -134,6 +171,13 @@ using ExFlags = BitFlags<ExFlagValues>;
 class PacketHeader
 {
 public:
+    enum
+    {
+        kHeaderMinLength        = 8,
+        kPrivacyHeaderMinLength = 4,
+        kPrivacyHeaderOffset    = 4,
+    };
+
     /**
      * Gets the message counter set in the header.
      *
@@ -172,6 +216,10 @@ public:
 
     bool HasPrivacyFlag() const { return mSecFlags.Has(Header::SecFlagValues::kPrivacyFlag); }
 
+    bool HasSourceNodeId() const { return mMsgFlags.Has(Header::MsgFlagValues::kSourceNodeIdPresent); }
+    bool HasDestinationNodeId() const { return mMsgFlags.Has(Header::MsgFlagValues::kDestinationNodeIdPresent); }
+    bool HasDestinationGroupId() const { return mMsgFlags.Has(Header::MsgFlagValues::kDestinationGroupIdPresent); }
+
     void SetFlags(Header::SecFlagValues value) { mSecFlags.Set(value); }
     void SetFlags(Header::MsgFlagValues value) { mMsgFlags.Set(value); }
 
@@ -202,15 +250,13 @@ public:
     bool IsValidGroupMsg() const
     {
         // Check is based on spec 4.11.2
-        return (IsGroupSession() && GetSourceNodeId().HasValue() && GetDestinationGroupId().HasValue() &&
-                !IsSecureSessionControlMsg());
+        return (IsGroupSession() && HasSourceNodeId() && HasDestinationGroupId() && !IsSecureSessionControlMsg());
     }
 
     bool IsValidMCSPMsg() const
     {
         // Check is based on spec 4.9.2.4
-        return (IsGroupSession() && GetSourceNodeId().HasValue() && GetDestinationNodeId().HasValue() &&
-                IsSecureSessionControlMsg());
+        return (IsGroupSession() && HasSourceNodeId() && HasDestinationNodeId() && IsSecureSessionControlMsg());
     }
 
     bool IsEncrypted() const { return !((mSessionId == kMsgUnicastSessionIdUnsecured) && IsUnicastSession()); }
@@ -317,12 +363,55 @@ public:
     }
 
     /**
+     * Returns a pointer to the start of the privacy header
+     * given a pointer to the start of the message.
+     */
+    uint8_t * PrivacyHeader(uint8_t * msgBuf) const { return msgBuf + PacketHeader::kPrivacyHeaderOffset; }
+
+    size_t PrivacyHeaderLength() const
+    {
+        size_t length = kPrivacyHeaderMinLength;
+        if (mMsgFlags.Has(Header::MsgFlagValues::kSourceNodeIdPresent))
+        {
+            length += sizeof(NodeId);
+        }
+        if (mMsgFlags.Has(Header::MsgFlagValues::kDestinationNodeIdPresent))
+        {
+            length += sizeof(NodeId);
+        }
+        else if (mMsgFlags.Has(Header::MsgFlagValues::kDestinationGroupIdPresent))
+        {
+            length += sizeof(GroupId);
+        }
+        return length;
+    }
+
+    size_t PayloadOffset() const
+    {
+        size_t offset = kPrivacyHeaderMinLength;
+        offset += PrivacyHeaderLength();
+        return offset;
+    }
+
+    /**
      * A call to `Encode` will require at least this many bytes on the current
      * object to be successful.
      *
      * @return the number of bytes needed in a buffer to be able to Encode.
      */
     uint16_t EncodeSizeBytes() const;
+
+    /**
+     * Decodes the fixed portion of the header fields from the given buffer.
+     * The fixed header includes: message flags, session id, and security flags.
+     *
+     * @return CHIP_NO_ERROR on success.
+     *
+     * Possible failures:
+     *    CHIP_ERROR_INVALID_ARGUMENT on insufficient buffer size
+     *    CHIP_ERROR_VERSION_MISMATCH if header version is not supported.
+     */
+    CHIP_ERROR DecodeFixed(const System::PacketBufferHandle & buf);
 
     /**
      * Decodes a header from the given buffer.
@@ -338,13 +427,13 @@ public:
      *    CHIP_ERROR_INVALID_ARGUMENT on insufficient buffer size
      *    CHIP_ERROR_VERSION_MISMATCH if header version is not supported.
      */
-    CHIP_ERROR Decode(const uint8_t * data, uint16_t size, uint16_t * decode_size);
+    CHIP_ERROR Decode(const uint8_t * data, size_t size, uint16_t * decode_size);
 
     /**
      * A version of Decode that uses the type system to determine available
      * space.
      */
-    template <uint16_t N>
+    template <size_t N>
     inline CHIP_ERROR Decode(const uint8_t (&data)[N], uint16_t * decode_size)
     {
         return Decode(data, N, decode_size);
@@ -368,13 +457,13 @@ public:
      * Possible failures:
      *    CHIP_ERROR_INVALID_ARGUMENT on insufficient buffer size
      */
-    CHIP_ERROR Encode(uint8_t * data, uint16_t size, uint16_t * encode_size) const;
+    CHIP_ERROR Encode(uint8_t * data, size_t size, uint16_t * encode_size) const;
 
     /**
      * A version of Encode that uses the type system to determine available
      * space.
      */
-    template <int N>
+    template <size_t N>
     inline CHIP_ERROR Encode(uint8_t (&data)[N], uint16_t * encode_size) const
     {
         return Encode(data, N, encode_size);
@@ -397,6 +486,18 @@ public:
     }
 
 private:
+    /**
+     * Decodes the fixed portion of the header fields from the stream reader.
+     * The fixed header includes: message flags, session id, and security flags.
+     *
+     * @return CHIP_NO_ERROR on success.
+     *
+     * Possible failures:
+     *    CHIP_ERROR_INVALID_ARGUMENT on insufficient buffer size
+     *    CHIP_ERROR_VERSION_MISMATCH if header version is not supported.
+     */
+    CHIP_ERROR DecodeFixedCommon(Encoding::LittleEndian::Reader & reader);
+
     /// Represents the current encode/decode header version (4 bits)
     static constexpr uint8_t kMsgHeaderVersion = 0x00;
 
@@ -430,7 +531,7 @@ class PayloadHeader
 {
 public:
     constexpr PayloadHeader() { SetProtocol(Protocols::NotSpecified); }
-    constexpr PayloadHeader(const PayloadHeader &) = default;
+    constexpr PayloadHeader(const PayloadHeader &)   = default;
     PayloadHeader & operator=(const PayloadHeader &) = default;
 
     /** Get the Session ID from this header. */
@@ -446,7 +547,7 @@ public:
     uint8_t GetMessageType() const { return mMessageType; }
 
     /** Get the raw exchange flags from this header. */
-    uint8_t GetExhangeFlags() const { return mExchangeFlags.Raw(); }
+    uint8_t GetExchangeFlags() const { return mExchangeFlags.Raw(); }
 
     /** Check whether the header has a given secure message type */
     bool HasMessageType(uint8_t type) const { return mMessageType == type; }
@@ -570,13 +671,13 @@ public:
      *    CHIP_ERROR_INVALID_ARGUMENT on insufficient buffer size
      *    CHIP_ERROR_VERSION_MISMATCH if header version is not supported.
      */
-    CHIP_ERROR Decode(const uint8_t * data, uint16_t size, uint16_t * decode_size);
+    CHIP_ERROR Decode(const uint8_t * data, size_t size, uint16_t * decode_size);
 
     /**
      * A version of Decode that uses the type system to determine available
      * space.
      */
-    template <uint16_t N>
+    template <size_t N>
     inline CHIP_ERROR Decode(const uint8_t (&data)[N], uint16_t * decode_size)
     {
         return Decode(data, N, decode_size);
@@ -600,13 +701,13 @@ public:
      * Possible failures:
      *    CHIP_ERROR_INVALID_ARGUMENT on insufficient buffer size
      */
-    CHIP_ERROR Encode(uint8_t * data, uint16_t size, uint16_t * encode_size) const;
+    CHIP_ERROR Encode(uint8_t * data, size_t size, uint16_t * encode_size) const;
 
     /**
      * A version of Encode that uses the type system to determine available
      * space.
      */
-    template <uint16_t N>
+    template <size_t N>
     inline CHIP_ERROR Encode(uint8_t (&data)[N], uint16_t * decode_size) const
     {
         return Encode(data, N, decode_size);
@@ -661,7 +762,7 @@ public:
     const uint8_t * GetTag() const { return &mTag[0]; }
 
     /** Set the message auth tag for this header. */
-    MessageAuthenticationCode & SetTag(PacketHeader * header, uint8_t * tag, size_t len)
+    MessageAuthenticationCode & SetTag(PacketHeader * header, const uint8_t * tag, size_t len)
     {
         const size_t tagLen = chip::Crypto::CHIP_CRYPTO_AEAD_MIC_LENGTH_BYTES;
         if (tagLen > 0 && tagLen <= kMaxTagLen && len == tagLen)
@@ -687,7 +788,7 @@ public:
      *    CHIP_ERROR_INVALID_ARGUMENT on insufficient buffer size
      *    CHIP_ERROR_VERSION_MISMATCH if header version is not supported.
      */
-    CHIP_ERROR Decode(const PacketHeader & packetHeader, const uint8_t * data, uint16_t size, uint16_t * decode_size);
+    CHIP_ERROR Decode(const PacketHeader & packetHeader, const uint8_t * data, size_t size, uint16_t * decode_size);
 
     /**
      * Encodes the Messae Authentication Tag into the given buffer.
@@ -702,7 +803,7 @@ public:
      * Possible failures:
      *    CHIP_ERROR_INVALID_ARGUMENT on insufficient buffer size
      */
-    CHIP_ERROR Encode(const PacketHeader & packetHeader, uint8_t * data, uint16_t size, uint16_t * encode_size) const;
+    CHIP_ERROR Encode(const PacketHeader & packetHeader, uint8_t * data, size_t size, uint16_t * encode_size) const;
 
 private:
     /// Message authentication tag generated at encryption of the message.

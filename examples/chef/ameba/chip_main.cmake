@@ -35,15 +35,11 @@ endif (matter_enable_ota_requestor)
 list(
     APPEND ${list_chip_main_sources}
 
-    ${chip_dir}/examples/chef/out/${SAMPLE_NAME}/zap-generated/callback-stub.cpp
-    ${chip_dir}/examples/chef/out/${SAMPLE_NAME}/zap-generated/IMClusterCommandHandler.cpp
-
     ${matter_example_path}//main/chipinterface.cpp
     ${matter_example_path}//main/DeviceCallbacks.cpp
     ${matter_example_path}//main/CHIPDeviceManager.cpp
     ${matter_example_path}//main/Globals.cpp
     ${matter_example_path}//main/LEDWidget.cpp
-    ${matter_example_path}//main/DsoHack.cpp
 
     ${chip_dir}/examples/providers/DeviceInfoProviderImpl.cpp
 )
@@ -55,7 +51,6 @@ add_library(
 )
 
 chip_configure_data_model(chip_main
-    INCLUDE_SERVER
     ZAP_FILE ${matter_example_path}/../devices/${SAMPLE_NAME}.zap
 )
 
@@ -71,6 +66,7 @@ target_include_directories(
     ${chip_dir}/examples/all-clusters-app/all-clusters-common/include
     ${chip_dir}/examples/all-clusters-app/ameba/main/include
     ${chip_dir}/examples/platform/ameba
+    ${chip_dir}/examples/platform/ameba/observer
     ${chip_dir}/examples/providers
     ${chip_dir_output}/gen/include
     ${chip_dir}/src/include/
@@ -82,7 +78,6 @@ target_include_directories(
     ${chip_dir}/src/app/server/
     ${chip_dir}/src/controller/data_model
     ${chip_dir}/third_party/nlio/repo/include/
-    ${chip_dir}/third_party/nlunit-test/repo/src
 )
 
 list(
@@ -91,7 +86,6 @@ list(
     -DINET_CONFIG_ENABLE_IPV4=0
     -DCHIP_PROJECT=1
     -DCHIP_DEVICE_LAYER_TARGET=Ameba
-    -DUSE_ZAP_CONFIG
     -DCHIP_HAVE_CONFIG_H
     -DMBEDTLS_CONFIG_FILE=<mbedtls_config.h>
     -DCHIP_DEVICE_CONFIG_DEVICE_PRODUCT_ID=${CONFIG_DEVICE_PRODUCT_ID}
@@ -118,8 +112,7 @@ list(
     APPEND chip_main_cpp_flags
 
 	-Wno-unused-parameter
-	-std=gnu++11
-	-std=c++14
+	-std=c++17
 	-fno-rtti
 )
 target_compile_definitions(${chip_main} PRIVATE ${chip_main_flags} )

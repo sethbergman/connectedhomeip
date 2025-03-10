@@ -22,12 +22,11 @@
 #include <dk_buttons_and_leds.h>
 
 #include <app-common/zap-generated/attributes/Accessors.h>
-#include <app/util/af.h>
 #include <platform/CHIPDeviceLayer.h>
+#include <zephyr/kernel.h>
 #include <zephyr/logging/log.h>
-#include <zephyr/zephyr.h>
 
-LOG_MODULE_DECLARE(app, CONFIG_MATTER_LOG_LEVEL);
+LOG_MODULE_DECLARE(app, CONFIG_CHIP_APP_LOG_LEVEL);
 
 using namespace ::chip::Credentials;
 using namespace ::chip::DeviceLayer;
@@ -59,18 +58,36 @@ void WindowCovering::DriveCurrentLiftPosition(intptr_t)
     NPercent100ths target{};
     NPercent100ths positionToSet{};
 
-    VerifyOrReturn(Attributes::CurrentPositionLiftPercent100ths::Get(Endpoint(), current) == EMBER_ZCL_STATUS_SUCCESS);
-    VerifyOrReturn(Attributes::TargetPositionLiftPercent100ths::Get(Endpoint(), target) == EMBER_ZCL_STATUS_SUCCESS);
+    VerifyOrReturn(Attributes::CurrentPositionLiftPercent100ths::Get(Endpoint(), current) ==
+                   chip::Protocols::InteractionModel::Status::Success);
+    VerifyOrReturn(Attributes::TargetPositionLiftPercent100ths::Get(Endpoint(), target) ==
+                   chip::Protocols::InteractionModel::Status::Success);
 
-    UpdateOperationalStatus(MoveType::LIFT, ComputeOperationalState(target, current));
+    OperationalState state = ComputeOperationalState(target, current);
+    UpdateOperationalStatus(MoveType::LIFT, state);
 
-    positionToSet.SetNonNull(CalculateSingleStep(MoveType::LIFT));
+    chip::Percent100ths position = CalculateNextPosition(MoveType::LIFT);
+
+    if (state == OperationalState::MovingUpOrOpen)
+    {
+        positionToSet.SetNonNull(position > target.Value() ? position : target.Value());
+    }
+    else if (state == OperationalState::MovingDownOrClose)
+    {
+        positionToSet.SetNonNull(position < target.Value() ? position : target.Value());
+    }
+    else
+    {
+        positionToSet.SetNonNull(current.Value());
+    }
+
     LiftPositionSet(Endpoint(), positionToSet);
 
     // assume single move completed
     Instance().mInLiftMove = false;
 
-    VerifyOrReturn(Attributes::CurrentPositionLiftPercent100ths::Get(Endpoint(), current) == EMBER_ZCL_STATUS_SUCCESS);
+    VerifyOrReturn(Attributes::CurrentPositionLiftPercent100ths::Get(Endpoint(), current) ==
+                   chip::Protocols::InteractionModel::Status::Success);
 
     if (!TargetCompleted(MoveType::LIFT, current, target))
     {
@@ -84,9 +101,9 @@ void WindowCovering::DriveCurrentLiftPosition(intptr_t)
     }
 }
 
-chip::Percent100ths WindowCovering::CalculateSingleStep(MoveType aMoveType)
+chip::Percent100ths WindowCovering::CalculateNextPosition(MoveType aMoveType)
 {
-    EmberAfStatus status{};
+    chip::Protocols::InteractionModel::Status status{};
     chip::Percent100ths percent100ths{};
     NPercent100ths current{};
     OperationalState opState{};
@@ -102,7 +119,7 @@ chip::Percent100ths WindowCovering::CalculateSingleStep(MoveType aMoveType)
         opState = OperationalStateGet(Endpoint(), OperationalStatus::kTilt);
     }
 
-    if ((status == EMBER_ZCL_STATUS_SUCCESS) && !current.IsNull())
+    if ((status == chip::Protocols::InteractionModel::Status::Success) && !current.IsNull())
     {
         static constexpr auto sPercentDelta{ WC_PERCENT100THS_MAX_CLOSED / 20 };
         percent100ths = ComputePercent100thsStep(opState, current.Value(), sPercentDelta);
@@ -153,18 +170,36 @@ void WindowCovering::DriveCurrentTiltPosition(intptr_t)
     NPercent100ths target{};
     NPercent100ths positionToSet{};
 
-    VerifyOrReturn(Attributes::CurrentPositionTiltPercent100ths::Get(Endpoint(), current) == EMBER_ZCL_STATUS_SUCCESS);
-    VerifyOrReturn(Attributes::TargetPositionTiltPercent100ths::Get(Endpoint(), target) == EMBER_ZCL_STATUS_SUCCESS);
+    VerifyOrReturn(Attributes::CurrentPositionTiltPercent100ths::Get(Endpoint(), current) ==
+                   chip::Protocols::InteractionModel::Status::Success);
+    VerifyOrReturn(Attributes::TargetPositionTiltPercent100ths::Get(Endpoint(), target) ==
+                   chip::Protocols::InteractionModel::Status::Success);
 
-    UpdateOperationalStatus(MoveType::TILT, ComputeOperationalState(target, current));
+    OperationalState state = ComputeOperationalState(target, current);
+    UpdateOperationalStatus(MoveType::TILT, state);
 
-    positionToSet.SetNonNull(CalculateSingleStep(MoveType::TILT));
+    chip::Percent100ths position = CalculateNextPosition(MoveType::TILT);
+
+    if (state == OperationalState::MovingUpOrOpen)
+    {
+        positionToSet.SetNonNull(position > target.Value() ? position : target.Value());
+    }
+    else if (state == OperationalState::MovingDownOrClose)
+    {
+        positionToSet.SetNonNull(position < target.Value() ? position : target.Value());
+    }
+    else
+    {
+        positionToSet.SetNonNull(current.Value());
+    }
+
     TiltPositionSet(Endpoint(), positionToSet);
 
     // assume single move completed
     Instance().mInTiltMove = false;
 
-    VerifyOrReturn(Attributes::CurrentPositionTiltPercent100ths::Get(Endpoint(), current) == EMBER_ZCL_STATUS_SUCCESS);
+    VerifyOrReturn(Attributes::CurrentPositionTiltPercent100ths::Get(Endpoint(), current) ==
+                   chip::Protocols::InteractionModel::Status::Success);
 
     if (!TargetCompleted(MoveType::TILT, current, target))
     {
@@ -204,7 +239,7 @@ void WindowCovering::StartMove(MoveType aMoveType)
 void WindowCovering::SetSingleStepTarget(OperationalState aDirection)
 {
     UpdateOperationalStatus(mCurrentUIMoveType, aDirection);
-    SetTargetPosition(aDirection, CalculateSingleStep(mCurrentUIMoveType));
+    SetTargetPosition(aDirection, CalculateNextPosition(mCurrentUIMoveType));
 }
 
 void WindowCovering::UpdateOperationalStatus(MoveType aMoveType, OperationalState aDirection)
@@ -226,7 +261,7 @@ void WindowCovering::UpdateOperationalStatus(MoveType aMoveType, OperationalStat
 
 void WindowCovering::SetTargetPosition(OperationalState aDirection, chip::Percent100ths aPosition)
 {
-    EmberAfStatus status{};
+    chip::Protocols::InteractionModel::Status status{};
     if (Instance().mCurrentUIMoveType == MoveType::LIFT)
     {
         status = Attributes::TargetPositionLiftPercent100ths::Set(Endpoint(), aPosition);
@@ -236,7 +271,7 @@ void WindowCovering::SetTargetPosition(OperationalState aDirection, chip::Percen
         status = Attributes::TargetPositionTiltPercent100ths::Set(Endpoint(), aPosition);
     }
 
-    if (status != EMBER_ZCL_STATUS_SUCCESS)
+    if (status != chip::Protocols::InteractionModel::Status::Success)
     {
         LOG_ERR("Cannot set the target position. Error: %d", static_cast<uint8_t>(status));
     }
@@ -244,13 +279,13 @@ void WindowCovering::SetTargetPosition(OperationalState aDirection, chip::Percen
 
 void WindowCovering::PositionLEDUpdate(MoveType aMoveType)
 {
-    EmberAfStatus status{};
+    chip::Protocols::InteractionModel::Status status{};
     NPercent100ths currentPosition{};
 
     if (aMoveType == MoveType::LIFT)
     {
         status = Attributes::CurrentPositionLiftPercent100ths::Get(Endpoint(), currentPosition);
-        if (EMBER_ZCL_STATUS_SUCCESS == status && !currentPosition.IsNull())
+        if (chip::Protocols::InteractionModel::Status::Success == status && !currentPosition.IsNull())
         {
             Instance().SetBrightness(MoveType::LIFT, currentPosition.Value());
         }
@@ -258,7 +293,7 @@ void WindowCovering::PositionLEDUpdate(MoveType aMoveType)
     else if (aMoveType == MoveType::TILT)
     {
         status = Attributes::CurrentPositionTiltPercent100ths::Get(Endpoint(), currentPosition);
-        if (EMBER_ZCL_STATUS_SUCCESS == status && !currentPosition.IsNull())
+        if (chip::Protocols::InteractionModel::Status::Success == status && !currentPosition.IsNull())
         {
             Instance().SetBrightness(MoveType::TILT, currentPosition.Value());
         }
@@ -313,4 +348,6 @@ void WindowCovering::DoPostAttributeChange(intptr_t aArg)
     VerifyOrReturn(data != nullptr);
 
     PostAttributeChange(data->mEndpoint, data->mAttributeId);
+
+    chip::Platform::Delete(data);
 }

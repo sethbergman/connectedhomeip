@@ -20,7 +20,6 @@
 
 #include "../logging/Log.h"
 
-#include <app/AttributeAccessInterface.h>
 #include <app/MessageDef/InvokeRequestMessage.h>
 #include <app/MessageDef/InvokeResponseMessage.h>
 #include <app/MessageDef/ReportDataMessage.h>
@@ -34,7 +33,7 @@
 #include <credentials/DeviceAttestationVendorReserved.h>
 #include <credentials/attestation_verifier/DefaultDeviceAttestationVerifier.h>
 
-#include <lib/core/CHIPTLV.h>
+#include <lib/core/TLV.h>
 #include <lib/support/TypeTraits.h>
 
 namespace {
@@ -263,7 +262,7 @@ CHIP_ERROR LogAddTrustedRootCertificateRequest(TLV::TLVReader & reader)
     app::Clusters::OperationalCredentials::Commands::AddTrustedRootCertificate::DecodableType value;
     ReturnErrorOnFailure(chip::app::DataModel::Decode(reader, value));
 
-    LogCertificate("RCACValue", value.rootCertificate);
+    LogCertificate("RCACValue", value.rootCACertificate);
 
     return CHIP_NO_ERROR;
 }

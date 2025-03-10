@@ -18,15 +18,15 @@
 #
 
 # Commissioning test.
+
+import asyncio
 import os
 import sys
 from optparse import OptionParser
-from base import TestFail, TestTimeout, BaseTestHelper, FailIfNot, logger
-from cluster_objects import NODE_ID, ClusterObjectTests
-from network_commissioning import NetworkCommissioningTests
-import asyncio
 
-# The thread network dataset tlv for testing, splited into T-L-V.
+from base import BaseTestHelper, FailIfNot, TestFail, TestTimeout, logger
+
+# The thread network dataset tlv for testing, splitted into T-L-V.
 
 TEST_THREAD_NETWORK_DATASET_TLV = "0e080000000000010000" + \
     "000300000c" + \
@@ -46,7 +46,7 @@ LIGHTING_ENDPOINT_ID = 1
 GROUP_ID = 0
 
 
-def main():
+async def main():
     optParser = OptionParser()
     optParser.add_option(
         "-t",
@@ -97,36 +97,34 @@ def main():
               "Failed to finish network commissioning")
 
     logger.info("Testing PASE connection to device 1")
-    FailIfNot(test.TestPaseOnly(ip=options.deviceAddress1,
-                                setuppin=20202021,
-                                nodeid=1),
+    FailIfNot(await test.TestPaseOnly(ip=options.deviceAddress1,
+                                      setuppin=20202021,
+                                      nodeid=1),
               "Failed to establish PASE connection with device 1")
 
     logger.info("Testing PASE connection to device 2")
-    FailIfNot(test.TestPaseOnly(ip=options.deviceAddress2,
-                                setuppin=20202021,
-                                nodeid=2),
+    FailIfNot(await test.TestPaseOnly(ip=options.deviceAddress2,
+                                      setuppin=20202021,
+                                      nodeid=2),
               "Failed to establish PASE connection with device 2")
 
     logger.info("Attempting to execute a fabric-scoped command during PASE before AddNOC")
-    FailIfNot(test.TestFabricScopedCommandDuringPase(nodeid=1),
+    FailIfNot(await test.TestFabricScopedCommandDuringPase(nodeid=1),
               "Did not get UNSUPPORTED_ACCESS for fabric-scoped command during PASE")
 
-    FailIfNot(test.TestCommissionOnly(nodeid=1),
+    FailIfNot(await test.TestCommissionOnly(nodeid=1),
               "Failed to commission device 1")
 
-    FailIfNot(test.TestCommissionOnly(nodeid=2),
+    FailIfNot(await test.TestCommissionOnly(nodeid=2),
               "Failed to commission device 2")
 
     logger.info("Testing on off cluster on device 1")
-    FailIfNot(test.TestOnOffCluster(nodeid=1,
-                                    endpoint=LIGHTING_ENDPOINT_ID,
-                                    group=GROUP_ID), "Failed to test on off cluster on device 1")
+    FailIfNot(await test.TestOnOffCluster(nodeid=1,
+                                          endpoint=LIGHTING_ENDPOINT_ID), "Failed to test on off cluster on device 1")
 
     logger.info("Testing on off cluster on device 2")
-    FailIfNot(test.TestOnOffCluster(nodeid=2,
-                                    endpoint=LIGHTING_ENDPOINT_ID,
-                                    group=GROUP_ID), "Failed to test on off cluster on device 2")
+    FailIfNot(await test.TestOnOffCluster(nodeid=2,
+                                          endpoint=LIGHTING_ENDPOINT_ID), "Failed to test on off cluster on device 2")
 
     timeoutTicker.stop()
 
@@ -139,7 +137,7 @@ def main():
 
 if __name__ == "__main__":
     try:
-        main()
+        asyncio.run(main())
     except Exception as ex:
         logger.exception(ex)
         TestFail("Exception occurred when running tests.")

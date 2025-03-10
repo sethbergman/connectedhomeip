@@ -19,14 +19,6 @@
 #      Some useful defaults for the demo app configuration.
 #
 
-
-# Default to 921600 baud when flashing and monitoring device
-CONFIG_ESPTOOLPY_BAUD_921600B=y
-CONFIG_ESPTOOLPY_BAUD=921600
-CONFIG_ESPTOOLPY_COMPRESSED=y
-CONFIG_ESPTOOLPY_MONITOR_BAUD_115200B=y
-CONFIG_ESPTOOLPY_MONITOR_BAUD=115200
-
 #enable lwip ipv6 autoconfig
 CONFIG_LWIP_IPV6_AUTOCONFIG=y
 
@@ -40,3 +32,11 @@ CONFIG_ENABLE_PW_RPC=y
 # Vendor and product id
 CONFIG_DEVICE_VENDOR_ID=0xFFF1
 CONFIG_DEVICE_PRODUCT_ID=0x800B
+
+# Enable HKDF in mbedtls
+CONFIG_MBEDTLS_HKDF_C=y
+
+CONFIG_DIAG_USE_EXTERNAL_LOG_WRAP=y
+
+# Increase LwIP IPv6 address number
+CONFIG_LWIP_IPV6_NUM_ADDRESSES=6

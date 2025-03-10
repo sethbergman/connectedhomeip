@@ -1,6 +1,6 @@
 /*
  *
- *    Copyright (c) 2021 Project CHIP Authors
+ *    Copyright (c) 2021-2023 Project CHIP Authors
  *
  *    Licensed under the Apache License, Version 2.0 (the "License");
  *    you may not use this file except in compliance with the License.
@@ -34,10 +34,6 @@ struct ChipDeviceEvent;
 
 // ==================== Platform Adaptations ====================
 
-#define CHIP_SYSTEM_CONFIG_POSIX_LOCKING 1
-#define CHIP_SYSTEM_CONFIG_FREERTOS_LOCKING 0
-#define CHIP_SYSTEM_CONFIG_NO_LOCKING 0
-
 #ifndef CHIP_SYSTEM_CONFIG_USE_POSIX_TIME_FUNCTS
 #define CHIP_SYSTEM_CONFIG_USE_POSIX_TIME_FUNCTS 0
 #endif // CHIP_SYSTEM_CONFIG_USE_POSIX_TIME_FUNCTS
@@ -48,7 +44,26 @@ struct ChipDeviceEvent;
 #define CHIP_SYSTEM_CONFIG_PLATFORM_PROVIDES_TIME 1
 #endif // CHIP_SYSTEM_CONFIG_USE_POSIX_TIME_FUNCTS
 
+#if defined(CONFIG_SOC_RISCV_TELINK_TL321X) || defined(CONFIG_SOC_SERIES_RISCV_TELINK_B9X_RETENTION)
+#define CHIP_SYSTEM_PACKETBUFFER_FROM_CHIP_HEAP 1
+#define CHIP_SYSTEM_PACKETBUFFER_FROM_CHIP_POOL 0
+#define CHIP_SYSTEM_CONFIG_POOL_USE_HEAP 1
+#define CHIP_SYSTEM_CONFIG_PACKETBUFFER_CAPACITY_MAX 1280
+#endif
+
 #define CHIP_SYSTEM_CONFIG_USE_LWIP 0
 #define CHIP_SYSTEM_CONFIG_USE_SOCKETS 1
 
+// Reduce packet buffer pool size (default 15) to reduce ram consumption
+#if defined(CONFIG_PM) || defined(CONFIG_SOC_RISCV_TELINK_TL321X)
+#define CHIP_SYSTEM_CONFIG_PACKETBUFFER_POOL_SIZE 0
+#else
+#define CHIP_SYSTEM_CONFIG_PACKETBUFFER_POOL_SIZE 8
+#endif
+
 // ========== Platform-specific Configuration Overrides =========
+
+// Disable Zephyr Socket extensions module, as the Zephyr RTOS now implements recvmsg()
+#if !defined(CONFIG_ZEPHYR_VERSION_3_3)
+#define CHIP_SYSTEM_CONFIG_USE_ZEPHYR_SOCKET_EXTENSIONS 0
+#endif

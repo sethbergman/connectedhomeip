@@ -20,14 +20,14 @@
  * OTA Requestor logic is contained in this class.
  */
 
-#include <app/clusters/basic/basic.h>
+#include <app/clusters/basic-information/basic-information.h>
 #include <app/clusters/ota-requestor/ota-requestor-server.h>
+#include <controller/CHIPCluster.h>
 #include <lib/core/CHIPEncoding.h>
 #include <platform/CHIPDeviceLayer.h>
 #include <platform/DeviceInstanceInfoProvider.h>
 #include <platform/OTAImageProcessor.h>
 #include <protocols/bdx/BdxUri.h>
-#include <zap-generated/CHIPClusters.h>
 
 #include "BDXDownloader.h"
 #include "DefaultOTARequestor.h"
@@ -183,8 +183,8 @@ void DefaultOTARequestor::OnQueryImageResponse(void * context, const QueryImageR
 
         if (update.softwareVersion > requestorCore->mCurrentVersion)
         {
-            ChipLogDetail(SoftwareUpdate, "Update available from version %" PRIu32 " to %" PRIu32, requestorCore->mCurrentVersion,
-                          update.softwareVersion);
+            ChipLogProgress(SoftwareUpdate, "Update available from version %" PRIu32 " to %" PRIu32, requestorCore->mCurrentVersion,
+                            update.softwareVersion);
             MutableByteSpan updateToken(requestorCore->mUpdateTokenBuffer);
             // This function copies the bytespan to mutablebytespan only if size of mutablebytespan buffer is greater or equal to
             // bytespan otherwise we are copying data upto available size.
@@ -327,7 +327,7 @@ void DefaultOTARequestor::Reset()
 }
 
 void DefaultOTARequestor::HandleAnnounceOTAProvider(app::CommandHandler * commandObj, const app::ConcreteCommandPath & commandPath,
-                                                    const AnnounceOtaProvider::DecodableType & commandData)
+                                                    const AnnounceOTAProvider::DecodableType & commandData)
 {
     VerifyOrReturn(commandObj != nullptr, ChipLogError(SoftwareUpdate, "Invalid commandObj, cannot handle AnnounceOTAProvider"));
 
@@ -335,13 +335,13 @@ void DefaultOTARequestor::HandleAnnounceOTAProvider(app::CommandHandler * comman
 
     ChipLogProgress(SoftwareUpdate, "OTA Requestor received AnnounceOTAProvider");
 
-    ProviderLocationType providerLocation = { .providerNodeID = commandData.providerNodeId,
+    ProviderLocationType providerLocation = { .providerNodeID = commandData.providerNodeID,
                                               .endpoint       = commandData.endpoint,
                                               .fabricIndex    = commandObj->GetAccessingFabricIndex() };
 
     ChipLogDetail(SoftwareUpdate, "  FabricIndex: %u", providerLocation.fabricIndex);
     ChipLogDetail(SoftwareUpdate, "  ProviderNodeID: 0x" ChipLogFormatX64, ChipLogValueX64(providerLocation.providerNodeID));
-    ChipLogDetail(SoftwareUpdate, "  VendorID: 0x%x", commandData.vendorId);
+    ChipLogDetail(SoftwareUpdate, "  VendorID: 0x%x", commandData.vendorID);
     ChipLogDetail(SoftwareUpdate, "  AnnouncementReason: %u", to_underlying(announcementReason));
     if (commandData.metadataForNode.HasValue())
     {
@@ -410,19 +410,18 @@ void DefaultOTARequestor::CancelImageUpdate()
 
 CHIP_ERROR DefaultOTARequestor::GetUpdateStateProgressAttribute(EndpointId endpointId, app::DataModel::Nullable<uint8_t> & progress)
 {
-    VerifyOrReturnError(OtaRequestorServerGetUpdateStateProgress(endpointId, progress) == EMBER_ZCL_STATUS_SUCCESS,
-                        CHIP_ERROR_BAD_REQUEST);
+    VerifyOrReturnError(OtaRequestorServerGetUpdateStateProgress(endpointId, progress) == Status::Success, CHIP_ERROR_BAD_REQUEST);
     return CHIP_NO_ERROR;
 }
 
 CHIP_ERROR DefaultOTARequestor::GetUpdateStateAttribute(EndpointId endpointId, OTAUpdateStateEnum & state)
 {
-    VerifyOrReturnError(OtaRequestorServerGetUpdateState(endpointId, state) == EMBER_ZCL_STATUS_SUCCESS, CHIP_ERROR_BAD_REQUEST);
+    VerifyOrReturnError(OtaRequestorServerGetUpdateState(endpointId, state) == Status::Success, CHIP_ERROR_BAD_REQUEST);
     return CHIP_NO_ERROR;
 }
 
 // Called whenever FindOrEstablishSession is successful
-void DefaultOTARequestor::OnConnected(void * context, Messaging::ExchangeManager & exchangeMgr, SessionHandle & sessionHandle)
+void DefaultOTARequestor::OnConnected(void * context, Messaging::ExchangeManager & exchangeMgr, const SessionHandle & sessionHandle)
 {
     DefaultOTARequestor * requestorCore = static_cast<DefaultOTARequestor *>(context);
     VerifyOrDie(requestorCore != nullptr);
@@ -594,7 +593,7 @@ CHIP_ERROR DefaultOTARequestor::ClearDefaultOtaProviderList(FabricIndex fabricIn
     CHIP_ERROR error = mDefaultOtaProviderList.Delete(fabricIndex);
 
     // Ignore the error if no entry for the associated fabric index has been found.
-    ReturnErrorCodeIf(error == CHIP_ERROR_NOT_FOUND, CHIP_NO_ERROR);
+    VerifyOrReturnError(error != CHIP_ERROR_NOT_FOUND, CHIP_NO_ERROR);
     ReturnErrorOnFailure(error);
 
     return mStorage->StoreDefaultProviders(mDefaultOtaProviderList);
@@ -728,7 +727,7 @@ CHIP_ERROR DefaultOTARequestor::GenerateUpdateToken()
     return CHIP_NO_ERROR;
 }
 
-CHIP_ERROR DefaultOTARequestor::SendQueryImageRequest(Messaging::ExchangeManager & exchangeMgr, SessionHandle & sessionHandle)
+CHIP_ERROR DefaultOTARequestor::SendQueryImageRequest(Messaging::ExchangeManager & exchangeMgr, const SessionHandle & sessionHandle)
 {
     VerifyOrReturnError(mProviderLocation.HasValue(), CHIP_ERROR_INCORRECT_STATE);
 
@@ -737,14 +736,14 @@ CHIP_ERROR DefaultOTARequestor::SendQueryImageRequest(Messaging::ExchangeManager
 
     uint16_t vendorId;
     ReturnErrorOnFailure(DeviceLayer::GetDeviceInstanceInfoProvider()->GetVendorId(vendorId));
-    args.vendorId = static_cast<VendorId>(vendorId);
+    args.vendorID = static_cast<VendorId>(vendorId);
 
-    ReturnErrorOnFailure(DeviceLayer::GetDeviceInstanceInfoProvider()->GetProductId(args.productId));
+    ReturnErrorOnFailure(DeviceLayer::GetDeviceInstanceInfoProvider()->GetProductId(args.productID));
 
     ReturnErrorOnFailure(DeviceLayer::ConfigurationMgr().GetSoftwareVersion(args.softwareVersion));
 
     args.protocolsSupported = kProtocolsSupported;
-    args.requestorCanConsent.SetValue(!Basic::IsLocalConfigDisabled() && mOtaRequestorDriver->CanConsent());
+    args.requestorCanConsent.SetValue(!BasicInformation::IsLocalConfigDisabled() && mOtaRequestorDriver->CanConsent());
 
     uint16_t hardwareVersion;
     if (DeviceLayer::GetDeviceInstanceInfoProvider()->GetHardwareVersion(hardwareVersion) == CHIP_NO_ERROR)
@@ -761,11 +760,11 @@ CHIP_ERROR DefaultOTARequestor::SendQueryImageRequest(Messaging::ExchangeManager
     else
     {
         // Country code unavailable or invalid, use default
-        args.location.SetValue(CharSpan("XX", strlen("XX")));
+        args.location.SetValue(CharSpan::fromCharString("XX"));
     }
 
     args.metadataForProvider = mMetadataForProvider;
-    Controller::OtaSoftwareUpdateProviderCluster cluster(exchangeMgr, sessionHandle, mProviderLocation.Value().endpoint);
+    Controller::ClusterBase cluster(exchangeMgr, sessionHandle, mProviderLocation.Value().endpoint);
 
     return cluster.InvokeCommand(args, this, OnQueryImageResponse, OnQueryImageFailure);
 }
@@ -778,7 +777,7 @@ CHIP_ERROR DefaultOTARequestor::ExtractUpdateDescription(const QueryImageRespons
 
     VerifyOrReturnError(response.imageURI.HasValue(), CHIP_ERROR_INVALID_ARGUMENT);
     ReturnErrorOnFailure(bdx::ParseURI(response.imageURI.Value(), nodeId, fileDesignator));
-    VerifyOrReturnError(IsSpanUsable(fileDesignator), CHIP_ERROR_INVALID_ARGUMENT);
+    VerifyOrReturnError(!fileDesignator.empty(), CHIP_ERROR_INVALID_ARGUMENT);
     update.nodeId         = nodeId;
     update.fileDesignator = fileDesignator;
 
@@ -796,7 +795,7 @@ CHIP_ERROR DefaultOTARequestor::ExtractUpdateDescription(const QueryImageRespons
     return CHIP_NO_ERROR;
 }
 
-CHIP_ERROR DefaultOTARequestor::StartDownload(Messaging::ExchangeManager & exchangeMgr, SessionHandle & sessionHandle)
+CHIP_ERROR DefaultOTARequestor::StartDownload(Messaging::ExchangeManager & exchangeMgr, const SessionHandle & sessionHandle)
 {
     VerifyOrReturnError(mBdxDownloader != nullptr, CHIP_ERROR_INCORRECT_STATE);
 
@@ -829,7 +828,8 @@ CHIP_ERROR DefaultOTARequestor::StartDownload(Messaging::ExchangeManager & excha
     return err;
 }
 
-CHIP_ERROR DefaultOTARequestor::SendApplyUpdateRequest(Messaging::ExchangeManager & exchangeMgr, SessionHandle & sessionHandle)
+CHIP_ERROR DefaultOTARequestor::SendApplyUpdateRequest(Messaging::ExchangeManager & exchangeMgr,
+                                                       const SessionHandle & sessionHandle)
 {
     VerifyOrReturnError(mProviderLocation.HasValue(), CHIP_ERROR_INCORRECT_STATE);
     ReturnErrorOnFailure(GenerateUpdateToken());
@@ -838,13 +838,13 @@ CHIP_ERROR DefaultOTARequestor::SendApplyUpdateRequest(Messaging::ExchangeManage
     args.updateToken = mUpdateToken;
     args.newVersion  = mTargetVersion;
 
-    Controller::OtaSoftwareUpdateProviderCluster cluster(exchangeMgr, sessionHandle, mProviderLocation.Value().endpoint);
+    Controller::ClusterBase cluster(exchangeMgr, sessionHandle, mProviderLocation.Value().endpoint);
 
     return cluster.InvokeCommand(args, this, OnApplyUpdateResponse, OnApplyUpdateFailure);
 }
 
 CHIP_ERROR DefaultOTARequestor::SendNotifyUpdateAppliedRequest(Messaging::ExchangeManager & exchangeMgr,
-                                                               SessionHandle & sessionHandle)
+                                                               const SessionHandle & sessionHandle)
 {
     VerifyOrReturnError(mProviderLocation.HasValue(), CHIP_ERROR_INCORRECT_STATE);
     ReturnErrorOnFailure(GenerateUpdateToken());
@@ -853,7 +853,7 @@ CHIP_ERROR DefaultOTARequestor::SendNotifyUpdateAppliedRequest(Messaging::Exchan
     args.updateToken     = mUpdateToken;
     args.softwareVersion = mCurrentVersion;
 
-    Controller::OtaSoftwareUpdateProviderCluster cluster(exchangeMgr, sessionHandle, mProviderLocation.Value().endpoint);
+    Controller::ClusterBase cluster(exchangeMgr, sessionHandle, mProviderLocation.Value().endpoint);
 
     // There is no response for a notify so consider this OTA complete. Clear the provider location and reset any states to indicate
     // so.

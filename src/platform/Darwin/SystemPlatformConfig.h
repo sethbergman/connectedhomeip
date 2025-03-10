@@ -34,11 +34,11 @@ struct ChipDeviceEvent;
 
 // ==================== Platform Adaptations ====================
 
-#define CHIP_SYSTEM_CONFIG_POSIX_LOCKING 0
-#define CHIP_SYSTEM_CONFIG_FREERTOS_LOCKING 0
-#define CHIP_SYSTEM_CONFIG_NO_LOCKING 1
 #define CHIP_SYSTEM_CONFIG_PLATFORM_PROVIDES_TIME 1
 #define CHIP_SYSTEM_CONFIG_USE_POSIX_TIME_FUNCTS 1
 #define CHIP_SYSTEM_CONFIG_POOL_USE_HEAP 1
+#define CHIP_SYSTEM_CONFIG_PLATFORM_LOG 1
+#define CHIP_SYSTEM_CONFIG_PLATFORM_LOG_INCLUDE <platform/Darwin/Logging.h>
 
 // ========== Platform-specific Configuration Overrides =========
+#define CHIP_CONFIG_MDNS_RESOLVE_LOOKUP_RESULTS 5

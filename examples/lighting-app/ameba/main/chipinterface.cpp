@@ -17,6 +17,7 @@
 
 #include <platform_stdlib.h>
 
+#include "AmebaObserver.h"
 #include "CHIPDeviceManager.h"
 #include "DeviceCallbacks.h"
 #include "Globals.h"
@@ -25,31 +26,31 @@
 #include <DeviceInfoProviderImpl.h>
 
 #include "chip_porting.h"
-#include <credentials/DeviceAttestationCredsProvider.h>
-#include <credentials/examples/DeviceAttestationCredsExample.h>
 #include <platform/CHIPDeviceLayer.h>
 #include <support/CHIPMem.h>
 
 #include <app/clusters/identify-server/identify-server.h>
 #include <app/clusters/network-commissioning/network-commissioning.h>
-#include <app/server/OnboardingCodesUtil.h>
-#include <app/util/af.h>
-#include <lib/support/ErrorStr.h>
+#include <app/util/endpoint-config-api.h>
+#include <data-model-providers/codegen/Instance.h>
+#include <lib/core/ErrorStr.h>
 #include <platform/Ameba/AmebaConfig.h>
-#include <platform/Ameba/FactoryDataProvider.h>
 #include <platform/Ameba/NetworkCommissioningDriver.h>
+#include <setup_payload/OnboardingCodesUtil.h>
+#if CONFIG_ENABLE_AMEBA_CRYPTO
+#include <platform/Ameba/crypto/AmebaPersistentStorageOperationalKeystore.h>
+#endif
+#include <lwip_netconf.h>
 #include <platform/CHIPDeviceLayer.h>
 #include <setup_payload/ManualSetupPayloadGenerator.h>
 #include <setup_payload/QRCodeSetupPayloadGenerator.h>
-
-#include <lwip_netconf.h>
 
 #if CONFIG_ENABLE_PW_RPC
 #include "Rpc.h"
 #endif
 
 using namespace ::chip;
-using namespace ::chip::Credentials;
+using namespace ::chip::app;
 using namespace ::chip::DeviceManager;
 using namespace ::chip::DeviceLayer;
 using namespace ::chip::System;
@@ -81,7 +82,6 @@ void NetWorkCommissioningInstInit()
 
 static DeviceCallbacks EchoCallbacks;
 chip::DeviceLayer::DeviceInfoProviderImpl gExampleDeviceInfoProvider;
-chip::DeviceLayer::FactoryDataProvider mFactoryDataProvider;
 
 void OnIdentifyStart(Identify *)
 {
@@ -97,17 +97,17 @@ void OnTriggerEffect(Identify * identify)
 {
     switch (identify->mCurrentEffectIdentifier)
     {
-    case EMBER_ZCL_IDENTIFY_EFFECT_IDENTIFIER_BLINK:
-        ChipLogProgress(Zcl, "EMBER_ZCL_IDENTIFY_EFFECT_IDENTIFIER_BLINK");
+    case Clusters::Identify::EffectIdentifierEnum::kBlink:
+        ChipLogProgress(Zcl, "Clusters::Identify::EffectIdentifierEnum::kBlink");
         break;
-    case EMBER_ZCL_IDENTIFY_EFFECT_IDENTIFIER_BREATHE:
-        ChipLogProgress(Zcl, "EMBER_ZCL_IDENTIFY_EFFECT_IDENTIFIER_BREATHE");
+    case Clusters::Identify::EffectIdentifierEnum::kBreathe:
+        ChipLogProgress(Zcl, "Clusters::Identify::EffectIdentifierEnum::kBreathe");
         break;
-    case EMBER_ZCL_IDENTIFY_EFFECT_IDENTIFIER_OKAY:
-        ChipLogProgress(Zcl, "EMBER_ZCL_IDENTIFY_EFFECT_IDENTIFIER_OKAY");
+    case Clusters::Identify::EffectIdentifierEnum::kOkay:
+        ChipLogProgress(Zcl, "Clusters::Identify::EffectIdentifierEnum::kOkay");
         break;
-    case EMBER_ZCL_IDENTIFY_EFFECT_IDENTIFIER_CHANNEL_CHANGE:
-        ChipLogProgress(Zcl, "EMBER_ZCL_IDENTIFY_EFFECT_IDENTIFIER_CHANNEL_CHANGE");
+    case Clusters::Identify::EffectIdentifierEnum::kChannelChange:
+        ChipLogProgress(Zcl, "Clusters::Identify::EffectIdentifierEnum::kChannelChange");
         break;
     default:
         ChipLogProgress(Zcl, "No identifier effect");
@@ -116,7 +116,8 @@ void OnTriggerEffect(Identify * identify)
 }
 
 static Identify gIdentify1 = {
-    chip::EndpointId{ 1 }, OnIdentifyStart, OnIdentifyStop, EMBER_ZCL_IDENTIFY_IDENTIFY_TYPE_VISIBLE_LED, OnTriggerEffect,
+    chip::EndpointId{ 1 }, OnIdentifyStart, OnIdentifyStop, Clusters::Identify::IdentifyTypeEnum::kVisibleIndicator,
+    OnTriggerEffect,
 };
 
 static void InitServer(intptr_t context)
@@ -124,6 +125,15 @@ static void InitServer(intptr_t context)
     // Init ZCL Data Model and CHIP App Server
     static chip::CommonCaseDeviceServerInitParams initParams;
     (void) initParams.InitializeStaticResourcesBeforeServerInit();
+    initParams.dataModelProvider = CodegenDataModelProviderInstance(initParams.persistentStorageDelegate);
+#if CONFIG_ENABLE_AMEBA_CRYPTO
+    ChipLogProgress(DeviceLayer, "platform crypto enabled!");
+    static chip::AmebaPersistentStorageOperationalKeystore sAmebaPersistentStorageOpKeystore;
+    VerifyOrDie((sAmebaPersistentStorageOpKeystore.Init(initParams.persistentStorageDelegate)) == CHIP_NO_ERROR);
+    initParams.operationalKeystore = &sAmebaPersistentStorageOpKeystore;
+#endif
+    static AmebaObserver sAmebaObserver;
+    initParams.appDelegate = &sAmebaObserver;
     chip::Server::GetInstance().Init(initParams);
     gExampleDeviceInfoProvider.SetStorageDelegate(&Server::GetInstance().GetPersistentStorage());
     chip::DeviceLayer::SetDeviceInfoProvider(&gExampleDeviceInfoProvider);
@@ -135,6 +145,7 @@ static void InitServer(intptr_t context)
         // QR code will be used with CHIP Tool
         PrintOnboardingCodes(chip::RendezvousInformationFlags(chip::RendezvousInformationFlag::kBLE));
     }
+    chip::Server::GetInstance().GetFabricTable().AddFabricDelegate(&sAmebaObserver);
 }
 
 extern "C" void ChipTest(void)
@@ -148,11 +159,6 @@ extern "C" void ChipTest(void)
 
     initPref();
 
-    // Initialize device attestation, commissionable data and device instance info
-    // TODO: Use our own DeviceInstanceInfoProvider
-    // SetDeviceInstanceInfoProvider(&mFactoryDataProvider);
-    SetCommissionableDataProvider(&mFactoryDataProvider);
-    SetDeviceAttestationCredentialsProvider(&mFactoryDataProvider);
     CHIPDeviceManager & deviceMgr = CHIPDeviceManager::GetInstance();
 
     err = deviceMgr.Init(&EchoCallbacks);

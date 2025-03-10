@@ -108,8 +108,8 @@ extern "C" {
 #include "RTE_Components.h"
 #include CMSIS_device_header
 
-#include "em_assert.h"
 #include "em_device.h"
+#include "sl_assert.h"
 
 #if defined(SL_COMPONENT_CATALOG_PRESENT)
 #include "sl_component_catalog.h"
@@ -146,7 +146,7 @@ extern "C" {
 /* Some of the standard demo test tasks assume a tick rate of 1KHz, even
 though that is faster than would normally be warranted by a real
 application. */
-#define configTICK_RATE_HZ (1000)
+#define configTICK_RATE_HZ (1024)
 
 /* Energy saving modes. */
 #if defined(SL_CATALOG_POWER_MANAGER_PRESENT)
@@ -237,7 +237,7 @@ See http://www.FreeRTOS.org/RTOS-Cortex-M3-M4.html. */
 #define configENABLE_BACKWARD_COMPATIBILITY (1)
 #define configSUPPORT_STATIC_ALLOCATION (1)
 #define configSUPPORT_DYNAMIC_ALLOCATION (1)
-#define configTOTAL_HEAP_SIZE ((size_t)(20 * 1024))
+#define configTOTAL_HEAP_SIZE ((size_t) (32 * 1024))
 
 /* Optional functions - most linkers will remove unused functions anyway. */
 #define INCLUDE_vTaskPrioritySet (1)
@@ -285,8 +285,17 @@ standard names. */
 #define SysTick_Handler xPortSysTickHandler
 
 /* Thread local storage pointers used by the SDK */
+#ifndef configNUM_USER_THREAD_LOCAL_STORAGE_POINTERS
+#define configNUM_USER_THREAD_LOCAL_STORAGE_POINTERS 2
+#endif
+
 #ifndef configNUM_SDK_THREAD_LOCAL_STORAGE_POINTERS
-#define configNUM_SDK_THREAD_LOCAL_STORAGE_POINTERS 0
+#define configNUM_SDK_THREAD_LOCAL_STORAGE_POINTERS 2
+#endif
+
+#ifndef configNUM_THREAD_LOCAL_STORAGE_POINTERS
+#define configNUM_THREAD_LOCAL_STORAGE_POINTERS                                                                                    \
+    (configNUM_USER_THREAD_LOCAL_STORAGE_POINTERS + configNUM_SDK_THREAD_LOCAL_STORAGE_POINTERS + 1)
 #endif
 
 #if defined(__GNUC__)

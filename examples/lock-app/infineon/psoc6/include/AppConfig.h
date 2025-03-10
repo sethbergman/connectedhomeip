@@ -31,10 +31,11 @@
 
 #define APP_LOCK_BUTTON CYBSP_USER_BTN1
 #define APP_FUNCTION_BUTTON CYBSP_USER_BTN2
-#define APP_BUTTON_MIN_ASSERT_TIME_MS 30
+#define APP_BUTTON_MIN_ASSERT_TIME_MS 500
 
 #define APP_BUTTON_PRESSED 0
 #define APP_BUTTON_RELEASED 1
+#define APP_BUTTON_LONG_PRESS 2
 
 #define SYSTEM_STATE_LED CYBSP_USER_LED1
 #define LOCK_STATE_LED CYBSP_USER_LED2
@@ -51,14 +52,14 @@
 #define THREAD_ACTIVE_POLLING_INTERVAL_MS 100
 #define THREAD_INACTIVE_POLLING_INTERVAL_MS 1000
 
-// P6 Logging
+// PSOC6 Logging
 #ifdef __cplusplus
 extern "C" {
 #endif
 
 void appError(int err);
-void P6Log(const char * aFormat, ...);
-#define P6_LOG(...) P6Log(__VA_ARGS__)
+void PSOC6Log(const char * aFormat, ...);
+#define PSOC6_LOG(...) PSOC6Log(__VA_ARGS__)
 
 #ifdef __cplusplus
 }

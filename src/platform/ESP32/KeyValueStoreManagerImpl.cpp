@@ -1,6 +1,6 @@
 /*
  *
- *    Copyright (c) 2021 Project CHIP Authors
+ *    Copyright (c) 2021-2022 Project CHIP Authors
  *    All rights reserved.
  *
  *    Licensed under the Apache License, Version 2.0 (the "License");
@@ -24,12 +24,12 @@
 #include <platform/ESP32/ScopedNvsHandle.h>
 #include <platform/KeyValueStoreManager.h>
 
-#include <algorithm>
 #include <string.h>
 
 #include "nvs.h"
 #include "nvs_flash.h"
 #include <crypto/CHIPCryptoPAL.h>
+#include <lib/core/CHIPSafeCasts.h>
 #include <lib/support/BytesToHex.h>
 #include <lib/support/CodeUtils.h>
 
@@ -49,16 +49,16 @@ namespace {
 // Returns true if key is hashed, false otherwise.
 bool HashIfLongKey(const char * key, char * keyHash)
 {
-    ReturnErrorCodeIf(strlen(key) < NVS_KEY_NAME_MAX_SIZE, false);
+    VerifyOrReturnError(strlen(key) >= NVS_KEY_NAME_MAX_SIZE, false);
 
     uint8_t hashBuffer[chip::Crypto::kSHA1_Hash_Length];
-    ReturnErrorCodeIf(Crypto::Hash_SHA1(Uint8::from_const_char(key), strlen(key), hashBuffer) != CHIP_NO_ERROR, false);
+    VerifyOrReturnError(Crypto::Hash_SHA1(Uint8::from_const_char(key), strlen(key), hashBuffer) == CHIP_NO_ERROR, false);
 
     BitFlags<Encoding::HexFlags> flags(Encoding::HexFlags::kNone);
     Encoding::BytesToHex(hashBuffer, NVS_KEY_NAME_MAX_SIZE / 2, keyHash, NVS_KEY_NAME_MAX_SIZE, flags);
     keyHash[NVS_KEY_NAME_MAX_SIZE - 1] = 0;
 
-    ChipLogDetail(DeviceLayer, "Using hash:%s for nvs key:%s", keyHash, key);
+    ChipLogDetail(DeviceLayer, "Using hash:%s for nvs key:%s", keyHash, StringOrNullMarker(key));
     return true;
 }
 } // namespace
@@ -68,7 +68,7 @@ KeyValueStoreManagerImpl KeyValueStoreManagerImpl::sInstance;
 CHIP_ERROR KeyValueStoreManagerImpl::_Get(const char * key, void * value, size_t value_size, size_t * read_bytes_size,
                                           size_t offset_bytes)
 {
-    VerifyOrReturnError(value, CHIP_ERROR_INVALID_ARGUMENT);
+    // value may be NULL when checking whether the key exists
 
     // Offset and partial reads are not supported in nvs, for now just return NOT_IMPLEMENTED. Support can be added in the
     // future if this is needed.

@@ -20,6 +20,7 @@
 #include <string>
 #include <vector>
 
+#include <TracingCommandLineArgument.h>
 #include <inet/InetInterface.h>
 #include <inet/UDPEndPoint.h>
 #include <lib/dnssd/MinimalMdnsServer.h>
@@ -61,6 +62,10 @@ constexpr uint16_t kOptionListenPort       = 0x100;
 constexpr uint16_t kOptionQueryPort        = 0x101;
 constexpr uint16_t kOptionRuntimeMs        = 0x102;
 constexpr uint16_t kOptionMulticastReplies = 0x103;
+constexpr uint16_t kOptionTraceTo          = 0x104;
+
+// Only used for argument parsing. Tracing setup owned by the main loop.
+chip::CommandLineApp::TracingSetup * tracing_setup_for_argparse = nullptr;
 
 bool HandleOptions(const char * aProgram, OptionSet * aOptions, int aIdentifier, const char * aName, const char * aValue)
 {
@@ -75,6 +80,9 @@ bool HandleOptions(const char * aProgram, OptionSet * aOptions, int aIdentifier,
         return true;
     case kOptionQuery:
         gOptions.query = aValue;
+        return true;
+    case kOptionTraceTo:
+        tracing_setup_for_argparse->EnableTracingFor(aValue);
         return true;
     case kOptionType:
         if (strcasecmp(aValue, "ANY") == 0)
@@ -145,6 +153,7 @@ OptionDef cmdLineOptionsDef[] = {
     { "query-port", kArgumentRequired, kOptionQueryPort },
     { "timeout-ms", kArgumentRequired, kOptionRuntimeMs },
     { "multicast-reply", kNoArgument, kOptionMulticastReplies },
+    { "trace-to", kArgumentRequired, kOptionTraceTo },
     {},
 };
 
@@ -163,6 +172,8 @@ OptionSet cmdLineOptions = { HandleOptions, cmdLineOptionsDef, "PROGRAM OPTIONS"
                              "        How long to wait for replies\n"
                              "  --multicast-reply\n"
                              "        Do not request unicast replies\n"
+                             "  --trace-to <dest>\n"
+                             "        trace to the given destination (supported: " SUPPORTED_COMMAND_LINE_TRACING_TARGETS ").\n"
                              "\n" };
 
 HelpOptions helpOptions("minimal-mdns-client", "Usage: minimal-mdns-client [options]", "1.0");
@@ -174,10 +185,10 @@ class ReportDelegate : public mdns::Minimal::ServerDelegate
 public:
     void OnQuery(const mdns::Minimal::BytesRange & data, const chip::Inet::IPPacketInfo * info) override
     {
-        char addr[32];
+        char addr[Inet::IPAddress::kMaxStringLength];
         info->SrcAddress.ToString(addr, sizeof(addr));
 
-        char ifName[64];
+        char ifName[Inet::InterfaceId::kMaxIfNameLength];
         VerifyOrDie(info->Interface.GetInterfaceName(ifName, sizeof(ifName)) == CHIP_NO_ERROR);
 
         printf("QUERY from: %-15s on port %d, via interface %s\n", addr, info->SrcPort, ifName);
@@ -186,10 +197,10 @@ public:
 
     void OnResponse(const mdns::Minimal::BytesRange & data, const chip::Inet::IPPacketInfo * info) override
     {
-        char addr[32];
+        char addr[Inet::IPAddress::kMaxStringLength];
         info->SrcAddress.ToString(addr, sizeof(addr));
 
-        char ifName[64];
+        char ifName[Inet::InterfaceId::kMaxIfNameLength];
         VerifyOrDie(info->Interface.GetInterfaceName(ifName, sizeof(ifName)) == CHIP_NO_ERROR);
 
         printf("RESPONSE from: %-15s on port %d, via interface %s\n", addr, info->SrcPort, ifName);
@@ -305,10 +316,14 @@ int main(int argc, char ** args)
         return 1;
     }
 
+    chip::CommandLineApp::TracingSetup tracing_setup;
+
+    tracing_setup_for_argparse = &tracing_setup;
     if (!chip::ArgParser::ParseArgs(args[0], argc, args, allOptions))
     {
         return 1;
     }
+    tracing_setup_for_argparse = nullptr;
 
     printf("Running...\n");
 
@@ -342,7 +357,6 @@ int main(int argc, char ** args)
             gMdnsServer.Shutdown();
 
             DeviceLayer::PlatformMgr().StopEventLoopTask();
-            DeviceLayer::PlatformMgr().Shutdown();
         },
         nullptr);
     if (err != CHIP_NO_ERROR)
@@ -351,6 +365,10 @@ int main(int argc, char ** args)
     }
 
     DeviceLayer::PlatformMgr().RunEventLoop();
+
+    tracing_setup.StopTracing();
+    DeviceLayer::PlatformMgr().Shutdown();
+    Platform::MemoryShutdown();
 
     printf("Done...\n");
     return 0;

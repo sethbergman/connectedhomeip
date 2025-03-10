@@ -25,13 +25,11 @@
 
 #include <platform/OpenThread/GenericThreadStackManagerImpl_OpenThread.h>
 
-#include <net/openthread.h>
-#include <zephyr.h>
+#include <zephyr/kernel.h>
+#include <zephyr/net/openthread.h>
 
 #include <openthread/thread.h>
-#if !CONFIG_SOC_SERIES_RISCV_TELINK_B91
 #include <platform/Zephyr/BLEManagerImpl.h>
-#endif // !CONFIG_SOC_SERIES_RISCV_TELINK_B91
 
 #include <lib/support/logging/CHIPLogging.h>
 
@@ -71,6 +69,10 @@ protected:
     bool _TryLockThreadStack();
     void _UnlockThreadStack();
 
+#if CHIP_DEVICE_CONFIG_ENABLE_THREAD_SRP_CLIENT
+    void _WaitOnSrpClearAllComplete();
+    void _NotifySrpClearAllComplete();
+#endif // CHIP_DEVICE_CONFIG_ENABLE_THREAD_SRP_CLIENT
     // ===== Methods that override the GenericThreadStackManagerImpl_OpenThread abstract interface.
 
     void _ProcessThreadActivity() {}
@@ -82,6 +84,10 @@ private:
 
     friend ThreadStackManager & ::chip::DeviceLayer::ThreadStackMgr(void);
     friend ThreadStackManagerImpl & ::chip::DeviceLayer::ThreadStackMgrImpl(void);
+
+#if CHIP_DEVICE_CONFIG_ENABLE_THREAD_SRP_CLIENT
+    k_sem mSrpClearAllSemaphore;
+#endif // CHIP_DEVICE_CONFIG_ENABLE_THREAD_SRP_CLIENT
 
     static ThreadStackManagerImpl sInstance;
 

@@ -23,8 +23,9 @@
 
 #include <glib.h>
 #include <memory>
+#include <string>
 
-#include <ble/CHIPBleServiceData.h>
+#include <ble/Ble.h>
 #include <lib/core/CHIPError.h>
 #include <system/SystemLayer.h>
 
@@ -43,8 +44,10 @@ public:
     virtual void OnChipDeviceScanned(char * address) = 0;
 
     // Called when a scan was completed (stopped or timed out)
-    virtual void OnScanComplete()     = 0;
-    virtual void OnChipScanComplete() = 0;
+    virtual void OnScanComplete() = 0;
+
+    // Called on scan error
+    virtual void OnScanError(CHIP_ERROR err) = 0;
 };
 
 /// Allows scanning for CHIP devices
@@ -56,8 +59,8 @@ public:
     ChipDeviceScanner(LSHandle * handle, ChipDeviceScannerDelegate * delegate);
     ChipDeviceScanner(ChipDeviceScannerDelegate * delegate);
 
-    ChipDeviceScanner(ChipDeviceScanner &&)      = default;
-    ChipDeviceScanner(const ChipDeviceScanner &) = delete;
+    ChipDeviceScanner(ChipDeviceScanner &&)                  = default;
+    ChipDeviceScanner(const ChipDeviceScanner &)             = delete;
     ChipDeviceScanner & operator=(const ChipDeviceScanner &) = delete;
 
     ~ChipDeviceScanner();

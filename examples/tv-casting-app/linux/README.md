@@ -6,15 +6,20 @@ select one, sends the TV a User Directed Commissioning request, enters
 commissioning mode, advertises itself as a Commissionable Node and gets
 commissioned. Then it allows the user to send CHIP commands to the TV.
 
+Refer to the
+[Matter Casting APIs documentation](https://project-chip.github.io/connectedhomeip-doc/examples/tv-casting-app/APIs.html)
+to build the Matter “Casting Client” into your consumer-facing mobile app.
+
 <hr>
 
 -   [CHIP TV Casting App Example](#chip-tv-casting-app-example)
     -   [Building](#building)
     -   [Running the Complete Example on Linux](#running-the-complete-example-on-linux)
+        -   [Commissioning the tv-casting-app](#commissioning-the-tv-casting-app)
+        -   [Re-Running the Example on Linux with Cached Fabrics](#re-running-the-example-on-linux-with-cached-fabrics)
+        -   [Sending Arbitrary Cluster commands](#sending-arbitrary-cluster-commands)
 
 <hr>
-
-<a name="building"></a>
 
 ## Building
 
@@ -35,8 +40,6 @@ commissioned. Then it allows the user to send CHIP commands to the TV.
           $ cd ~/connectedhomeip/examples/tv-casting-app/linux
           $ rm -rf out/
 
-<a name="running-the-complete-example-on-linux"></a>
-
 ## Running the Complete Example on Linux
 
 -   Pre-requisite: Build and run the tv-app
@@ -48,7 +51,7 @@ commissioned. Then it allows the user to send CHIP commands to the TV.
 
         $ cd ~/connectedhomeip/examples/tv-casting-app/linux
         (delete any stored fabrics from previous runs)
-        $ rm -rf /tmp/rm -rf /tmp/chip_casting_kvs*
+        $ rm -rf /tmp/rm -rf /tmp/chip*
         $ out/debug/chip-tv-casting-app
 
     Follow the on-screen prompts on the tv-casting-app console
@@ -64,10 +67,15 @@ commissioned. Then it allows the user to send CHIP commands to the TV.
 
 ### Commissioning the tv-casting-app
 
-The tv-casting-app will automatically discover video players and print these out
-upon startup. The user-directed-commissioning (UDC) process can be initiated
-using the shell by specifying the index of the discovered video player in the
-printed list.
+This example Matter TV Casting iOS application can be tested with the following
+video players:
+
+1. With the
+   [example Matter tv-app](https://github.com/project-chip/connectedhomeip/tree/master/examples/tv-app)
+   running on a Raspberry Pi - works out of the box. The tv-casting-app will
+   automatically discover video players and print these out upon startup. The
+   user-directed-commissioning (UDC) process can be initiated using the shell by
+   specifying the index of the discovered video player in the printed list.
 
 -   Initiate UDC for the discovered video player with index 0
 
@@ -81,6 +89,9 @@ printed list.
 -   Re-run commissioner discovery
 
         tv-casting-app> cast discover
+
+2. With a FireTV device - requires your Amazon Customer ID to be allow-listed
+   first.
 
 ### Re-Running the Example on Linux with Cached Fabrics
 
@@ -124,7 +135,9 @@ the current fabric.
 The tv-casting-app is able to determine the nodeId for the given fabric by
 checking its binding table since the video player sets bindings on the
 tv-casting-app for each endpoint to which the tv-casting-app is granted access
-during commissioning.
+during commissioning. Cluster commands can be invoked via command line arguments
+passed to the chip-tv-casting-app executable or via the built-in interactive
+shell by prefixing the words "cast cluster" before the command.
 
 -   Run the tv-casting-app and invoke a cluster command using default fabric,
     target video player nodeId 18446744004990074879

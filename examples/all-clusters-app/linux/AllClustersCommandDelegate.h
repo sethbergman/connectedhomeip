@@ -23,6 +23,8 @@
 #include <json/json.h>
 #include <platform/DiagnosticDataProvider.h>
 
+#include <string>
+
 class AllClustersAppCommandHandler
 {
 public:
@@ -88,6 +90,37 @@ private:
      * sequence, after it has been detected that the sequence has ended.
      */
     void OnSwitchMultiPressCompleteHandler(uint8_t previousPosition, uint8_t count);
+
+    /**
+     * Should be called when it is necessary to change the mode to manual operation.
+     */
+    void OnModeChangeHandler(std::string device, std::string type, chip::app::DataModel::Nullable<uint8_t> mode);
+
+    /**
+     * Should be called when it is necessary to change the air quality attribute.
+     */
+    void OnAirQualityChange(uint32_t aEnum);
+
+    /**
+     * Should be called when it is necessary to change the operational state as a manual operation.
+     */
+    void OnOperationalStateChange(std::string device, std::string operation, Json::Value param);
+
+    /**
+     * Should be called when it is necessary to change the operational state as a manual operation.
+     */
+    void OnGenericOperationalStateChange(std::string device, std::string operation, Json::Value param);
+
+    /**
+     * Should be called when it is necessary to change the operational state as a manual operation.
+     */
+    void OnOvenOperationalStateChange(std::string device, std::string operation, Json::Value param);
+
+    /**
+     * Should be called when it is necessary to change the Occupancy attribute.
+     */
+    void HandleSetOccupancyChange(chip::EndpointId endpointId, uint8_t occupancyValue);
+    static void OccupancyPresentTimerHandler(chip::System::Layer * systemLayer, void * appState);
 };
 
 class AllClustersCommandDelegate : public NamedPipeCommandDelegate

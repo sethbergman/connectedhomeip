@@ -16,45 +16,35 @@
  *    limitations under the License.
  */
 #include "CommonDeviceCallbacks.h"
-
-#if CONFIG_BT_ENABLED
-#include "esp_bt.h"
-#if CONFIG_BT_NIMBLE_ENABLED
-#if ESP_IDF_VERSION < ESP_IDF_VERSION_VAL(5, 0, 0)
-#include "esp_nimble_hci.h"
-#endif // ESP_IDF_VERSION < ESP_IDF_VERSION_VAL(5, 0, 0)
-#include "nimble/nimble_port.h"
-#endif // CONFIG_BT_NIMBLE_ENABLED
-#endif // CONFIG_BT_ENABLED
+#include "Esp32AppServer.h"
 
 #include "esp_err.h"
 #include "esp_heap_caps.h"
 #include "esp_log.h"
-#include "route_hook/esp_route_hook.h"
-#include <app-common/zap-generated/attribute-id.h>
-#include <app-common/zap-generated/cluster-id.h>
 #include <app/server/Dnssd.h>
+#include <app/server/Server.h>
 #include <app/util/util.h>
 #include <lib/support/CodeUtils.h>
 #if CONFIG_ENABLE_OTA_REQUESTOR
 #include <ota/OTAHelper.h>
 #endif
 
-static const char * TAG = "app-devicecallbacks";
+static const char TAG[] = "app-devicecallbacks";
 
 using namespace chip;
 using namespace chip::DeviceLayer;
 using namespace chip::System;
 
 DeviceCallbacksDelegate * appDelegate = nullptr;
-#if CONFIG_ENABLE_OTA_REQUESTOR
-static bool isOTAInitialized = false;
-#endif
 
 void CommonDeviceCallbacks::DeviceEventCallback(const ChipDeviceEvent * event, intptr_t arg)
 {
     switch (event->Type)
     {
+    case DeviceEventType::kBLEDeinitialized:
+        ESP_LOGI(TAG, "BLE is deinitialized");
+        break;
+
     case DeviceEventType::kInternetConnectivityChange:
         OnInternetConnectivityChange(event);
         break;
@@ -67,46 +57,20 @@ void CommonDeviceCallbacks::DeviceEventCallback(const ChipDeviceEvent * event, i
         ESP_LOGI(TAG, "CHIPoBLE disconnected");
         break;
 
-    case DeviceEventType::kThreadConnectivityChange:
+    case DeviceEventType::kDnssdInitialized:
 #if CONFIG_ENABLE_OTA_REQUESTOR
-        if (event->ThreadConnectivityChange.Result == kConnectivity_Established && !isOTAInitialized)
-        {
-            OTAHelpers::Instance().InitOTARequestor();
-            isOTAInitialized = true;
-        }
+        OTAHelpers::Instance().InitOTARequestor();
 #endif
+        appDelegate = DeviceCallbacksDelegate::Instance().GetAppDelegate();
+        if (appDelegate != nullptr)
+        {
+            appDelegate->OnDnssdInitialized();
+        }
         break;
 
     case DeviceEventType::kCommissioningComplete: {
         ESP_LOGI(TAG, "Commissioning complete");
-#if CONFIG_BT_NIMBLE_ENABLED && CONFIG_DEINIT_BLE_ON_COMMISSIONING_COMPLETE
-
-        if (ble_hs_is_enabled())
-        {
-            int ret       = nimble_port_stop();
-            esp_err_t err = ESP_OK;
-            if (ret == 0)
-            {
-                nimble_port_deinit();
-#if ESP_IDF_VERSION < ESP_IDF_VERSION_VAL(5, 0, 0)
-                err = esp_nimble_hci_and_controller_deinit();
-#endif // ESP_IDF_VERSION < ESP_IDF_VERSION_VAL(5, 0, 0)
-                err += esp_bt_mem_release(ESP_BT_MODE_BLE);
-                if (err == ESP_OK)
-                {
-                    ESP_LOGI(TAG, "BLE deinit successful and memory reclaimed");
-                }
-            }
-            else
-            {
-                ESP_LOGW(TAG, "nimble_port_stop() failed");
-            }
-        }
-        else
-        {
-            ESP_LOGI(TAG, "BLE already deinited");
-        }
-#endif
+        Esp32AppServer::DeInitBLEIfCommissioned();
     }
     break;
 
@@ -122,12 +86,20 @@ void CommonDeviceCallbacks::DeviceEventCallback(const ChipDeviceEvent * event, i
         }
         if (event->InterfaceIpAddressChanged.Type == InterfaceIpChangeType::kIpV6_Assigned)
         {
-            ESP_ERROR_CHECK(esp_route_hook_init(esp_netif_get_handle_from_ifkey("WIFI_STA_DEF")));
+            appDelegate = DeviceCallbacksDelegate::Instance().GetAppDelegate();
+            if (appDelegate != nullptr)
+            {
+                appDelegate->OnIPv6ConnectivityEstablished();
+            }
         }
         break;
     }
 
-    ESP_LOGI(TAG, "Current free heap: %u\n", static_cast<unsigned int>(heap_caps_get_free_size(MALLOC_CAP_8BIT)));
+    ESP_LOGI(TAG, "Current free heap: Internal: %u/%u External: %u/%u",
+             static_cast<unsigned int>(heap_caps_get_free_size(MALLOC_CAP_8BIT | MALLOC_CAP_INTERNAL)),
+             static_cast<unsigned int>(heap_caps_get_total_size(MALLOC_CAP_8BIT | MALLOC_CAP_INTERNAL)),
+             static_cast<unsigned int>(heap_caps_get_free_size(MALLOC_CAP_8BIT | MALLOC_CAP_SPIRAM)),
+             static_cast<unsigned int>(heap_caps_get_total_size(MALLOC_CAP_8BIT | MALLOC_CAP_SPIRAM)));
 }
 
 void CommonDeviceCallbacks::OnInternetConnectivityChange(const ChipDeviceEvent * event)
@@ -141,13 +113,6 @@ void CommonDeviceCallbacks::OnInternetConnectivityChange(const ChipDeviceEvent *
             appDelegate->OnIPv4ConnectivityEstablished();
         }
         chip::app::DnssdServer::Instance().StartServer();
-#if CONFIG_ENABLE_OTA_REQUESTOR
-        if (!isOTAInitialized)
-        {
-            OTAHelpers::Instance().InitOTARequestor();
-            isOTAInitialized = true;
-        }
-#endif
     }
     else if (event->InternetConnectivityChange.IPv4 == kConnectivity_Lost)
     {
@@ -161,14 +126,6 @@ void CommonDeviceCallbacks::OnInternetConnectivityChange(const ChipDeviceEvent *
     {
         ESP_LOGI(TAG, "IPv6 Server ready...");
         chip::app::DnssdServer::Instance().StartServer();
-
-#if CONFIG_ENABLE_OTA_REQUESTOR
-        if (!isOTAInitialized)
-        {
-            OTAHelpers::Instance().InitOTARequestor();
-            isOTAInitialized = true;
-        }
-#endif
     }
     else if (event->InternetConnectivityChange.IPv6 == kConnectivity_Lost)
     {

@@ -57,14 +57,11 @@ target_sources(${APP_TARGET} PRIVATE
                main/LightingManager.cpp
                main/main.cpp
                main/ZclCallbacks.cpp
-               ${GEN_DIR}/lighting-app/zap-generated/callback-stub.cpp
-               ${GEN_DIR}/lighting-app/zap-generated/IMClusterCommandHandler.cpp
                ${MBED_COMMON}/util/LEDWidget.cpp
                ${MBED_COMMON}/util/DFUManager.cpp
 )
 
 chip_configure_data_model(${APP_TARGET}
-    INCLUDE_SERVER
     ZAP_FILE ${CMAKE_CURRENT_SOURCE_DIR}/../lighting-common/lighting-app.zap
 )
 

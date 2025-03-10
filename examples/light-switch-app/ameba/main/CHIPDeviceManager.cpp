@@ -28,17 +28,23 @@
 #include "CHIPDeviceManager.h"
 #include <app/ConcreteAttributePath.h>
 #include <app/util/basic-types.h>
+#include <core/ErrorStr.h>
+#include <credentials/DeviceAttestationCredsProvider.h>
+#include <credentials/examples/DeviceAttestationCredsExample.h>
+#include <platform/Ameba/FactoryDataProvider.h>
 #include <support/CHIPMem.h>
 #include <support/CodeUtils.h>
-#include <support/ErrorStr.h>
 
 using namespace ::chip;
+using namespace ::chip::Credentials;
 
 namespace chip {
 
 namespace DeviceManager {
 
 using namespace ::chip::DeviceLayer;
+
+chip::DeviceLayer::FactoryDataProvider mFactoryDataProvider;
 
 void CHIPDeviceManager::CommonDeviceEventHandler(const ChipDeviceEvent * event, intptr_t arg)
 {
@@ -61,10 +67,19 @@ CHIP_ERROR CHIPDeviceManager::Init(CHIPDeviceManagerCallbacks * cb)
     err = PlatformMgr().InitChipStack();
     SuccessOrExit(err);
 
-    if (CONFIG_NETWORK_LAYER_BLE)
+    err = mFactoryDataProvider.Init();
+    if (err != CHIP_NO_ERROR)
     {
-        ConnectivityMgr().SetBLEAdvertisingEnabled(true);
+        ChipLogError(DeviceLayer, "Error initializing FactoryData!");
+        ChipLogError(DeviceLayer, "Check if you have flashed it correctly!");
     }
+    SetCommissionableDataProvider(&mFactoryDataProvider);
+    SetDeviceAttestationCredentialsProvider(&mFactoryDataProvider);
+    SetDeviceInstanceInfoProvider(&mFactoryDataProvider);
+
+#if CONFIG_NETWORK_LAYER_BLE
+    ConnectivityMgr().SetBLEAdvertisingEnabled(true);
+#endif
 
     // Register a function to receive events from the CHIP device layer.  Note that calls to
     // this function will happen on the CHIP event loop thread, not the app_main thread.

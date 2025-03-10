@@ -21,12 +21,22 @@
 #
 
 """Provides Python APIs for CHIP."""
+
 import enum
-from .delegate import AttributePath, AttributePathIBstruct, EventPath, EventPathIBstruct, DataVersionFilterIBstruct
 
 from chip.exceptions import ChipStackException
 
-__all__ = ["Status", "InteractionModelError"]
+from .delegate import (AttributePath, AttributePathIBstruct, DataVersionFilterIBstruct, EventPath, EventPathIBstruct,
+                       PyInvokeRequestData, PyWriteAttributeData, SessionParameters, SessionParametersStruct,
+                       TestOnlyPyBatchCommandsOverrides, TestOnlyPyOnDoneInfo)
+
+__all__ = ["AttributePath", "AttributePathIBstruct", "DataVersionFilterIBstruct",
+           "EventPath", "EventPathIBstruct", "InteractionModelError", "PyInvokeRequestData",
+           "PyWriteAttributeData", "SessionParameters", "SessionParametersStruct", "Status", "TestOnlyPyBatchCommandsOverrides", "TestOnlyPyOnDoneInfo"]
+
+
+# defined src/controller/python/chip/interaction_model/Delegate.h
+kUndefinedClusterStatus: int = 0xFF
 
 
 class Status(enum.IntEnum):
@@ -63,6 +73,7 @@ class Status(enum.IntEnum):
     Reserved99 = 0x99
     Reserved9a = 0x9a
     Busy = 0x9c
+    AccessRestricted = 0x9d
     Deprecatedc0 = 0xc0
     Deprecatedc1 = 0xc1
     Deprecatedc2 = 0xc2
@@ -74,15 +85,30 @@ class Status(enum.IntEnum):
     PathsExhausted = 0xc8
     TimedRequestMismatch = 0xc9
     FailsafeRequired = 0xca
+    InvalidInState = 0xcb
+    NoCommandResponse = 0xcc
+    WriteIgnored = 0xf0
 
 
 class InteractionModelError(ChipStackException):
-    def __init__(self, status: Status):
+    def __init__(self, status: Status, clusterStatus: int = kUndefinedClusterStatus):
         self._status = status
+        self._clusterStatus = clusterStatus
 
     def __str__(self):
-        return f"InteractionModelError: {self._status.name} (0x{self._status.value:x})"
+        if self.hasClusterStatus:
+            return f"InteractionModelError: {self._status.name} (0x{self._status.value:x}, clusterStatus: {self._clusterStatus})"
+        else:
+            return f"InteractionModelError: {self._status.name} (0x{self._status.value:x})"
+
+    @property
+    def hasClusterStatus(self) -> bool:
+        return self._clusterStatus != kUndefinedClusterStatus
 
     @property
     def status(self) -> Status:
         return self._status
+
+    @property
+    def clusterStatus(self) -> int:
+        return self._clusterStatus

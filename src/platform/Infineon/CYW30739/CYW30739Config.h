@@ -28,13 +28,15 @@
 
 #include <platform/internal/CHIPDeviceLayerInternal.h>
 
+#include <platform_nvram.h>
+
 namespace chip {
 namespace DeviceLayer {
 namespace Internal {
 
-constexpr inline uint32_t CYW30739ConfigKey(uint8_t keyBaseOffset, uint8_t id)
+constexpr inline uint32_t CYW30739ConfigKey(uint16_t keyBaseOffset, uint8_t id)
 {
-    return static_cast<uint32_t>(keyBaseOffset) << 8 | id;
+    return keyBaseOffset | id;
 }
 
 /**
@@ -45,51 +47,64 @@ class CYW30739Config
 public:
     using Key = uint32_t;
 
-    static constexpr uint8_t kChipFactory_KeyBase  = 0x00;
-    static constexpr uint8_t kChipConfig_KeyBase   = 0x01;
-    static constexpr uint8_t kChipKvsValue_KeyBase = 0x02;
-    static constexpr uint8_t kChipKvsKey_KeyBase   = 0x03;
+    static constexpr uint16_t kChipFactory_KeyBase  = PLATFORM_NVRAM_SSID_MATTER_BASE;
+    static constexpr uint16_t kChipConfig_KeyBase   = PLATFORM_NVRAM_VSID_MATTER_BASE + 0x0000;
+    static constexpr uint16_t kChipKvsValue_KeyBase = PLATFORM_NVRAM_VSID_MATTER_BASE + 0x0100;
+    static constexpr uint16_t kChipKvsKey_KeyBase   = PLATFORM_NVRAM_VSID_MATTER_BASE + 0x0200;
 
     // Key definitions for well-known keys.
     // Factory config keys
-    static constexpr Key kConfigKey_SerialNum             = CYW30739ConfigKey(kChipFactory_KeyBase, 0x00);
-    static constexpr Key kConfigKey_MfrDeviceId           = CYW30739ConfigKey(kChipFactory_KeyBase, 0x01);
-    static constexpr Key kConfigKey_MfrDeviceCert         = CYW30739ConfigKey(kChipFactory_KeyBase, 0x02);
-    static constexpr Key kConfigKey_MfrDevicePrivateKey   = CYW30739ConfigKey(kChipFactory_KeyBase, 0x03);
-    static constexpr Key kConfigKey_ManufacturingDate     = CYW30739ConfigKey(kChipFactory_KeyBase, 0x04);
-    static constexpr Key kConfigKey_SetupPinCode          = CYW30739ConfigKey(kChipFactory_KeyBase, 0x05);
-    static constexpr Key kConfigKey_MfrDeviceICACerts     = CYW30739ConfigKey(kChipFactory_KeyBase, 0x06);
-    static constexpr Key kConfigKey_SetupDiscriminator    = CYW30739ConfigKey(kChipFactory_KeyBase, 0x07);
-    static constexpr Key kConfigKey_Spake2pIterationCount = CYW30739ConfigKey(kChipFactory_KeyBase, 0x08);
-    static constexpr Key kConfigKey_Spake2pSalt           = CYW30739ConfigKey(kChipFactory_KeyBase, 0x09);
-    static constexpr Key kConfigKey_Spake2pVerifier       = CYW30739ConfigKey(kChipFactory_KeyBase, 0x0a);
+    static constexpr Key kConfigKey_VendorName            = CYW30739ConfigKey(kChipFactory_KeyBase, 0x00);
+    static constexpr Key kConfigKey_VendorId              = CYW30739ConfigKey(kChipFactory_KeyBase, 0x01);
+    static constexpr Key kConfigKey_ProductName           = CYW30739ConfigKey(kChipFactory_KeyBase, 0x02);
+    static constexpr Key kConfigKey_ProductId             = CYW30739ConfigKey(kChipFactory_KeyBase, 0x03);
+    static constexpr Key kConfigKey_SerialNum             = CYW30739ConfigKey(kChipFactory_KeyBase, 0x04);
+    static constexpr Key kConfigKey_ManufacturingDate     = CYW30739ConfigKey(kChipFactory_KeyBase, 0x05);
+    static constexpr Key kConfigKey_HardwareVersion       = CYW30739ConfigKey(kChipFactory_KeyBase, 0x06);
+    static constexpr Key kConfigKey_HardwareVersionString = CYW30739ConfigKey(kChipFactory_KeyBase, 0x07);
+    static constexpr Key kConfigKey_SetupPinCode          = CYW30739ConfigKey(kChipFactory_KeyBase, 0x10);
+    static constexpr Key kConfigKey_SetupDiscriminator    = CYW30739ConfigKey(kChipFactory_KeyBase, 0x11);
+    static constexpr Key kConfigKey_Spake2pIterationCount = CYW30739ConfigKey(kChipFactory_KeyBase, 0x12);
+    static constexpr Key kConfigKey_Spake2pSalt           = CYW30739ConfigKey(kChipFactory_KeyBase, 0x13);
+    static constexpr Key kConfigKey_Spake2pVerifier       = CYW30739ConfigKey(kChipFactory_KeyBase, 0x14);
+    static constexpr Key kConfigKey_DAC                   = CYW30739ConfigKey(kChipFactory_KeyBase, 0x20);
+    static constexpr Key kConfigKey_DACKey                = CYW30739ConfigKey(kChipFactory_KeyBase, 0x21);
+    static constexpr Key kConfigKey_PAICert               = CYW30739ConfigKey(kChipFactory_KeyBase, 0x22);
+    static constexpr Key kConfigKey_CertDeclaration       = CYW30739ConfigKey(kChipFactory_KeyBase, 0x23);
     // CHIP Config Keys
-    static constexpr Key kConfigKey_ServiceConfig      = CYW30739ConfigKey(kChipConfig_KeyBase, 0x00);
-    static constexpr Key kConfigKey_PairedAccountId    = CYW30739ConfigKey(kChipConfig_KeyBase, 0x01);
-    static constexpr Key kConfigKey_ServiceId          = CYW30739ConfigKey(kChipConfig_KeyBase, 0x02);
-    static constexpr Key kConfigKey_LastUsedEpochKeyId = CYW30739ConfigKey(kChipConfig_KeyBase, 0x03);
-    static constexpr Key kConfigKey_FailSafeArmed      = CYW30739ConfigKey(kChipConfig_KeyBase, 0x04);
-    static constexpr Key kConfigKey_GroupKey           = CYW30739ConfigKey(kChipConfig_KeyBase, 0x05);
-    static constexpr Key kConfigKey_HardwareVersion    = CYW30739ConfigKey(kChipConfig_KeyBase, 0x06);
-    static constexpr Key kConfigKey_RegulatoryLocation = CYW30739ConfigKey(kChipConfig_KeyBase, 0x07);
-    static constexpr Key kConfigKey_CountryCode        = CYW30739ConfigKey(kChipConfig_KeyBase, 0x08);
-    static constexpr Key kConfigKey_RebootCount        = CYW30739ConfigKey(kChipConfig_KeyBase, 0x09);
-    static constexpr Key kConfigKey_UniqueId           = CYW30739ConfigKey(kChipConfig_KeyBase, 0x0a);
-    static constexpr Key kConfigKey_LockUser           = CYW30739ConfigKey(kChipConfig_KeyBase, 0x0b);
-    static constexpr Key kConfigKey_Credential         = CYW30739ConfigKey(kChipConfig_KeyBase, 0x0c);
-    static constexpr Key kConfigKey_LockUserName       = CYW30739ConfigKey(kChipConfig_KeyBase, 0x0d);
-    static constexpr Key kConfigKey_CredentialData     = CYW30739ConfigKey(kChipConfig_KeyBase, 0x0e);
-    static constexpr Key kConfigKey_UserCredentials    = CYW30739ConfigKey(kChipConfig_KeyBase, 0x0f);
-    static constexpr Key kConfigKey_WeekDaySchedules   = CYW30739ConfigKey(kChipConfig_KeyBase, 0x10);
-    static constexpr Key kConfigKey_YearDaySchedules   = CYW30739ConfigKey(kChipConfig_KeyBase, 0x11);
-    static constexpr Key kConfigKey_HolidaySchedules   = CYW30739ConfigKey(kChipConfig_KeyBase, 0x12);
-    static constexpr Key kConfigKey_BootReason         = CYW30739ConfigKey(kChipConfig_KeyBase, 0x13);
+    static constexpr Key kConfigKey_ServiceConfig              = CYW30739ConfigKey(kChipConfig_KeyBase, 0x00);
+    static constexpr Key kConfigKey_PairedAccountId            = CYW30739ConfigKey(kChipConfig_KeyBase, 0x01);
+    static constexpr Key kConfigKey_ServiceId                  = CYW30739ConfigKey(kChipConfig_KeyBase, 0x02);
+    static constexpr Key kConfigKey_LastUsedEpochKeyId         = CYW30739ConfigKey(kChipConfig_KeyBase, 0x03);
+    static constexpr Key kConfigKey_FailSafeArmed              = CYW30739ConfigKey(kChipConfig_KeyBase, 0x04);
+    static constexpr Key kConfigKey_GroupKey                   = CYW30739ConfigKey(kChipConfig_KeyBase, 0x05);
+    static constexpr Key kConfigKey_RegulatoryLocation         = CYW30739ConfigKey(kChipConfig_KeyBase, 0x07);
+    static constexpr Key kConfigKey_CountryCode                = CYW30739ConfigKey(kChipConfig_KeyBase, 0x08);
+    static constexpr Key kConfigKey_RebootCount                = CYW30739ConfigKey(kChipConfig_KeyBase, 0x09);
+    static constexpr Key kConfigKey_UniqueId                   = CYW30739ConfigKey(kChipConfig_KeyBase, 0x0a);
+    static constexpr Key kConfigKey_LockUser                   = CYW30739ConfigKey(kChipConfig_KeyBase, 0x0b);
+    static constexpr Key kConfigKey_Credential                 = CYW30739ConfigKey(kChipConfig_KeyBase, 0x0c);
+    static constexpr Key kConfigKey_LockUserName               = CYW30739ConfigKey(kChipConfig_KeyBase, 0x0d);
+    static constexpr Key kConfigKey_CredentialData             = CYW30739ConfigKey(kChipConfig_KeyBase, 0x0e);
+    static constexpr Key kConfigKey_UserCredentials            = CYW30739ConfigKey(kChipConfig_KeyBase, 0x0f);
+    static constexpr Key kConfigKey_WeekDaySchedules           = CYW30739ConfigKey(kChipConfig_KeyBase, 0x10);
+    static constexpr Key kConfigKey_YearDaySchedules           = CYW30739ConfigKey(kChipConfig_KeyBase, 0x11);
+    static constexpr Key kConfigKey_HolidaySchedules           = CYW30739ConfigKey(kChipConfig_KeyBase, 0x12);
+    static constexpr Key kConfigKey_BootReason                 = CYW30739ConfigKey(kChipConfig_KeyBase, 0x13);
+    static constexpr Key kConfigKey_ProvisioningDAC            = CYW30739ConfigKey(kChipConfig_KeyBase, 0xe0);
+    static constexpr Key kConfigKey_ProvisioningPAICert        = CYW30739ConfigKey(kChipConfig_KeyBase, 0xe1);
+    static constexpr Key kConfigKey_ProvisioningSecret         = CYW30739ConfigKey(kChipConfig_KeyBase, 0xe2);
+    static constexpr Key kConfigKey_ProvisioningSecretMetaData = CYW30739ConfigKey(kChipConfig_KeyBase, 0xe3);
+    static constexpr Key kConfigKey_ProvisioningDACMetaData    = CYW30739ConfigKey(kChipConfig_KeyBase, 0xe4);
+    static constexpr Key kConfigKey_ProvisioningDACKeyMetaData = CYW30739ConfigKey(kChipConfig_KeyBase, 0xe5);
+    static constexpr Key kConfigKey_ProvisioningManifest       = CYW30739ConfigKey(kChipConfig_KeyBase, 0xe6);
+    static constexpr Key kConfigKey_ProvisioningFragment       = CYW30739ConfigKey(kChipConfig_KeyBase, 0xe7);
 
     // Set key id limits for each group.
     static constexpr Key kMinConfigKey_ChipFactory = CYW30739ConfigKey(kChipFactory_KeyBase, 0x00);
-    static constexpr Key kMaxConfigKey_ChipFactory = CYW30739ConfigKey(kChipFactory_KeyBase, 0x0a);
+    static constexpr Key kMaxConfigKey_ChipFactory = CYW30739ConfigKey(kChipFactory_KeyBase, 0xff);
     static constexpr Key kMinConfigKey_ChipConfig  = CYW30739ConfigKey(kChipConfig_KeyBase, 0x00);
-    static constexpr Key kMaxConfigKey_ChipConfig  = CYW30739ConfigKey(kChipConfig_KeyBase, 0x13);
+    static constexpr Key kMaxConfigKey_ChipConfig  = CYW30739ConfigKey(kChipConfig_KeyBase, 0xff);
 
     static CHIP_ERROR Init(void);
 

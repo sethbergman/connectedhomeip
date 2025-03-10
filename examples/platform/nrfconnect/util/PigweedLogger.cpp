@@ -24,11 +24,11 @@
  * needs to use HDLC/UART for another purpose like the RPC server.
  */
 
+#include <zephyr/kernel.h>
 #include <zephyr/logging/log.h>
 #include <zephyr/logging/log_backend.h>
 #include <zephyr/logging/log_backend_std.h>
 #include <zephyr/logging/log_output.h>
-#include <zephyr/zephyr.h>
 
 #include <pw_hdlc/encoder.h>
 #include <pw_stream/sys_io_stream.h>
@@ -98,31 +98,26 @@ void init(const log_backend *)
     pw_sys_io_Init();
 }
 
-void processMessage(const struct log_backend * const backend, union log_msg2_generic * msg)
+void processMessage(const struct log_backend * const backend, union log_msg_generic * msg)
 {
-    int ret = k_sem_take(&sLoggerLock, K_FOREVER);
+    if (sIsPanicMode || k_is_in_isr())
+    {
+        return;
+    }
+
+    [[maybe_unused]] int ret = k_sem_take(&sLoggerLock, K_FOREVER);
     assert(ret == 0);
 
-    if (!sIsPanicMode)
-    {
-        log_format_func_t outputFunc = log_format_func_t_get(LOG_OUTPUT_TEXT);
+    log_format_func_t outputFunc = log_format_func_t_get(LOG_OUTPUT_TEXT);
 
-        outputFunc(&pigweedLogOutput, &msg->log, log_backend_std_get_flags());
-    }
+    outputFunc(&pigweedLogOutput, &msg->log, log_backend_std_get_flags());
 
     k_sem_give(&sLoggerLock);
 }
 
 void panic(const log_backend *)
 {
-    int ret = k_sem_take(&sLoggerLock, K_FOREVER);
-    assert(ret == 0);
-
-    log_backend_std_panic(&pigweedLogOutput);
-    flush();
     sIsPanicMode = true;
-
-    k_sem_give(&sLoggerLock);
 }
 
 const log_backend_api pigweedLogApi = {

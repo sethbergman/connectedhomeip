@@ -22,7 +22,7 @@
  *      a platform's Bluetooth Low Energy (BLE) implementation and the CHIP
  *      stack.
  *
- *      The BleLayer obect accepts BLE data and control input from the
+ *      The BleLayer object accepts BLE data and control input from the
  *      application via a functional interface. It performs the fragmentation
  *      and reassembly required to transmit CHIP message via a BLE GATT
  *      characteristic interface, and drives incoming messages up the CHIP
@@ -50,21 +50,28 @@
  *      drive BLE data and control input up the stack.
  */
 
-#include <ble/BleConfig.h>
+#define _CHIP_BLE_BLE_H
+#include "BleLayer.h"
 
-#if CONFIG_NETWORK_LAYER_BLE
-
-#include <string.h>
-
-#include <ble/BLEEndPoint.h>
-#include <ble/BleApplicationDelegate.h>
-#include <ble/BleLayer.h>
-#include <ble/BlePlatformDelegate.h>
-#include <ble/BleUUID.h>
+#include <cstring>
+#include <utility>
 
 #include <lib/core/CHIPEncoding.h>
 #include <lib/support/CodeUtils.h>
+#include <lib/support/SetupDiscriminator.h>
 #include <lib/support/logging/CHIPLogging.h>
+#include <system/SystemLayer.h>
+#include <system/SystemPacketBuffer.h>
+
+#include "BLEEndPoint.h"
+#include "BleApplicationDelegate.h"
+#include "BleConfig.h"
+#include "BleConnectionDelegate.h"
+#include "BleError.h"
+#include "BleLayerDelegate.h"
+#include "BlePlatformDelegate.h"
+#include "BleRole.h"
+#include "BleUUID.h"
 
 // Magic values expected in first 2 bytes of valid BLE transport capabilities request or response:
 #define CAPABILITIES_MSG_CHECK_BYTE_1 0b01100101
@@ -131,20 +138,6 @@ public:
 //
 static BleEndPointPool sBLEEndPointPool;
 
-// UUIDs used internally by BleLayer:
-
-const ChipBleUUID BleLayer::CHIP_BLE_CHAR_1_ID = { { // 18EE2EF5-263D-4559-959F-4F9C429F9D11
-                                                     0x18, 0xEE, 0x2E, 0xF5, 0x26, 0x3D, 0x45, 0x59, 0x95, 0x9F, 0x4F, 0x9C, 0x42,
-                                                     0x9F, 0x9D, 0x11 } };
-
-const ChipBleUUID BleLayer::CHIP_BLE_CHAR_2_ID = { { // 18EE2EF5-263D-4559-959F-4F9C429F9D12
-                                                     0x18, 0xEE, 0x2E, 0xF5, 0x26, 0x3D, 0x45, 0x59, 0x95, 0x9F, 0x4F, 0x9C, 0x42,
-                                                     0x9F, 0x9D, 0x12 } };
-
-const ChipBleUUID BleLayer::CHIP_BLE_CHAR_3_ID = { { // 64630238-8772-45F2-B87D-748A83218F04
-                                                     0x64, 0x63, 0x02, 0x38, 0x87, 0x72, 0x45, 0xF2, 0xB8, 0x7D, 0x74, 0x8A, 0x83,
-                                                     0x21, 0x8F, 0x04 } };
-
 // BleTransportCapabilitiesRequestMessage implementation:
 
 void BleTransportCapabilitiesRequestMessage::SetSupportedProtocolVersion(uint8_t index, uint8_t version)
@@ -203,9 +196,11 @@ CHIP_ERROR BleTransportCapabilitiesRequestMessage::Decode(const PacketBufferHand
     VerifyOrReturnError(CAPABILITIES_MSG_CHECK_BYTE_1 == chip::Encoding::Read8(p), BLE_ERROR_INVALID_MESSAGE);
     VerifyOrReturnError(CAPABILITIES_MSG_CHECK_BYTE_2 == chip::Encoding::Read8(p), BLE_ERROR_INVALID_MESSAGE);
 
-    for (size_t i = 0; i < kCapabilitiesRequestSupportedVersionsLength; i++)
+    static_assert(kCapabilitiesRequestSupportedVersionsLength == sizeof(msg.mSupportedProtocolVersions),
+                  "Expected capability sizes and storage must match");
+    for (unsigned char & version : msg.mSupportedProtocolVersions)
     {
-        msg.mSupportedProtocolVersions[i] = chip::Encoding::Read8(p);
+        version = chip::Encoding::Read8(p);
     }
 
     msg.mMtu        = chip::Encoding::LittleEndian::Read16(p);
@@ -285,10 +280,6 @@ CHIP_ERROR BleLayer::Init(BlePlatformDelegate * platformDelegate, BleConnectionD
 
     mState = kState_Initialized;
 
-#if CHIP_ENABLE_CHIPOBLE_TEST
-    mTestBleEndPoint = NULL;
-#endif
-
     return CHIP_NO_ERROR;
 }
 
@@ -296,6 +287,11 @@ CHIP_ERROR BleLayer::Init(BlePlatformDelegate * platformDelegate, BleApplication
                           chip::System::Layer * systemLayer)
 {
     return Init(platformDelegate, nullptr, appDelegate, systemLayer);
+}
+
+void BleLayer::IndicateBleClosing()
+{
+    mState = kState_Disconnecting;
 }
 
 void BleLayer::Shutdown()
@@ -387,6 +383,22 @@ CHIP_ERROR BleLayer::NewBleConnectionByDiscriminator(const SetupDiscriminator & 
     return CHIP_NO_ERROR;
 }
 
+CHIP_ERROR BleLayer::NewBleConnectionByObject(BLE_CONNECTION_OBJECT connObj, void * appState,
+                                              BleConnectionDelegate::OnConnectionCompleteFunct onSuccess,
+                                              BleConnectionDelegate::OnConnectionErrorFunct onError)
+{
+    VerifyOrReturnError(mState == kState_Initialized, CHIP_ERROR_INCORRECT_STATE);
+    VerifyOrReturnError(mConnectionDelegate != nullptr, CHIP_ERROR_INCORRECT_STATE);
+    VerifyOrReturnError(mBleTransport != nullptr, CHIP_ERROR_INCORRECT_STATE);
+
+    mConnectionDelegate->OnConnectionComplete = onSuccess;
+    mConnectionDelegate->OnConnectionError    = onError;
+
+    mConnectionDelegate->NewConnection(this, appState == nullptr ? this : appState, connObj);
+
+    return CHIP_NO_ERROR;
+}
+
 CHIP_ERROR BleLayer::NewBleConnectionByObject(BLE_CONNECTION_OBJECT connObj)
 {
     VerifyOrReturnError(mState == kState_Initialized, CHIP_ERROR_INCORRECT_STATE);
@@ -420,10 +432,6 @@ CHIP_ERROR BleLayer::NewBleEndPoint(BLEEndPoint ** retEndPoint, BLE_CONNECTION_O
 
     (*retEndPoint)->Init(this, connObj, role, autoClose);
     (*retEndPoint)->mBleTransport = mBleTransport;
-
-#if CHIP_ENABLE_CHIPOBLE_TEST
-    mTestBleEndPoint = *retEndPoint;
-#endif
 
     return CHIP_NO_ERROR;
 }
@@ -463,43 +471,24 @@ exit:
 bool BleLayer::HandleWriteReceived(BLE_CONNECTION_OBJECT connObj, const ChipBleUUID * svcId, const ChipBleUUID * charId,
                                    PacketBufferHandle && pBuf)
 {
-    if (!UUIDsMatch(&CHIP_BLE_SVC_ID, svcId))
+    VerifyOrReturnError(UUIDsMatch(&CHIP_BLE_SVC_ID, svcId), false, ChipLogError(Ble, "Write received on unknown svc"));
+    VerifyOrReturnError(UUIDsMatch(&CHIP_BLE_CHAR_1_UUID, charId), false, ChipLogError(Ble, "Write received on unknown char"));
+    VerifyOrReturnError(!pBuf.IsNull(), false, ChipLogError(Ble, "Write received null buffer"));
+
+    // Find matching connection end point.
+    BLEEndPoint * endPoint = sBLEEndPointPool.Find(connObj);
+
+    if (endPoint != nullptr)
     {
-        ChipLogError(Ble, "ble write rcvd on unknown svc id");
-        return true;
-    }
-
-    if (UUIDsMatch(&CHIP_BLE_CHAR_1_ID, charId))
-    {
-        if (pBuf.IsNull())
-        {
-            ChipLogError(Ble, "rcvd null ble write");
-            return true;
-        }
-
-        // Find matching connection end point.
-        BLEEndPoint * endPoint = sBLEEndPointPool.Find(connObj);
-
-        if (endPoint != nullptr)
-        {
-            CHIP_ERROR status = endPoint->Receive(std::move(pBuf));
-            if (status != CHIP_NO_ERROR)
-            {
-                ChipLogError(Ble, "BLEEndPoint rcv failed, err = %" CHIP_ERROR_FORMAT, status.Format());
-            }
-        }
-        else
-        {
-            CHIP_ERROR status = HandleBleTransportConnectionInitiated(connObj, std::move(pBuf));
-            if (status != CHIP_NO_ERROR)
-            {
-                ChipLogError(Ble, "failed handle new chip BLE connection, status = %" CHIP_ERROR_FORMAT, status.Format());
-            }
-        }
+        CHIP_ERROR err = endPoint->Receive(std::move(pBuf));
+        VerifyOrReturnError(err == CHIP_NO_ERROR, false,
+                            ChipLogError(Ble, "Receive failed, err = %" CHIP_ERROR_FORMAT, err.Format()));
     }
     else
     {
-        ChipLogError(Ble, "ble write rcvd on unknown char");
+        CHIP_ERROR err = HandleBleTransportConnectionInitiated(connObj, std::move(pBuf));
+        VerifyOrReturnError(err == CHIP_NO_ERROR, false,
+                            ChipLogError(Ble, "Handle new BLE connection failed, err = %" CHIP_ERROR_FORMAT, err.Format()));
     }
 
     return true;
@@ -508,197 +497,102 @@ bool BleLayer::HandleWriteReceived(BLE_CONNECTION_OBJECT connObj, const ChipBleU
 bool BleLayer::HandleIndicationReceived(BLE_CONNECTION_OBJECT connObj, const ChipBleUUID * svcId, const ChipBleUUID * charId,
                                         PacketBufferHandle && pBuf)
 {
-    if (!UUIDsMatch(&CHIP_BLE_SVC_ID, svcId))
-    {
-        return false;
-    }
+    VerifyOrReturnError(UUIDsMatch(&CHIP_BLE_SVC_ID, svcId), false, ChipLogError(Ble, "Indication received on unknown svc"));
+    VerifyOrReturnError(UUIDsMatch(&CHIP_BLE_CHAR_2_UUID, charId), false, ChipLogError(Ble, "Indication received on unknown char"));
+    VerifyOrReturnError(!pBuf.IsNull(), false, ChipLogError(Ble, "Indication received null buffer"));
 
-    if (UUIDsMatch(&CHIP_BLE_CHAR_2_ID, charId))
-    {
-        if (pBuf.IsNull())
-        {
-            ChipLogError(Ble, "rcvd null ble indication");
-            return true;
-        }
+    // Find matching connection end point.
+    BLEEndPoint * endPoint = sBLEEndPointPool.Find(connObj);
+    VerifyOrReturnError(endPoint != nullptr, false, ChipLogDetail(Ble, "No endpoint for received indication"));
 
-        // find matching connection end point.
-        BLEEndPoint * endPoint = sBLEEndPointPool.Find(connObj);
-
-        if (endPoint != nullptr)
-        {
-            CHIP_ERROR status = endPoint->Receive(std::move(pBuf));
-            if (status != CHIP_NO_ERROR)
-            {
-                ChipLogError(Ble, "BLEEndPoint rcv failed, err = %" CHIP_ERROR_FORMAT, status.Format());
-            }
-        }
-        else
-        {
-            ChipLogDetail(Ble, "no endpoint for rcvd indication");
-        }
-    }
-    else
-    {
-        ChipLogError(Ble, "ble ind rcvd on unknown char");
-    }
+    CHIP_ERROR err = endPoint->Receive(std::move(pBuf));
+    VerifyOrReturnError(err == CHIP_NO_ERROR, false, ChipLogError(Ble, "Receive failed, err = %" CHIP_ERROR_FORMAT, err.Format()));
 
     return true;
 }
 
 bool BleLayer::HandleWriteConfirmation(BLE_CONNECTION_OBJECT connObj, const ChipBleUUID * svcId, const ChipBleUUID * charId)
 {
-    if (!UUIDsMatch(&CHIP_BLE_SVC_ID, svcId))
-    {
-        return false;
-    }
+    VerifyOrReturnError(UUIDsMatch(&CHIP_BLE_SVC_ID, svcId), false, ChipLogError(Ble, "Write confirmation on unknown svc"));
+    VerifyOrReturnError(UUIDsMatch(&CHIP_BLE_CHAR_1_UUID, charId), false, ChipLogError(Ble, "Write confirmation on unknown char"));
 
-    if (UUIDsMatch(&CHIP_BLE_CHAR_1_ID, charId))
-    {
-        HandleAckReceived(connObj);
-    }
-    else
-    {
-        ChipLogError(Ble, "ble write con rcvd on unknown char");
-    }
-
+    HandleAckReceived(connObj);
     return true;
 }
 
 bool BleLayer::HandleIndicationConfirmation(BLE_CONNECTION_OBJECT connObj, const ChipBleUUID * svcId, const ChipBleUUID * charId)
 {
-    if (!UUIDsMatch(&CHIP_BLE_SVC_ID, svcId))
-    {
-        return false;
-    }
+    VerifyOrReturnError(UUIDsMatch(&CHIP_BLE_SVC_ID, svcId), false, ChipLogError(Ble, "Indication confirmation on unknown svc"));
+    VerifyOrReturnError(UUIDsMatch(&CHIP_BLE_CHAR_2_UUID, charId), false,
+                        ChipLogError(Ble, "Indication confirmation on unknown char"));
 
-    if (UUIDsMatch(&CHIP_BLE_CHAR_2_ID, charId))
-    {
-        HandleAckReceived(connObj);
-    }
-    else
-    {
-        ChipLogError(Ble, "ble ind con rcvd on unknown char");
-    }
-
+    HandleAckReceived(connObj);
     return true;
 }
 
 void BleLayer::HandleAckReceived(BLE_CONNECTION_OBJECT connObj)
 {
-    // find matching connection end point.
+    // Find matching connection end point.
     BLEEndPoint * endPoint = sBLEEndPointPool.Find(connObj);
+    VerifyOrReturn(endPoint != nullptr, ChipLogDetail(Ble, "No endpoint for received ack"));
 
-    if (endPoint != nullptr)
-    {
-        CHIP_ERROR status = endPoint->HandleGattSendConfirmationReceived();
-
-        if (status != CHIP_NO_ERROR)
-        {
-            ChipLogError(Ble, "endpoint conf recvd failed, err = %" CHIP_ERROR_FORMAT, status.Format());
-        }
-    }
-    else
-    {
-        ChipLogError(Ble, "no endpoint for BLE sent data ack");
-    }
+    CHIP_ERROR err = endPoint->HandleGattSendConfirmationReceived();
+    VerifyOrReturn(err == CHIP_NO_ERROR,
+                   ChipLogError(Ble, "Send ack confirmation failed, err = %" CHIP_ERROR_FORMAT, err.Format()));
 }
 
 bool BleLayer::HandleSubscribeReceived(BLE_CONNECTION_OBJECT connObj, const ChipBleUUID * svcId, const ChipBleUUID * charId)
 {
-    if (!UUIDsMatch(&CHIP_BLE_SVC_ID, svcId))
-    {
-        return false;
-    }
+    VerifyOrReturnError(UUIDsMatch(&CHIP_BLE_SVC_ID, svcId), false, ChipLogError(Ble, "Subscribe received on unknown svc"));
+    VerifyOrReturnError(UUIDsMatch(&CHIP_BLE_CHAR_2_UUID, charId) || UUIDsMatch(&CHIP_BLE_CHAR_3_UUID, charId), false,
+                        ChipLogError(Ble, "Subscribe received on unknown char"));
 
-    if (UUIDsMatch(&CHIP_BLE_CHAR_2_ID, charId) || UUIDsMatch(&CHIP_BLE_CHAR_3_ID, charId))
-    {
-        // Find end point already associated with BLE connection, if any.
-        BLEEndPoint * endPoint = sBLEEndPointPool.Find(connObj);
+    // Find end point already associated with BLE connection, if any.
+    BLEEndPoint * endPoint = sBLEEndPointPool.Find(connObj);
+    VerifyOrReturnError(endPoint != nullptr, false, ChipLogDetail(Ble, "No endpoint for received subscribe"));
 
-        if (endPoint != nullptr)
-        {
-            endPoint->HandleSubscribeReceived();
-        }
-        else
-        {
-            ChipLogError(Ble, "no endpoint for sub recvd");
-        }
-    }
-
+    endPoint->HandleSubscribeReceived();
     return true;
 }
 
 bool BleLayer::HandleSubscribeComplete(BLE_CONNECTION_OBJECT connObj, const ChipBleUUID * svcId, const ChipBleUUID * charId)
 {
-    if (!UUIDsMatch(&CHIP_BLE_SVC_ID, svcId))
-    {
-        return false;
-    }
+    VerifyOrReturnError(UUIDsMatch(&CHIP_BLE_SVC_ID, svcId), false, ChipLogError(Ble, "Subscribe complete on unknown svc"));
+    VerifyOrReturnError(UUIDsMatch(&CHIP_BLE_CHAR_2_UUID, charId) || UUIDsMatch(&CHIP_BLE_CHAR_3_UUID, charId), false,
+                        ChipLogError(Ble, "Subscribe complete on unknown char"));
 
-    if (UUIDsMatch(&CHIP_BLE_CHAR_2_ID, charId) || UUIDsMatch(&CHIP_BLE_CHAR_3_ID, charId))
-    {
-        BLEEndPoint * endPoint = sBLEEndPointPool.Find(connObj);
+    BLEEndPoint * endPoint = sBLEEndPointPool.Find(connObj);
+    VerifyOrReturnError(endPoint != nullptr, false, ChipLogDetail(Ble, "No endpoint for subscribe complete"));
 
-        if (endPoint != nullptr)
-        {
-            endPoint->HandleSubscribeComplete();
-        }
-        else
-        {
-            ChipLogError(Ble, "no endpoint for sub complete");
-        }
-    }
-
+    endPoint->HandleSubscribeComplete();
     return true;
 }
 
 bool BleLayer::HandleUnsubscribeReceived(BLE_CONNECTION_OBJECT connObj, const ChipBleUUID * svcId, const ChipBleUUID * charId)
 {
-    if (!UUIDsMatch(&CHIP_BLE_SVC_ID, svcId))
-    {
-        return false;
-    }
+    VerifyOrReturnError(UUIDsMatch(&CHIP_BLE_SVC_ID, svcId), false, ChipLogError(Ble, "Unsubscribe received on unknown svc"));
+    VerifyOrReturnError(UUIDsMatch(&CHIP_BLE_CHAR_2_UUID, charId) || UUIDsMatch(&CHIP_BLE_CHAR_3_UUID, charId), false,
+                        ChipLogError(Ble, "Unsubscribe received on unknown char"));
 
-    if (UUIDsMatch(&CHIP_BLE_CHAR_2_ID, charId) || UUIDsMatch(&CHIP_BLE_CHAR_3_ID, charId))
-    {
-        // Find end point already associated with BLE connection, if any.
-        BLEEndPoint * endPoint = sBLEEndPointPool.Find(connObj);
+    // Find end point already associated with BLE connection, if any.
+    BLEEndPoint * endPoint = sBLEEndPointPool.Find(connObj);
+    VerifyOrReturnError(endPoint != nullptr, false, ChipLogDetail(Ble, "No endpoint for unsubscribe received"));
 
-        if (endPoint != nullptr)
-        {
-            endPoint->DoClose(kBleCloseFlag_AbortTransmission, BLE_ERROR_CENTRAL_UNSUBSCRIBED);
-        }
-        else
-        {
-            ChipLogError(Ble, "no endpoint for unsub recvd");
-        }
-    }
-
+    endPoint->DoClose(kBleCloseFlag_AbortTransmission, BLE_ERROR_CENTRAL_UNSUBSCRIBED);
     return true;
 }
 
 bool BleLayer::HandleUnsubscribeComplete(BLE_CONNECTION_OBJECT connObj, const ChipBleUUID * svcId, const ChipBleUUID * charId)
 {
-    if (!UUIDsMatch(&CHIP_BLE_SVC_ID, svcId))
-    {
-        return false;
-    }
+    VerifyOrReturnError(UUIDsMatch(&CHIP_BLE_SVC_ID, svcId), false, ChipLogError(Ble, "Unsubscribe complete on unknown svc"));
+    VerifyOrReturnError(UUIDsMatch(&CHIP_BLE_CHAR_2_UUID, charId) || UUIDsMatch(&CHIP_BLE_CHAR_3_UUID, charId), false,
+                        ChipLogError(Ble, "Unsubscribe complete on unknown char"));
 
-    if (UUIDsMatch(&CHIP_BLE_CHAR_2_ID, charId) || UUIDsMatch(&CHIP_BLE_CHAR_3_ID, charId))
-    {
-        // Find end point already associated with BLE connection, if any.
-        BLEEndPoint * endPoint = sBLEEndPointPool.Find(connObj);
+    // Find end point already associated with BLE connection, if any.
+    BLEEndPoint * endPoint = sBLEEndPointPool.Find(connObj);
+    VerifyOrReturnError(endPoint != nullptr, false, ChipLogDetail(Ble, "No endpoint for unsubscribe complete"));
 
-        if (endPoint != nullptr)
-        {
-            endPoint->HandleUnsubscribeComplete();
-        }
-        else
-        {
-            ChipLogError(Ble, "no endpoint for unsub complete");
-        }
-    }
-
+    endPoint->HandleUnsubscribeComplete();
     return true;
 }
 
@@ -706,19 +600,17 @@ void BleLayer::HandleConnectionError(BLE_CONNECTION_OBJECT connObj, CHIP_ERROR e
 {
     // BLE connection has failed somehow, we must find and abort matching connection end point.
     BLEEndPoint * endPoint = sBLEEndPointPool.Find(connObj);
+    VerifyOrReturn(endPoint != nullptr, ChipLogDetail(Ble, "No endpoint for connection error"));
 
-    if (endPoint != nullptr)
+    if (err == BLE_ERROR_GATT_UNSUBSCRIBE_FAILED && endPoint->IsUnsubscribePending())
     {
-        if (err == BLE_ERROR_GATT_UNSUBSCRIBE_FAILED && endPoint->IsUnsubscribePending())
-        {
-            // If end point was already closed and just waiting for unsubscribe to complete, free it. Call to Free()
-            // stops unsubscribe timer.
-            endPoint->Free();
-        }
-        else
-        {
-            endPoint->DoClose(kBleCloseFlag_AbortTransmission, err);
-        }
+        // If end point was already closed and just waiting for unsubscribe to complete, free it. Call to Free()
+        // stops unsubscribe timer.
+        endPoint->Free();
+    }
+    else
+    {
+        endPoint->DoClose(kBleCloseFlag_AbortTransmission, err);
     }
 }
 
@@ -733,7 +625,7 @@ BleTransportProtocolVersion BleLayer::GetHighestSupportedProtocolVersion(const B
         shift_width ^= 4;
 
         uint8_t version = reqMsg.mSupportedProtocolVersions[(i / 2)];
-        version         = (version >> shift_width) & 0x0F; // Grab just the nibble we want.
+        version         = static_cast<uint8_t>((version >> shift_width) & 0x0F); // Grab just the nibble we want.
 
         if ((version >= CHIP_BLE_TRANSPORT_PROTOCOL_MIN_SUPPORTED_VERSION) &&
             (version <= CHIP_BLE_TRANSPORT_PROTOCOL_MAX_SUPPORTED_VERSION) && (version > retVersion))
@@ -773,5 +665,3 @@ void BleLayer::OnConnectionError(void * appState, CHIP_ERROR err)
 
 } /* namespace Ble */
 } /* namespace chip */
-
-#endif /* CONFIG_NETWORK_LAYER_BLE */

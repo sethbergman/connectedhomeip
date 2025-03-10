@@ -19,26 +19,13 @@
 
 #include "LightingManager.h"
 #include <app-common/zap-generated/attributes/Accessors.h>
+#include <app-common/zap-generated/cluster-objects.h>
 #include <platform/CHIPDeviceLayer.h>
 #include <platform/DeviceInstanceInfoProvider.h>
 
 using namespace chip;
 using namespace chip::app::Clusters;
 using namespace chip::DeviceLayer;
-
-void emberAfBasicClusterInitCallback(EndpointId endpoint)
-{
-    uint16_t year;
-    uint8_t month;
-    uint8_t dayOfMonth;
-    char cString[16] = "00000000";
-
-    if (GetDeviceInstanceInfoProvider()->GetManufacturingDate(year, month, dayOfMonth) == CHIP_NO_ERROR)
-    {
-        snprintf(cString, sizeof(cString), "%04u%02u%02u", year, month, dayOfMonth);
-    }
-    Basic::Attributes::ManufacturingDate::Set(endpoint, CharSpan(cString));
-}
 
 void MatterPostAttributeChangeCallback(const app::ConcreteAttributePath & attributePath, uint8_t type, uint16_t size,
                                        uint8_t * value)
@@ -67,7 +54,8 @@ void MatterPostAttributeChangeCallback(const app::ConcreteAttributePath & attrib
         if (attributePath.mAttributeId == Identify::Attributes::IdentifyTime::Id)
         {
             uint16_t identifyTime;
-            if (EMBER_ZCL_STATUS_SUCCESS == Identify::Attributes::IdentifyTime::Get(attributePath.mEndpointId, &identifyTime))
+            if (Protocols::InteractionModel::Status::Success ==
+                Identify::Attributes::IdentifyTime::Get(attributePath.mEndpointId, &identifyTime))
             {
                 ChipLogProgress(Zcl, "IdentifyTime %u", identifyTime);
                 return;

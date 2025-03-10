@@ -13,52 +13,96 @@
 # limitations under the License.
 
 import("//build_overrides/chip.gni")
+import("${chip_root}/src/app/common_flags.gni")
+import("${chip_root}/src/lib/lib.gni")
 import("${chip_root}/src/platform/device.gni")
 import("${chip_root}/src/platform/python.gni")
 
-config("config") {
-  # TODO: this should be a dependency on src/controller/data_model however this is circular:
-  #    zzz_generated/controller-clusters depend on src/controller
-  #    src/controller neeeds zzz_generated/controller-cluster for includes
-  include_dirs = [ "${chip_root}/zzz_generated/" ]
+source_set("nodatamodel") {
+  sources = [ "EmptyDataModelHandler.cpp" ]
+
+  public_deps = [ "${chip_root}/src/app" ]
+}
+
+source_set("delegates") {
+  sources = [ "OperationalCredentialsDelegate.h" ]
+}
+
+source_set("interactions") {
+  sources = [
+    "CHIPCluster.h",
+    "CommandSenderAllocator.h",
+    "InvokeInteraction.h",
+    "ReadInteraction.h",
+    "TypedCommandCallback.h",
+    "TypedReadCallback.h",
+    "WriteInteraction.h",
+  ]
+  public_deps = [ "${chip_root}/src/app" ]
 }
 
 static_library("controller") {
   output_name = "libChipController"
 
-  sources = [ "CHIPCluster.h" ]
+  sources = [
+    # TODO: these dependencies are broken. Specifically:
+    #       a) ChipDeviceControllerFactory.h includes CHIPDeviceController.h
+    #       b) CHIPDeviceController.cpp is only compiled for read_client
+    # These conditionals are NOT ok and should have been solved with separate
+    # source sets - either include some functionality or do not
+    #
+    # Then CHIPDeviceController.h pulls in AbstractDnssdDiscoveryController and everything
+    # cascades. In the end it looks like basically every header file is pulled in.
+    #
+    # Unfortunately this is hard to fix in one go, hence these odd list of header-only
+    # dependencies
+    "AbstractDnssdDiscoveryController.h",
+    "AutoCommissioner.h",
+    "CHIPCommissionableNodeController.h",
+    "CHIPDeviceController.h",
+    "CHIPDeviceControllerSystemState.h",
+    "CommissioneeDeviceProxy.h",
+    "CommissioningDelegate.h",
+    "CommissioningWindowOpener.h",
+    "CommissioningWindowParams.h",
+    "CurrentFabricRemover.h",
+    "DeviceDiscoveryDelegate.h",
+    "DevicePairingDelegate.h",
+    "ExampleOperationalCredentialsIssuer.h",
+    "SetUpCodePairer.h",
+  ]
 
-  if (chip_controller) {
+  deps = [ "${chip_root}/src/lib/address_resolve" ]
+
+  if (chip_controller && chip_build_controller) {
     sources += [
       "AbstractDnssdDiscoveryController.cpp",
       "AutoCommissioner.cpp",
-      "AutoCommissioner.h",
       "CHIPCommissionableNodeController.cpp",
-      "CHIPCommissionableNodeController.h",
-      "CHIPDeviceController.cpp",
-      "CHIPDeviceController.h",
       "CHIPDeviceControllerFactory.cpp",
       "CHIPDeviceControllerFactory.h",
       "CommissioneeDeviceProxy.cpp",
-      "CommissioneeDeviceProxy.h",
       "CommissionerDiscoveryController.cpp",
       "CommissionerDiscoveryController.h",
       "CommissioningDelegate.cpp",
-      "CommissioningWindowOpener.cpp",
-      "CommissioningWindowOpener.h",
-      "DeviceDiscoveryDelegate.h",
-      "DevicePairingDelegate.h",
-      "EmptyDataModelHandler.cpp",
       "ExampleOperationalCredentialsIssuer.cpp",
-      "ExampleOperationalCredentialsIssuer.h",
       "SetUpCodePairer.cpp",
-      "SetUpCodePairer.h",
     ]
+
+    # ExampleOperationalCredentialsIssuer uses TestGroupData
+    deps += [ "${chip_root}/src/lib/support:testing" ]
+
+    if (chip_enable_read_client) {
+      sources += [
+        "CHIPDeviceController.cpp",
+        "CommissioningWindowOpener.cpp",
+        "CurrentFabricRemover.cpp",
+      ]
+    }
   }
 
-  cflags = [ "-Wconversion" ]
-
   public_deps = [
+    ":interactions",
     "${chip_root}/src/app",
     "${chip_root}/src/app/server",
     "${chip_root}/src/lib/core",
@@ -68,13 +112,12 @@ static_library("controller") {
     "${chip_root}/src/platform",
     "${chip_root}/src/protocols",
     "${chip_root}/src/setup_payload",
-    "${chip_root}/src/trace",
+    "${chip_root}/src/tracing",
+    "${chip_root}/src/tracing:macros",
     "${chip_root}/src/transport",
   ]
 
-  deps = [ "${chip_root}/src/lib/address_resolve" ]
+  cflags = [ "-Wconversion" ]
 
-  public_configs = [ ":config" ]
-
-  defines = []
+  public_configs = [ "${chip_root}/src:includes" ]
 }

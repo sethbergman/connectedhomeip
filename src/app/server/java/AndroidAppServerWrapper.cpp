@@ -17,10 +17,11 @@
  */
 
 #include "AndroidAppServerWrapper.h"
-#include <app/server/OnboardingCodesUtil.h>
+
 #include <app/server/Server.h>
 #include <credentials/DeviceAttestationCredsProvider.h>
 #include <credentials/examples/DeviceAttestationCredsExample.h>
+#include <data-model-providers/codegen/Instance.h>
 #include <iostream>
 #include <lib/core/CHIPError.h>
 #include <lib/support/CHIPMem.h>
@@ -28,6 +29,7 @@
 #include <lib/support/ScopedBuffer.h>
 #include <platform/CHIPDeviceLayer.h>
 #include <platform/PlatformManager.h>
+#include <setup_payload/OnboardingCodesUtil.h>
 #include <setup_payload/QRCodeSetupPayloadGenerator.h>
 #include <setup_payload/SetupPayload.h>
 #include <thread>
@@ -38,7 +40,7 @@ using namespace chip::Inet;
 using namespace chip::Transport;
 using namespace chip::DeviceLayer;
 
-CHIP_ERROR ChipAndroidAppInit(void)
+CHIP_ERROR ChipAndroidAppInit(AppDelegate * appDelegate)
 {
     CHIP_ERROR err = CHIP_NO_ERROR;
 
@@ -50,6 +52,12 @@ CHIP_ERROR ChipAndroidAppInit(void)
     // Init ZCL Data Model and CHIP App Server
     static chip::CommonCaseDeviceServerInitParams initParams;
     (void) initParams.InitializeStaticResourcesBeforeServerInit();
+    initParams.dataModelProvider = app::CodegenDataModelProviderInstance(initParams.persistentStorageDelegate);
+    if (appDelegate != nullptr)
+    {
+        initParams.appDelegate = appDelegate;
+    }
+
     initParams.operationalServicePort        = CHIP_PORT;
     initParams.userDirectedCommissioningPort = CHIP_UDC_PORT;
 
@@ -74,4 +82,9 @@ void ChipAndroidAppShutdown(void)
 {
     chip::Server::GetInstance().Shutdown();
     chip::Platform::MemoryShutdown();
+}
+
+void ChipAndroidAppReset(void)
+{
+    chip::Server::GetInstance().ScheduleFactoryReset();
 }

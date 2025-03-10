@@ -19,9 +19,12 @@
 #pragma once
 
 #include <app-common/zap-generated/cluster-objects.h>
+#include <commands/common/HexConversion.h>
 #include <lib/support/BytesToHex.h>
 #include <lib/support/CHIPMemString.h>
 #include <lib/support/SafeInt.h>
+
+#include <string>
 
 #include "JsonParser.h"
 
@@ -31,11 +34,11 @@ static constexpr char kPayloadSignedPrefix[]      = "s:";
 static constexpr char kPayloadUnsignedPrefix[]    = "u:";
 static constexpr char kPayloadFloatPrefix[]       = "f:";
 static constexpr char kPayloadDoublePrefix[]      = "d:";
-static constexpr size_t kPayloadHexPrefixLen      = ArraySize(kPayloadHexPrefix) - 1;      // ignore null character
-static constexpr size_t kPayloadSignedPrefixLen   = ArraySize(kPayloadSignedPrefix) - 1;   // ignore null character
-static constexpr size_t kPayloadUnsignedPrefixLen = ArraySize(kPayloadUnsignedPrefix) - 1; // ignore null character
-static constexpr size_t kPayloadFloatPrefixLen    = ArraySize(kPayloadFloatPrefix) - 1;    // ignore null character
-static constexpr size_t kPayloadDoublePrefixLen   = ArraySize(kPayloadDoublePrefix) - 1;   // ignore null character
+static constexpr size_t kPayloadHexPrefixLen      = MATTER_ARRAY_SIZE(kPayloadHexPrefix) - 1;      // ignore null character
+static constexpr size_t kPayloadSignedPrefixLen   = MATTER_ARRAY_SIZE(kPayloadSignedPrefix) - 1;   // ignore null character
+static constexpr size_t kPayloadUnsignedPrefixLen = MATTER_ARRAY_SIZE(kPayloadUnsignedPrefix) - 1; // ignore null character
+static constexpr size_t kPayloadFloatPrefixLen    = MATTER_ARRAY_SIZE(kPayloadFloatPrefix) - 1;    // ignore null character
+static constexpr size_t kPayloadDoublePrefixLen   = MATTER_ARRAY_SIZE(kPayloadDoublePrefix) - 1;   // ignore null character
 } // namespace
 
 class CustomArgumentParser
@@ -140,14 +143,18 @@ private:
 
     static CHIP_ERROR PutOctetString(chip::TLV::TLVWriter * writer, chip::TLV::Tag tag, Json::Value & value)
     {
-        size_t size = strlen(value.asCString());
-        VerifyOrReturnError(size % 2 == 0, CHIP_ERROR_INVALID_STRING_LENGTH);
-
+        const char * hexData = value.asCString() + kPayloadHexPrefixLen;
+        size_t hexDataLen    = strlen(hexData);
         chip::Platform::ScopedMemoryBuffer<uint8_t> buffer;
-        VerifyOrReturnError(buffer.Calloc(size / 2), CHIP_ERROR_NO_MEMORY);
-        size_t octetCount = chip::Encoding::HexToBytes(value.asCString() + kPayloadHexPrefixLen, size - kPayloadHexPrefixLen,
-                                                       buffer.Get(), (size - kPayloadHexPrefixLen) / 2);
-        VerifyOrReturnError(octetCount != 0, CHIP_ERROR_NO_MEMORY);
+
+        size_t octetCount;
+        ReturnErrorOnFailure(HexToBytes(
+            chip::CharSpan(hexData, hexDataLen),
+            [&buffer](size_t allocSize) {
+                buffer.Calloc(allocSize);
+                return buffer.Get();
+            },
+            &octetCount));
 
         return chip::app::DataModel::Encode(*writer, tag, chip::ByteSpan(buffer.Get(), octetCount));
     }
@@ -223,19 +230,13 @@ private:
 class CustomArgument
 {
 public:
-    ~CustomArgument()
-    {
-        if (mData != nullptr)
-        {
-            chip::Platform::MemoryFree(mData);
-        }
-    }
+    ~CustomArgument() { Reset(); }
 
     CHIP_ERROR Parse(const char * label, const char * json)
     {
         Json::Value value;
-        constexpr const char kHexNumPrefix[] = "0x";
-        constexpr size_t kHexNumPrefixLen    = ArraySize(kHexNumPrefix) - 1;
+        static constexpr char kHexNumPrefix[] = "0x";
+        constexpr size_t kHexNumPrefixLen     = MATTER_ARRAY_SIZE(kHexNumPrefix) - 1;
         if (strncmp(json, kPayloadHexPrefix, kPayloadHexPrefixLen) == 0 ||
             strncmp(json, kPayloadSignedPrefix, kPayloadSignedPrefixLen) == 0 ||
             strncmp(json, kPayloadUnsignedPrefix, kPayloadUnsignedPrefixLen) == 0 ||
@@ -274,9 +275,18 @@ public:
     {
         chip::TLV::TLVReader reader;
         reader.Init(mData, mDataLen);
-        reader.Next();
+        ReturnErrorOnFailure(reader.Next());
 
         return writer.CopyElement(tag, reader);
+    }
+
+    void Reset()
+    {
+        if (mData != nullptr)
+        {
+            chip::Platform::MemoryFree(mData);
+            mData = nullptr;
+        }
     }
 
     // We trust our consumers to do the encoding of our data correctly, so don't

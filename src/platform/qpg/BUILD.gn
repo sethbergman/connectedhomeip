@@ -36,12 +36,11 @@ static_library("qpg") {
     "ConfigurationManagerImpl.h",
     "ConnectivityManagerImpl.cpp",
     "ConnectivityManagerImpl.h",
-    "DeviceNetworkProvisioningDelegateImpl.cpp",
-    "DeviceNetworkProvisioningDelegateImpl.h",
     "DiagnosticDataProviderImpl.cpp",
     "DiagnosticDataProviderImpl.h",
+    "FactoryDataProvider.cpp",
+    "FactoryDataProvider.h",
     "InetPlatformConfig.h",
-    "Logging.cpp",
     "OTAImageProcessorImpl.cpp",
     "PlatformManagerImpl.cpp",
     "PlatformManagerImpl.h",
@@ -50,7 +49,12 @@ static_library("qpg") {
     "qpgConfig.h",
   ]
 
-  deps = []
+  deps = [
+    "${chip_root}/src/app:app_config",
+    "${chip_root}/src/platform/logging:headers",
+  ]
+
+  public = [ "${chip_root}/src/credentials/DeviceAttestationCredsProvider.h" ]
 
   public_deps = [ "${chip_root}/src/platform:platform_base" ]
 
@@ -70,7 +74,6 @@ static_library("qpg") {
 
     public_configs += [
       "${chip_root}/third_party/openthread/platforms/qpg:openthread_qpg_config",
-      "${chip_root}/src/lib/address_resolve:default_address_resolve_config",
     ]
 
     sources += [
@@ -78,10 +81,23 @@ static_library("qpg") {
       "ThreadStackManagerImpl.cpp",
       "ThreadStackManagerImpl.h",
     ]
+    deps += [ "${chip_root}/src/app:app_config" ]
 
     if (chip_mdns == "platform") {
-      sources += [ "../OpenThread/DnssdImpl.cpp" ]
+      sources += [
+        "../OpenThread/DnssdImpl.cpp",
+        "../OpenThread/OpenThreadDnssdImpl.cpp",
+        "../OpenThread/OpenThreadDnssdImpl.h",
+      ]
       deps += [ "${chip_root}/src/lib/dnssd:platform_header" ]
     }
   }
+}
+
+source_set("logging") {
+  deps = [
+    "${chip_root}/src/platform:platform_base",
+    "${chip_root}/src/platform/logging:headers",
+  ]
+  sources = [ "Logging.cpp" ]
 }

@@ -1,6 +1,6 @@
 /*
  *
- *    Copyright (c) 2021 Project CHIP Authors
+ *    Copyright (c) 2021-2022 Project CHIP Authors
  *    Copyright (c) 2013-2017 Nest Labs, Inc.
  *    All rights reserved.
  *
@@ -207,9 +207,8 @@ bool PrintCert(const char * fileName, X509 * cert)
     bool res       = true;
     CHIP_ERROR err = CHIP_NO_ERROR;
     FILE * file    = nullptr;
-    ChipCertificateSet certSet;
-    const ChipCertificateData * certData;
-    chip::BitFlags<CertDecodeFlags> decodeFlags;
+    ChipCertificateData certDataStorage;
+    const auto certData = &certDataStorage;
     uint8_t chipCertBuf[kMaxCHIPCertLength];
     MutableByteSpan chipCert(chipCertBuf);
     int indent = 4;
@@ -222,21 +221,12 @@ bool PrintCert(const char * fileName, X509 * cert)
     res = X509ToChipCert(cert, chipCert);
     VerifyTrueOrExit(res);
 
-    err = certSet.Init(1);
-    if (err != CHIP_NO_ERROR)
-    {
-        fprintf(stderr, "Failed to initialize certificate set: %s\n", chip::ErrorStr(err));
-        ExitNow(res = false);
-    }
-
-    err = certSet.LoadCert(chipCert, decodeFlags);
+    err = DecodeChipCert(chipCert, certDataStorage);
     if (err != CHIP_NO_ERROR)
     {
         fprintf(stderr, "Error reading %s: %s\n", fileName, chip::ErrorStr(err));
         ExitNow(res = false);
     }
-
-    certData = certSet.GetLastCert();
 
     fprintf(file, "CHIP Certificate:\n");
 
@@ -263,11 +253,8 @@ bool PrintCert(const char * fileName, X509 * cert)
     fprintf(file, "Extensions:\n");
 
     indent += 4;
-    if (certData->mCertFlags.Has(CertFlags::kIsCA))
-    {
-        Indent(file, indent);
-        fprintf(file, "Is CA            : true\n");
-    }
+    Indent(file, indent);
+    fprintf(file, "Is CA            : %s\n", certData->mCertFlags.Has(CertFlags::kIsCA) ? "true" : "false");
 
     if (certData->mCertFlags.Has(CertFlags::kPathLenConstraintPresent))
     {
@@ -374,7 +361,7 @@ exit:
 bool Cmd_PrintCert(int argc, char * argv[])
 {
     bool res = true;
-    std::unique_ptr<X509, void (*)(X509 *)> cert(X509_new(), &X509_free);
+    std::unique_ptr<X509, void (*)(X509 *)> cert(nullptr, &X509_free);
 
     if (argc == 1)
     {
@@ -385,7 +372,7 @@ bool Cmd_PrintCert(int argc, char * argv[])
     res = ParseArgs(CMD_NAME, argc, argv, gCmdOptionSets, HandleNonOptionArgs);
     VerifyTrueOrExit(res);
 
-    res = ReadCert(gInFileNameOrStr, cert.get());
+    res = ReadCert(gInFileNameOrStr, cert);
     VerifyTrueOrExit(res);
 
     res = PrintCert(gOutFileName, cert.get());

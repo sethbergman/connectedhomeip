@@ -16,19 +16,21 @@
  *    limitations under the License.
  */
 
-#include <platform/CHIPDeviceLayer.h>
-#include <platform/PlatformManager.h>
+#include "CommissionerMain.h"
 
 #if CHIP_DEVICE_CONFIG_ENABLE_BOTH_COMMISSIONER_AND_COMMISSIONEE
 
 #include <app/clusters/network-commissioning/network-commissioning.h>
 #include <app/server/Dnssd.h>
-#include <app/server/OnboardingCodesUtil.h>
 #include <app/server/Server.h>
 #include <crypto/CHIPCryptoPAL.h>
+#include <crypto/RawKeySessionKeystore.h>
+#include <data-model-providers/codegen/Instance.h>
 #include <lib/core/CHIPError.h>
+#include <lib/core/CHIPPersistentStorageDelegate.h>
 #include <lib/core/NodeId.h>
 #include <lib/support/logging/CHIPLogging.h>
+#include <setup_payload/OnboardingCodesUtil.h>
 
 #include <credentials/DeviceAttestationConstructor.h>
 #include <credentials/DeviceAttestationVendorReserved.h>
@@ -44,27 +46,23 @@
 #include <setup_payload/QRCodeSetupPayloadGenerator.h>
 #include <setup_payload/SetupPayload.h>
 
+#include <platform/CHIPDeviceLayer.h>
 #include <platform/CommissionableDataProvider.h>
 #include <platform/DeviceInstanceInfoProvider.h>
 #include <platform/DiagnosticDataProvider.h>
+#include <platform/KeyValueStoreManager.h>
+#include <platform/PlatformManager.h>
 #include <platform/TestOnlyCommissionableDataProvider.h>
 
-#include <controller/CHIPDeviceControllerFactory.h>
-#include <controller/ExampleOperationalCredentialsIssuer.h>
-#include <lib/core/CHIPPersistentStorageDelegate.h>
-#include <platform/KeyValueStoreManager.h>
-
-#if defined(PW_RPC_ENABLED)
-#include <CommonRpc.h>
-#endif
+#include <controller/CHIPDeviceControllerFactory.h>         // nogncheck
+#include <controller/ExampleOperationalCredentialsIssuer.h> // nogncheck
 
 #if CHIP_CONFIG_TRANSPORT_TRACE_ENABLED
 #include "TraceHandlers.h"
 #endif // CHIP_CONFIG_TRANSPORT_TRACE_ENABLED
 
 #include <signal.h>
-
-#include "CommissionerMain.h"
+#include <string>
 
 using namespace chip;
 using namespace chip::Credentials;
@@ -72,6 +70,7 @@ using namespace chip::DeviceLayer;
 using namespace chip::Inet;
 using namespace chip::Transport;
 using namespace chip::app::Clusters;
+using namespace chip::Protocols::UserDirectedCommissioning;
 
 using namespace ::chip::Messaging;
 using namespace ::chip::Controller;
@@ -122,6 +121,7 @@ MyServerStorageDelegate gServerStorage;
 ExampleOperationalCredentialsIssuer gOpCredsIssuer;
 NodeId gLocalId = kMaxOperationalNodeId;
 Credentials::GroupDataProviderImpl gGroupDataProvider;
+Crypto::RawKeySessionKeystore gSessionKeystore;
 
 CHIP_ERROR InitCommissioner(uint16_t commissionerPort, uint16_t udcListenPort, FabricId fabricId)
 {
@@ -132,8 +132,11 @@ CHIP_ERROR InitCommissioner(uint16_t commissionerPort, uint16_t udcListenPort, F
     factoryParams.listenPort               = commissionerPort;
     factoryParams.fabricIndependentStorage = &gServerStorage;
     factoryParams.fabricTable              = &Server::GetInstance().GetFabricTable();
+    factoryParams.sessionKeystore          = &gSessionKeystore;
+    factoryParams.dataModelProvider        = chip::app::CodegenDataModelProviderInstance(&gServerStorage);
 
     gGroupDataProvider.SetStorageDelegate(&gServerStorage);
+    gGroupDataProvider.SetSessionKeystore(factoryParams.sessionKeystore);
     ReturnErrorOnFailure(gGroupDataProvider.Init());
     factoryParams.groupDataProvider = &gGroupDataProvider;
 
@@ -171,7 +174,7 @@ CHIP_ERROR InitCommissioner(uint16_t commissionerPort, uint16_t udcListenPort, F
     MutableByteSpan rcacSpan(rcac.Get(), Controller::kMaxCHIPDERCertLength);
 
     Crypto::P256Keypair ephemeralKey;
-    ReturnErrorOnFailure(ephemeralKey.Initialize());
+    ReturnErrorOnFailure(ephemeralKey.Initialize(Crypto::ECPKeyTarget::ECDSA));
 
     ReturnErrorOnFailure(gOpCredsIssuer.GenerateNOCChainAfterValidation(gLocalId, /* fabricId = */ 1, chip::kUndefinedCATs,
                                                                         ephemeralKey.Pubkey(), rcacSpan, icacSpan, nocSpan));
@@ -181,7 +184,8 @@ CHIP_ERROR InitCommissioner(uint16_t commissionerPort, uint16_t udcListenPort, F
     params.controllerICAC     = icacSpan;
     params.controllerNOC      = nocSpan;
 
-    params.defaultCommissioner = &gAutoCommissioner;
+    params.defaultCommissioner      = &gAutoCommissioner;
+    params.enableServerInteractions = true;
 
     // assign prefered feature settings
     CommissioningParameters commissioningParams = gAutoCommissioner.GetCommissioningParameters();
@@ -212,7 +216,7 @@ CHIP_ERROR InitCommissioner(uint16_t commissionerPort, uint16_t udcListenPort, F
     gCommissionerDiscoveryController.SetCommissionerCallback(&gCommissionerCallback);
 
     // advertise operational since we are an admin
-    app::DnssdServer::Instance().AdvertiseOperational();
+    ReturnLogErrorOnFailure(app::DnssdServer::Instance().AdvertiseOperational());
 
     ChipLogProgress(Support,
                     "InitCommissioner nodeId=0x" ChipLogFormatX64 " fabric.fabricId=0x" ChipLogFormatX64 " fabricIndex=0x%x",
@@ -248,11 +252,12 @@ public:
     void OnCommissioningStatusUpdate(PeerId peerId, CommissioningStage stageCompleted, CHIP_ERROR error) override;
 
     void OnReadCommissioningInfo(const ReadCommissioningInfo & info) override;
+    void OnFabricCheck(NodeId matchingNodeId) override;
 
 private:
 #if CHIP_DEVICE_CONFIG_APP_PLATFORM_ENABLED
     static void OnDeviceConnectedFn(void * context, chip::Messaging::ExchangeManager & exchangeMgr,
-                                    chip::SessionHandle & sessionHandle);
+                                    const chip::SessionHandle & sessionHandle);
     static void OnDeviceConnectionFailureFn(void * context, const ScopedNodeId & peerId, CHIP_ERROR error);
 
     chip::Callback::Callback<chip::OnDeviceConnected> mOnDeviceConnectedCallback;
@@ -272,9 +277,13 @@ void PairingCommand::OnStatusUpdate(DevicePairingDelegate::Status status)
         break;
     case DevicePairingDelegate::Status::SecurePairingFailed:
         ChipLogError(AppServer, "Secure Pairing Failed");
-        break;
-    case DevicePairingDelegate::Status::SecurePairingDiscoveringMoreDevices:
-        ChipLogProgress(AppServer, "Secure Pairing Discovering More Device");
+#if CHIP_DEVICE_CONFIG_APP_PLATFORM_ENABLED
+        CommissionerDiscoveryController * cdc = GetCommissionerDiscoveryController();
+        if (cdc != nullptr)
+        {
+            cdc->CommissioningFailed(CHIP_ERROR_CONNECTION_ABORTED);
+        }
+#endif // CHIP_DEVICE_CONFIG_APP_PLATFORM_ENABLED
         break;
     }
 }
@@ -343,21 +352,47 @@ void PairingCommand::OnCommissioningStatusUpdate(PeerId peerId, CommissioningSta
     }
 }
 
-void PairingCommand::OnReadCommissioningInfo(const ReadCommissioningInfo & info)
+void PairingCommand::OnReadCommissioningInfo(const Controller::ReadCommissioningInfo & info)
 {
     ChipLogProgress(AppServer, "OnReadCommissioningInfo - vendorId=0x%04X productId=0x%04X", info.basic.vendorId,
                     info.basic.productId);
 
-    if (info.nodeId != kUndefinedNodeId)
+    // The string in CharSpan received from the device is not null-terminated, we use std::string here for coping and
+    // appending a numm-terminator at the end of the string.
+    std::string userActiveModeTriggerInstruction;
+
+    // Note: the callback doesn't own the buffer, should make a copy if it will be used it later.
+    if (info.icd.userActiveModeTriggerInstruction.size() != 0)
     {
-        ChipLogProgress(AppServer, "ALREADY ON FABRIC WITH nodeId=0x" ChipLogFormatX64, ChipLogValueX64(info.nodeId));
+        userActiveModeTriggerInstruction =
+            std::string(info.icd.userActiveModeTriggerInstruction.data(), info.icd.userActiveModeTriggerInstruction.size());
+    }
+
+    if (info.icd.userActiveModeTriggerHint.HasAny())
+    {
+        ChipLogProgress(AppServer, "OnReadCommissioningInfo - LIT UserActiveModeTriggerHint=0x%08x",
+                        info.icd.userActiveModeTriggerHint.Raw());
+        ChipLogProgress(AppServer, "OnReadCommissioningInfo - LIT UserActiveModeTriggerInstruction=%s",
+                        userActiveModeTriggerInstruction.c_str());
+    }
+
+    ChipLogProgress(AppServer, "OnReadCommissioningInfo ICD - IdleModeDuration=%u activeModeDuration=%u activeModeThreshold=%u",
+                    info.icd.idleModeDuration, info.icd.activeModeDuration, info.icd.activeModeThreshold);
+}
+
+void PairingCommand::OnFabricCheck(NodeId matchingNodeId)
+{
+    if (matchingNodeId != kUndefinedNodeId)
+    {
+        ChipLogProgress(AppServer, "ALREADY ON FABRIC WITH nodeId=0x" ChipLogFormatX64, ChipLogValueX64(matchingNodeId));
         // wait until attestation verification before cancelling so we can validate vid/pid
     }
 }
 
 #if CHIP_DEVICE_CONFIG_APP_PLATFORM_ENABLED
 
-void PairingCommand::OnDeviceConnectedFn(void * context, Messaging::ExchangeManager & exchangeMgr, SessionHandle & sessionHandle)
+void PairingCommand::OnDeviceConnectedFn(void * context, Messaging::ExchangeManager & exchangeMgr,
+                                         const SessionHandle & sessionHandle)
 {
     ChipLogProgress(Controller, "OnDeviceConnectedFn");
     CommissionerDiscoveryController * cdc = GetCommissionerDiscoveryController();
@@ -420,6 +455,16 @@ DeviceCommissioner * GetDeviceCommissioner()
 CommissionerDiscoveryController * GetCommissionerDiscoveryController()
 {
     return &gCommissionerDiscoveryController;
+}
+
+Crypto::SessionKeystore * GetSessionKeystore()
+{
+    return &gSessionKeystore;
+}
+
+PersistentStorageDelegate * GetPersistentStorageDelegate()
+{
+    return &gServerStorage;
 }
 
 #endif // CHIP_DEVICE_CONFIG_ENABLE_BOTH_COMMISSIONER_AND_COMMISSIONEE

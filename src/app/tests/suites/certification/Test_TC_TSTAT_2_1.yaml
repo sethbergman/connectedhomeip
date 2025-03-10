@@ -23,7 +23,7 @@ config:
     endpoint: 1
 
 tests:
-    - label: "Wait for the commissioned device to be retrieved"
+    - label: "Step 1: Commission DUT to TH"
       cluster: "DelayCommands"
       command: "WaitForCommissionee"
       arguments:
@@ -47,7 +47,7 @@ tests:
       command: "readAttribute"
       attribute: "MinSetpointDeadBand"
       response:
-          saveAs: MinSetpointDeadBand
+          saveAs: MinSetpointDeadBandValue
 
     - label:
           "Saving value for comparision in step 6 read AbsMaxCoolSetpointLimit
@@ -65,7 +65,7 @@ tests:
       command: "readAttribute"
       attribute: "MinCoolSetpointLimit"
       response:
-          saveAs: MinCoolSetpointLimit
+          saveAs: MinCoolSetpointLimitValue
 
     - label:
           "Saving value for comparision in step 17 read MaxCoolSetpointLimit
@@ -74,7 +74,14 @@ tests:
       command: "readAttribute"
       attribute: "MaxCoolSetpointLimit"
       response:
-          saveAs: MaxCoolSetpointLimit
+          saveAs: MaxCoolSetpointLimitValue
+
+    - label: "Saving value for comparision in step 17 read MaxHeatSetpointLimit"
+      PICS: TSTAT.S.A0016
+      command: "readAttribute"
+      attribute: "MaxHeatSetpointLimit"
+      response:
+          saveAs: MaxHeatSetpointLimitValue
 
     - label:
           "Saving value for comparision in step 13 read attribute
@@ -83,7 +90,7 @@ tests:
       command: "readAttribute"
       attribute: "OccupiedCoolingSetpoint"
       response:
-          saveAs: OccupiedCoolingSetpoint
+          saveAs: OccupiedCoolingSetpointValue
 
     - label:
           "Saving value for comparision in step 15 read attribute
@@ -92,7 +99,7 @@ tests:
       command: "readAttribute"
       attribute: "AbsMinHeatSetpointLimit"
       response:
-          saveAs: AbsMinHeat
+          saveAs: AbsMinHeatValue
 
     - label:
           "Saving value for comparision in step 15 read attribute
@@ -101,7 +108,7 @@ tests:
       command: "readAttribute"
       attribute: "AbsMaxHeatSetpointLimit"
       response:
-          saveAs: AbsMaxHeat
+          saveAs: AbsMaxHeatValue
 
     - label:
           "Saving value for comparision in step 16 read
@@ -110,9 +117,18 @@ tests:
       command: "readAttribute"
       attribute: "UnoccupiedCoolingSetpoint"
       response:
-          saveAs: UnoccupiedCoolingSetpoint
+          saveAs: UnoccupiedCoolingSetpointValue
 
-    - label: "Reads mandatory attributes from DUT: LocalTemperature"
+    - label:
+          "Saving value for comparision in step 58 read NumberOfPresets
+          attribute"
+      PICS: TSTAT.S.F08
+      command: "readAttribute"
+      attribute: "NumberOfPresets"
+      response:
+          saveAs: NumberOfPresetsValue
+
+    - label: "Step 2: TH reads the LocalTemperature attribute from the DUT"
       command: "readAttribute"
       attribute: "LocalTemperature"
       response:
@@ -121,7 +137,7 @@ tests:
               minValue: -27315
               maxValue: 32767
 
-    - label: "Read OutdoorTemperature attribute from the DUT"
+    - label: "Step 3: TH reads the OutdoorTemperature attribute from the DUT"
       PICS: TSTAT.S.A0001
       command: "readAttribute"
       attribute: "OutdoorTemperature"
@@ -131,7 +147,7 @@ tests:
               minValue: -27315
               maxValue: 32767
 
-    - label: "Read Occupancy attribute from the DUT"
+    - label: "Step 4: TH reads the Occupancy attribute from the DUT"
       PICS: TSTAT.S.F02
       command: "readAttribute"
       attribute: "Occupancy"
@@ -142,19 +158,19 @@ tests:
               maxValue: 1
 
     - label:
-          "Read attribute AbsMinHeatSetpointLimit if TSTAT.S.F05 feature is
-          supported"
+          "Step 5a: TH reads attribute AbsMinHeatSetpointLimit if TSTAT.S.F05
+          feature is supported"
       PICS: TSTAT.S.A0003 && TSTAT.S.A0005 && TSTAT.S.F05
       command: "readAttribute"
       attribute: "AbsMinHeatSetpointLimit"
       response:
           constraints:
               type: int16s
-              maxValue: AbsMinCoolSetpointLimitStep5 - MinSetpointDeadBand
+              maxValue: AbsMinCoolSetpointLimitStep5 - MinSetpointDeadBandValue
 
     - label:
-          "Read attribute AbsMinHeatSetpointLimit if TSTAT.S.F05 feature is
-          supported"
+          "Step 5b: TH reads attribute AbsMinHeatSetpointLimit if TSTAT.S.F05
+          feature is supported"
       PICS: TSTAT.S.A0003 && !TSTAT.S.A0005 && TSTAT.S.F05
       command: "readAttribute"
       attribute: "AbsMinHeatSetpointLimit"
@@ -163,7 +179,7 @@ tests:
               type: int16s
               maxValue: 1575
 
-    - label: "Read attribute AbsMinHeatSetpointLimit from DUT"
+    - label: "Step 6a: TH reads attribute AbsMinHeatSetpointLimit from DUT"
       PICS: TSTAT.S.A0003 && !TSTAT.S.F05
       command: "readAttribute"
       attribute: "AbsMinHeatSetpointLimit"
@@ -173,7 +189,9 @@ tests:
               minValue: -27315
               maxValue: 32767
 
-    - label: "Reads mandatory attributes from DUT: AbsMaxHeatSetpointLimit"
+    - label:
+          "Step 6b: TH reads mandatory attributes from DUT:
+          AbsMaxHeatSetpointLimit"
       PICS: TSTAT.S.A0004
       command: "readAttribute"
       attribute: "AbsMaxHeatSetpointLimit"
@@ -183,7 +201,8 @@ tests:
               minValue: -27315
               maxValue: 32767
 
-    - label: "Read attribute AbsMinCoolSetpointLimit from DUT"
+    - label:
+          "Step 7: TH reads the AbsMinCoolSetpointLimit attribute from the DUT"
       PICS: TSTAT.S.A0005
       command: "readAttribute"
       attribute: "AbsMinCoolSetpointLimit"
@@ -193,7 +212,8 @@ tests:
               minValue: -27315
               maxValue: 32767
 
-    - label: "Read attribute AbsMaxCoolSetpointLimit from DUT"
+    - label:
+          "Step 8: TH reads the AbsMaxCoolSetpointLimit attribute from the DUT"
       PICS: TSTAT.S.A0006
       command: "readAttribute"
       attribute: "AbsMaxCoolSetpointLimit"
@@ -203,7 +223,7 @@ tests:
               minValue: -27315
               maxValue: 32767
 
-    - label: "Read PICoolingDemand attribute from the DUT"
+    - label: "Step 9: TH reads the PICoolingDemand attribute from the DUT"
       PICS: TSTAT.S.A0007
       command: "readAttribute"
       attribute: "PICoolingDemand"
@@ -213,7 +233,7 @@ tests:
               minValue: 0
               maxValue: 100
 
-    - label: "Read PIHeatingDemand attribute from the DUT"
+    - label: "Step 10: TH reads the PIHeatingDemand attribute from the DUT"
       PICS: TSTAT.S.A0008
       command: "readAttribute"
       attribute: "PIHeatingDemand"
@@ -223,37 +243,29 @@ tests:
               minValue: 0
               maxValue: 100
 
-    - label: "Read HVACSystemTypeConfiguration attribute from the DUT"
-      PICS: TSTAT.S.A0009
-      command: "readAttribute"
-      attribute: "HVACSystemTypeConfiguration"
-      response:
-          constraints:
-              type: bitmap8
-              minValue: 0
-              maxValue: 63
-
-    - label: "Read LocalTemperatureCalibration attribute from the DUT"
+    - label:
+          "Step 11: TH reads the LocalTemperatureCalibration attribute from the
+          DUT"
       PICS: TSTAT.S.A0010
       command: "readAttribute"
       attribute: "LocalTemperatureCalibration"
       response:
           constraints:
               type: int8s
-              minValue: -25
-              maxValue: 25
+              minValue: -127
+              maxValue: 127
 
-    - label: "Read attribute OccupiedCoolingSetpoint from the DUT"
+    - label: "Step 12a: TH reads attribute OccupiedCoolingSetpoint from the DUT"
       PICS: TSTAT.S.F01 && TSTAT.S.A0017 && TSTAT.S.A0018
       command: "readAttribute"
       attribute: "OccupiedCoolingSetpoint"
       response:
           constraints:
               type: int16s
-              minValue: MinCoolSetpointLimit
-              maxValue: MaxCoolSetpointLimit
+              minValue: MinCoolSetpointLimitValue
+              maxValue: MaxCoolSetpointLimitValue
 
-    - label: "Read attribute OccupiedCoolingSetpoint from the DUT"
+    - label: "Step 12b: TH reads attribute OccupiedCoolingSetpoint from the DUT"
       PICS: TSTAT.S.F01 && !TSTAT.S.A0017 && !TSTAT.S.A0018
       command: "readAttribute"
       attribute: "OccupiedCoolingSetpoint"
@@ -264,8 +276,8 @@ tests:
               maxValue: 3200
 
     - label:
-          "Read attribute OccupiedHeatingSetpoint if TSTAT.S.F05 feature is
-          supported"
+          "Step 13a: TH reads attribute OccupiedHeatingSetpoint if TSTAT.S.F05
+          feature is supported"
       PICS: TSTAT.S.F05 && TSTAT.S.F00
       command: "readAttribute"
       attribute: "OccupiedHeatingSetpoint"
@@ -273,9 +285,9 @@ tests:
           constraints:
               type: int16s
               minValue: AbsMinCoolSetpointLimitStep5
-              maxValue: OccupiedCoolingSetpoint - MinSetpointDeadBand
+              maxValue: OccupiedCoolingSetpointValue - MinSetpointDeadBandValue
 
-    - label: "Read attribute OccupiedHeatingSetpoint from the DUT"
+    - label: "Step 13b: TH reads attribute OccupiedHeatingSetpoint from the DUT"
       PICS: TSTAT.S.F00 && !TSTAT.S.F05
       command: "readAttribute"
       attribute: "OccupiedHeatingSetpoint"
@@ -285,17 +297,19 @@ tests:
               minValue: 700
               maxValue: 3000
 
-    - label: "Read UnoccupiedCoolingSetpoint attribute from the DUT"
+    - label:
+          "Step 14a: TH reads UnoccupiedCoolingSetpoint attribute from the DUT"
       PICS: TSTAT.S.F05 && TSTAT.S.A0013
       command: "readAttribute"
       attribute: "UnoccupiedCoolingSetpoint"
       response:
           constraints:
               type: int16s
-              minValue: AbsMinHeat
-              maxValue: AbsMaxHeat
+              minValue: AbsMinHeatValue
+              maxValue: AbsMaxHeatValue
 
-    - label: "Read UnoccupiedCoolingSetpoint attribute from the DUT"
+    - label:
+          "Step 14b: TH reads UnoccupiedCoolingSetpoint attribute from the DUT"
       PICS: TSTAT.S.F01 && TSTAT.S.F02 && !TSTAT.S.F05
       command: "readAttribute"
       attribute: "UnoccupiedCoolingSetpoint"
@@ -305,7 +319,8 @@ tests:
               minValue: 1600
               maxValue: 3200
 
-    - label: "Read UnoccupiedHeatingSetpoint attribute from the DUT"
+    - label:
+          "Step 15a: TH reads UnoccupiedHeatingSetpoint attribute from the DUT"
       PICS: TSTAT.S.F00 && TSTAT.S.F02 && TSTAT.S.F05 && TSTAT.S.A0013
       command: "readAttribute"
       attribute: "UnoccupiedHeatingSetpoint"
@@ -313,9 +328,11 @@ tests:
           constraints:
               type: int16s
               minValue: 700
-              maxValue: UnoccupiedCoolingSetpoint - MinSetpointDeadBand
+              maxValue:
+                  UnoccupiedCoolingSetpointValue - MinSetpointDeadBandValue
 
-    - label: "Read UnoccupiedHeatingSetpoint attribute from the DUT"
+    - label:
+          "Step 15b: TH reads UnoccupiedHeatingSetpoint attribute from the DUT"
       PICS: TSTAT.S.F00 && TSTAT.S.F02 && !TSTAT.S.F05
       command: "readAttribute"
       attribute: "UnoccupiedHeatingSetpoint"
@@ -325,27 +342,42 @@ tests:
               minValue: 700
               maxValue: 3000
 
-    - label: "Reads attribute from DUT: MinHeatSetpointLimit"
-      PICS: TSTAT.S.A0015 && TSTAT.S.F05 && TSTAT.S.A0017
+    - label: "Step 16a: TH reads attribute from DUT: MinHeatSetpointLimit"
+      PICS: TSTAT.S.A0015 && TSTAT.S.F05 && TSTAT.S.A0017 && TSTAT.S.A0019
       command: "readAttribute"
       attribute: "MinHeatSetpointLimit"
       response:
           constraints:
               type: int16s
               minValue: 700
-              maxValue: MinCoolSetpointLimit - MinSetpointDeadBand
+              maxValue: MinCoolSetpointLimitValue - MinSetpointDeadBandValue
 
-    - label: "Read attribute MinHeatSetpointLimit from the DUT"
-      PICS: TSTAT.S.A0015 && !TSTAT.S.F05
+    - label:
+          "Step 16b: TH reads MinHeatSetpointLimit attribute from Server DUT and
+          verifies that the value is within range"
       command: "readAttribute"
       attribute: "MinHeatSetpointLimit"
+      PICS: TSTAT.S.A0015 && TSTAT.S.A0016 && TSTAT.S.A0003 && !TSTAT.S.F05
+      response:
+          constraints:
+              type: int16s
+              minValue: AbsMinHeatValue
+              maxValue: MaxHeatSetpointLimitValue
+
+    #Using hard coded values when optional attributes are not available
+    - label:
+          "Step 16c: TH reads MinHeatSetpointLimit attribute from Server DUT and
+          verifies that the value is within range"
+      command: "readAttribute"
+      attribute: "MinHeatSetpointLimit"
+      PICS: TSTAT.S.A0015 && !TSTAT.S.A0003 && !TSTAT.S.F05
       response:
           constraints:
               type: int16s
               minValue: 700
               maxValue: 3000
 
-    - label: "Read attribute MaxHeatSetpointLimit from the DUT"
+    - label: "Step 17a: TH reads attribute MaxHeatSetpointLimit from the DUT"
       PICS: TSTAT.S.A0016 && !TSTAT.S.F05
       command: "readAttribute"
       attribute: "MaxHeatSetpointLimit"
@@ -355,7 +387,7 @@ tests:
               minValue: 700
               maxValue: 3000
 
-    - label: "Reads attribute from DUT: MaxHeatSetpointLimit"
+    - label: "Step 17b: TH reads attribute from DUT: MaxHeatSetpointLimit"
       PICS: TSTAT.S.A0016 && TSTAT.S.F05 && TSTAT.S.A0018
       command: "readAttribute"
       attribute: "MaxHeatSetpointLimit"
@@ -363,9 +395,9 @@ tests:
           constraints:
               type: int16s
               minValue: 700
-              maxValue: MaxCoolSetpointLimit - MinSetpointDeadBand
+              maxValue: MaxCoolSetpointLimitValue - MinSetpointDeadBandValue
 
-    - label: "Read attribute MinCoolSetpointLimit from DUT"
+    - label: "Step 18a: TH reads attribute MinCoolSetpointLimit from DUT"
       PICS: TSTAT.S.A0017 && TSTAT.S.A0018 && TSTAT.S.A0005
       command: "readAttribute"
       attribute: "MinCoolSetpointLimit"
@@ -373,9 +405,9 @@ tests:
           constraints:
               type: int16s
               minValue: AbsMinCoolSetpointLimitStep5
-              maxValue: MaxCoolSetpointLimit
+              maxValue: MaxCoolSetpointLimitValue
 
-    - label: "Read attribute MinCoolSetpointLimit from DUT"
+    - label: "Step 18b: TH reads attribute MinCoolSetpointLimit from DUT"
       PICS: TSTAT.S.A0017 && !TSTAT.S.A0018 && !TSTAT.S.A0005
       command: "readAttribute"
       attribute: "MinCoolSetpointLimit"
@@ -385,17 +417,17 @@ tests:
               minValue: 1600
               maxValue: 3200
 
-    - label: "Read attribute MaxCoolSetpointLimit from DUT"
+    - label: "Step 19: TH reads the MaxCoolSetpointLimit attribute from the DUT"
       PICS: TSTAT.S.A0018 && TSTAT.S.A0006 && TSTAT.S.A0017
       command: "readAttribute"
       attribute: "MaxCoolSetpointLimit"
       response:
           constraints:
               type: int16s
-              minValue: MinCoolSetpointLimit
+              minValue: MinCoolSetpointLimitValue
               maxValue: AbsMaxCoolSetpointLimitStep6
 
-    - label: "Read attribute MinSetpointDeadBand from DUT"
+    - label: "Step 20: TH reads the MinSetpointDeadBand attribute from the DUT"
       PICS: TSTAT.S.F05
       command: "readAttribute"
       attribute: "MinSetpointDeadBand"
@@ -405,7 +437,7 @@ tests:
               minValue: 0
               maxValue: 25
 
-    - label: "Read RemoteSensing attribute from the DUT"
+    - label: "Step 21: TH reads the RemoteSensing attribute from the DUT"
       PICS: TSTAT.S.A001a
       command: "readAttribute"
       attribute: "RemoteSensing"
@@ -415,7 +447,9 @@ tests:
               minValue: 0
               maxValue: 7
 
-    - label: "Read attribute ControlSequenceOfOperation from DUT"
+    - label:
+          "Step 22: TH reads the ControlSequenceOfOperation attribute from the
+          DUT"
       PICS: TSTAT.S.A001b
       command: "readAttribute"
       attribute: "ControlSequenceOfOperation"
@@ -425,7 +459,7 @@ tests:
               minValue: 0
               maxValue: 5
 
-    - label: "Read attribute SystemMode from DUT"
+    - label: "Step 23: TH reads the SystemMode attribute from the DUT"
       PICS: TSTAT.S.A001c
       command: "readAttribute"
       attribute: "SystemMode"
@@ -435,17 +469,22 @@ tests:
               minValue: 0
               maxValue: 9
 
-    - label: "Read ThermostatRunningMode attribute from the DUT"
+    - label:
+          "Step 24: TH reads the ThermostatRunningMode attribute from the DUT"
       PICS: TSTAT.S.A001e
       command: "readAttribute"
       attribute: "ThermostatRunningMode"
       response:
           constraints:
               type: enum8
-              minValue: 0
-              maxValue: 9
+              anyOf:
+                  [
+                      ThermostatRunningModeEnum.Off(0),
+                      ThermostatRunningModeEnum.Cool(3),
+                      ThermostatRunningModeEnum.Heat(4),
+                  ]
 
-    - label: "Reads constraints of optional attributes from DUT: StartOfWeek"
+    - label: "Step 25: TH reads the StartOfWeek attribute from the DUT"
       PICS: TSTAT.S.F03
       command: "readAttribute"
       attribute: "StartOfWeek"
@@ -455,7 +494,9 @@ tests:
               minValue: 0
               maxValue: 6
 
-    - label: "Reads optional attributes from DUT: NumberOfWeeklyTransitions"
+    - label:
+          "Step 26: TH reads the NumberOfWeeklyTransitions attribute from the
+          DUT"
       PICS: TSTAT.S.F03
       command: "readAttribute"
       attribute: "NumberOfWeeklyTransitions"
@@ -465,7 +506,8 @@ tests:
               minValue: 0
               maxValue: 255
 
-    - label: "Reads optional attributes from DUT: NumberOfDailyTransitions"
+    - label:
+          "Step 27: TH reads the NumberOfDailyTransitions attribute from the DUT"
       PICS: TSTAT.S.F03
       command: "readAttribute"
       attribute: "NumberOfDailyTransitions"
@@ -475,7 +517,8 @@ tests:
               minValue: 0
               maxValue: 255
 
-    - label: "Read TemperatureSetpointHold attribute from the DUT"
+    - label:
+          "Step 28: TH reads the TemperatureSetpointHold attribute from the DUT"
       PICS: TSTAT.S.A0023
       command: "readAttribute"
       attribute: "TemperatureSetpointHold"
@@ -485,7 +528,9 @@ tests:
               minValue: 0
               maxValue: 1
 
-    - label: "Read TemperatureSetpointHoldDuration attribute from the DUT"
+    - label:
+          "Step 29: TH reads the TemperatureSetpointHoldDuration attribute from
+          the DUT"
       PICS: TSTAT.S.A0024
       command: "readAttribute"
       attribute: "TemperatureSetpointHoldDuration"
@@ -495,7 +540,9 @@ tests:
               minValue: 0
               maxValue: 1440
 
-    - label: "Read ThermostatProgrammingOperationMode attribute from the DUT"
+    - label:
+          "Step 30: TH reads the ThermostatProgrammingOperationMode attribute
+          from the DUT"
       PICS: TSTAT.S.A0025
       command: "readAttribute"
       attribute: "ThermostatProgrammingOperationMode"
@@ -505,7 +552,8 @@ tests:
               minValue: 0
               maxValue: 7
 
-    - label: "Read ThermostatRunningState attribute from the DUT"
+    - label:
+          "Step 31: TH reads the ThermostatRunningState attribute from the DUT"
       PICS: TSTAT.S.A0029
       command: "readAttribute"
       attribute: "ThermostatRunningState"
@@ -515,7 +563,7 @@ tests:
               minValue: 0
               maxValue: 127
 
-    - label: "Read SetpointChangeSource attribute from the DUT"
+    - label: "Step 32: TH reads the SetpointChangeSource attribute from the DUT"
       PICS: TSTAT.S.A0030
       command: "readAttribute"
       attribute: "SetpointChangeSource"
@@ -525,7 +573,7 @@ tests:
               minValue: 0
               maxValue: 2
 
-    - label: "Read SetpointChangeAmount attribute from the DUT"
+    - label: "Step 33: TH reads the SetpointChangeAmount attribute from the DUT"
       PICS: TSTAT.S.A0031
       command: "readAttribute"
       attribute: "SetpointChangeAmount"
@@ -535,16 +583,18 @@ tests:
               minValue: -27315
               maxValue: 32767
 
-    - label: "Read SetpointChangeSourceTimestamp attribute from the DUT"
+    - label:
+          "Step 34: TH reads the SetpointChangeSourceTimestamp attribute from
+          the DUT"
       PICS: TSTAT.S.A0032
       command: "readAttribute"
       attribute: "SetpointChangeSourceTimestamp"
       response:
           constraints:
-              type: utc
+              type: epoch_s
 
-    - label: "Read OccupiedSetback attribute from the DUT"
-      PICS: TSTAT.S.F02
+    - label: "Step 35: TH reads the OccupiedSetback attribute from the DUT"
+      PICS: TSTAT.S.F04
       command: "readAttribute"
       attribute: "OccupiedSetback"
       response:
@@ -553,8 +603,8 @@ tests:
               minValue: 0
               maxValue: 255
 
-    - label: "Read OccupiedSetbackMin attribute from the DUT"
-      PICS: TSTAT.S.F02
+    - label: "Step 36: TH reads the OccupiedSetbackMin attribute from the DUT"
+      PICS: TSTAT.S.F04
       command: "readAttribute"
       attribute: "OccupiedSetbackMin"
       response:
@@ -563,8 +613,8 @@ tests:
               minValue: 0
               maxValue: 255
 
-    - label: "Read OccupiedSetbackMax attribute from the DUT"
-      PICS: TSTAT.S.F02
+    - label: "Step 37: TH reads the OccupiedSetbackMax attribute from the DUT"
+      PICS: TSTAT.S.F04
       command: "readAttribute"
       attribute: "OccupiedSetbackMax"
       response:
@@ -573,7 +623,7 @@ tests:
               minValue: 0
               maxValue: 255
 
-    - label: "Read UnoccupiedSetback attribute from the DUT"
+    - label: "Step 38: TH reads the UnoccupiedSetback attribute from the DUT"
       PICS: TSTAT.S.F02 && TSTAT.S.F04
       command: "readAttribute"
       attribute: "UnoccupiedSetback"
@@ -583,7 +633,7 @@ tests:
               minValue: 0
               maxValue: 255
 
-    - label: "Read UnoccupiedSetbackMin attribute from the DUT"
+    - label: "Step 39: TH reads the UnoccupiedSetbackMin attribute from the DUT"
       PICS: TSTAT.S.F02 && TSTAT.S.F04
       command: "readAttribute"
       attribute: "UnoccupiedSetbackMin"
@@ -593,7 +643,7 @@ tests:
               minValue: 0
               maxValue: 255
 
-    - label: "Read UnoccupiedSetbackMax attribute from the DUT"
+    - label: "Step 40: TH reads the UnoccupiedSetbackMax attribute from the DUT"
       PICS: TSTAT.S.F02 && TSTAT.S.F04
       command: "readAttribute"
       attribute: "UnoccupiedSetbackMax"
@@ -603,7 +653,7 @@ tests:
               minValue: 0
               maxValue: 255
 
-    - label: "Read EmergencyHeatDelta attribute from the DUT"
+    - label: "Step 41: TH reads the EmergencyHeatDelta attribute from the DUT"
       PICS: TSTAT.S.A003a
       command: "readAttribute"
       attribute: "EmergencyHeatDelta"
@@ -613,7 +663,7 @@ tests:
               minValue: 0
               maxValue: 255
 
-    - label: "Read ACType attribute from the DUT"
+    - label: "Step 42: TH reads the ACType attribute from the DUT"
       PICS: TSTAT.S.A0040
       command: "readAttribute"
       attribute: "ACType"
@@ -623,7 +673,7 @@ tests:
               minValue: 0
               maxValue: 4
 
-    - label: "Read ACCapacity attribute from the DUT"
+    - label: "Step 43: TH reads the ACCapacity attribute from the DUT"
       PICS: TSTAT.S.A0041
       command: "readAttribute"
       attribute: "ACCapacity"
@@ -633,7 +683,7 @@ tests:
               minValue: 0
               maxValue: 65535
 
-    - label: "Read ACRefrigerantType attribute from the DUT"
+    - label: "Step 44: TH reads the ACRefrigerantType attribute from the DUT"
       PICS: TSTAT.S.A0042
       command: "readAttribute"
       attribute: "ACRefrigerantType"
@@ -643,7 +693,7 @@ tests:
               minValue: 0
               maxValue: 3
 
-    - label: "Read ACCompressorType attribute from the DUT"
+    - label: "Step 45: TH reads the ACCompressorType attribute from the DUT"
       PICS: TSTAT.S.A0043
       command: "readAttribute"
       attribute: "ACCompressorType"
@@ -653,7 +703,7 @@ tests:
               minValue: 0
               maxValue: 3
 
-    - label: "Read ACErrorCode attribute from the DUT"
+    - label: "Step 46: TH reads the ACErrorCode attribute from the DUT"
       PICS: TSTAT.S.A0044
       command: "readAttribute"
       attribute: "ACErrorCode"
@@ -661,7 +711,7 @@ tests:
           constraints:
               type: bitmap32
 
-    - label: "Read ACLouverPosition attribute from the DUT"
+    - label: "Step 47: TH reads the ACLouverPosition attribute from the DUT"
       PICS: TSTAT.S.A0045
       command: "readAttribute"
       attribute: "ACLouverPosition"
@@ -671,7 +721,7 @@ tests:
               minValue: 1
               maxValue: 5
 
-    - label: "Read ACCoilTemperature attribute from the DUT"
+    - label: "Step 48: TH reads the ACCoilTemperature attribute from the DUT"
       PICS: TSTAT.S.A0046
       command: "readAttribute"
       attribute: "ACCoilTemperature"
@@ -681,7 +731,7 @@ tests:
               minValue: -27315
               maxValue: 32767
 
-    - label: "Read ACCapacityFormat attribute from the DUT"
+    - label: "Step 49: TH reads the ACCapacityFormat attribute from the DUT"
       PICS: TSTAT.S.A0047
       command: "readAttribute"
       attribute: "ACCapacityformat"
@@ -689,3 +739,98 @@ tests:
           value: 0
           constraints:
               type: enum8
+
+    - label: "Step 50: TH reads the PresetTypes attribute from the DUT"
+      PICS: TSTAT.S.F08
+      command: "readAttribute"
+      attribute: "PresetTypes"
+      response:
+          constraints:
+              type: list
+
+    - label: "Step 51: TH reads the ScheduleTypes attribute from the DUT"
+      PICS: TSTAT.S.F07
+      command: "readAttribute"
+      attribute: "ScheduleTypes"
+      response:
+          constraints:
+              type: list
+
+    - label: "Step 52: TH reads the NumberOfPresets attribute from the DUT"
+      PICS: TSTAT.S.F08
+      command: "readAttribute"
+      attribute: "NumberOfPresets"
+      response:
+          constraints:
+              type: int8u
+
+    - label: "Step 53: TH reads the NumberOfSchedules attribute from the DUT"
+      PICS: TSTAT.S.F07
+      command: "readAttribute"
+      attribute: "NumberOfSchedules"
+      response:
+          constraints:
+              type: int8u
+
+    - label:
+          "Step 54: TH reads the NumberOfScheduleTransitions attribute from the
+          DUT"
+      PICS: TSTAT.S.F07
+      command: "readAttribute"
+      attribute: "NumberOfScheduleTransitions"
+      response:
+          constraints:
+              type: int8u
+
+    - label:
+          "Step 55: TH reads the NumberOfScheduleTransitionPerDay attribute from
+          the DUT"
+      PICS: TSTAT.S.F07
+      command: "readAttribute"
+      attribute: "NumberOfScheduleTransitionPerDay"
+      response:
+          constraints:
+              type: int8u
+
+    - label: "Step 56: TH reads the ActivePresetHandle attribute from the DUT"
+      PICS: TSTAT.S.F08
+      command: "readAttribute"
+      attribute: "ActivePresetHandle"
+      response:
+          constraints:
+              type: octstr
+
+    - label: "Step 57: TH reads the ActiveScheduleHandle attribute from the DUT"
+      PICS: TSTAT.S.F07
+      command: "readAttribute"
+      attribute: "ActiveScheduleHandle"
+      response:
+          constraints:
+              type: octstr
+
+    - label: "Step 58: TH reads the Presets attribute from the DUT"
+      PICS: TSTAT.S.F08
+      command: "readAttribute"
+      attribute: "Presets"
+      response:
+          constraints:
+              type: list
+              maxLength: NumberOfPresetsValue
+
+    - label: "Step 59: TH reads the Schedules attribute from the DUT"
+      PICS: TSTAT.S.F07
+      command: "readAttribute"
+      attribute: "Schedules"
+      response:
+          constraints:
+              type: list
+
+    - label:
+          "Step 60: TH reads the SetpointHoldExpiryTimestamp attribute from the
+          DUT"
+      PICS: TSTAT.S.A0052
+      command: "readAttribute"
+      attribute: "SetpointHoldExpiryTimestamp"
+      response:
+          constraints:
+              type: int32u

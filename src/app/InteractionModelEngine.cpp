@@ -27,70 +27,169 @@
 
 #include <cinttypes>
 
-#include "access/RequestPath.h"
-#include "access/SubjectDescriptor.h"
+#include <access/AccessRestrictionProvider.h>
+#include <access/Privilege.h>
+#include <access/RequestPath.h>
+#include <access/SubjectDescriptor.h>
+#include <app/AppConfig.h>
+#include <app/CommandHandlerInterfaceRegistry.h>
+#include <app/ConcreteClusterPath.h>
+#include <app/EventPathParams.h>
 #include <app/RequiredPrivilege.h>
-#include <lib/core/CHIPTLVUtilities.hpp>
+#include <app/data-model-provider/ActionReturnStatus.h>
+#include <app/data-model-provider/MetadataList.h>
+#include <app/data-model-provider/MetadataLookup.h>
+#include <app/data-model-provider/MetadataTypes.h>
+#include <app/data-model-provider/OperationTypes.h>
+#include <app/data-model/List.h>
+#include <app/util/IMClusterCommandHandler.h>
+#include <app/util/af-types.h>
+#include <app/util/endpoint-config-api.h>
+#include <lib/core/CHIPError.h>
+#include <lib/core/DataModelTypes.h>
+#include <lib/core/Global.h>
+#include <lib/core/TLVUtilities.h>
+#include <lib/support/CHIPFaultInjection.h>
 #include <lib/support/CodeUtils.h>
-
-extern bool emberAfContainsAttribute(chip::EndpointId endpoint, chip::ClusterId clusterId, chip::AttributeId attributeId);
+#include <lib/support/FibonacciUtils.h>
+#include <protocols/interaction_model/StatusCode.h>
 
 namespace chip {
 namespace app {
+namespace {
+
+/**
+ * Helper to handle wildcard events in the event path.
+ *
+ * Validates that ACL access is permitted to:
+ *    - Cluster::View in case the path is a wildcard for the event id
+ *    - Event read if the path is a concrete event path
+ */
+bool MayHaveAccessibleEventPathForEndpointAndCluster(const ConcreteClusterPath & path, const EventPathParams & aEventPath,
+                                                     const Access::SubjectDescriptor & aSubjectDescriptor)
+{
+    Access::RequestPath requestPath{ .cluster     = path.mClusterId,
+                                     .endpoint    = path.mEndpointId,
+                                     .requestType = Access::RequestType::kEventReadRequest };
+
+    Access::Privilege requiredPrivilege = Access::Privilege::kView;
+
+    if (!aEventPath.HasWildcardEventId())
+    {
+        requestPath.entityId = aEventPath.mEventId;
+        requiredPrivilege =
+            RequiredPrivilege::ForReadEvent(ConcreteEventPath(path.mEndpointId, path.mClusterId, aEventPath.mEventId));
+    }
+
+    return (Access::GetAccessControl().Check(aSubjectDescriptor, requestPath, requiredPrivilege) == CHIP_NO_ERROR);
+}
+
+bool MayHaveAccessibleEventPathForEndpoint(DataModel::Provider * aProvider, EndpointId aEndpoint,
+                                           const EventPathParams & aEventPath, const Access::SubjectDescriptor & aSubjectDescriptor)
+{
+    if (!aEventPath.HasWildcardClusterId())
+    {
+        return MayHaveAccessibleEventPathForEndpointAndCluster(ConcreteClusterPath(aEndpoint, aEventPath.mClusterId), aEventPath,
+                                                               aSubjectDescriptor);
+    }
+
+    for (auto & cluster : aProvider->ServerClustersIgnoreError(aEventPath.mEndpointId))
+    {
+        if (MayHaveAccessibleEventPathForEndpointAndCluster(ConcreteClusterPath(aEventPath.mEndpointId, cluster.clusterId),
+                                                            aEventPath, aSubjectDescriptor))
+        {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+bool MayHaveAccessibleEventPath(DataModel::Provider * aProvider, const EventPathParams & aEventPath,
+                                const Access::SubjectDescriptor & subjectDescriptor)
+{
+    VerifyOrReturnValue(aProvider != nullptr, false);
+
+    if (!aEventPath.HasWildcardEndpointId())
+    {
+        return MayHaveAccessibleEventPathForEndpoint(aProvider, aEventPath.mEndpointId, aEventPath, subjectDescriptor);
+    }
+
+    for (const DataModel::EndpointEntry & ep : aProvider->EndpointsIgnoreError())
+    {
+        if (MayHaveAccessibleEventPathForEndpoint(aProvider, ep.id, aEventPath, subjectDescriptor))
+        {
+            return true;
+        }
+    }
+    return false;
+}
+
+} // namespace
+
+class AutoReleaseSubscriptionInfoIterator
+{
+public:
+    AutoReleaseSubscriptionInfoIterator(SubscriptionResumptionStorage::SubscriptionInfoIterator * iterator) : mIterator(iterator){};
+    ~AutoReleaseSubscriptionInfoIterator() { mIterator->Release(); }
+
+    SubscriptionResumptionStorage::SubscriptionInfoIterator * operator->() const { return mIterator; }
+
+private:
+    SubscriptionResumptionStorage::SubscriptionInfoIterator * mIterator;
+};
 
 using Protocols::InteractionModel::Status;
 
-InteractionModelEngine sInteractionModelEngine;
+Global<InteractionModelEngine> sInteractionModelEngine;
 
-InteractionModelEngine::InteractionModelEngine() {}
+InteractionModelEngine::InteractionModelEngine() : mReportingEngine(this) {}
 
 InteractionModelEngine * InteractionModelEngine::GetInstance()
 {
-    return &sInteractionModelEngine;
+    return &sInteractionModelEngine.get();
 }
 
 CHIP_ERROR InteractionModelEngine::Init(Messaging::ExchangeManager * apExchangeMgr, FabricTable * apFabricTable,
-                                        CASESessionManager * apCASESessionMgr)
+                                        reporting::ReportScheduler * reportScheduler, CASESessionManager * apCASESessionMgr,
+                                        SubscriptionResumptionStorage * subscriptionResumptionStorage,
+                                        EventManagement * eventManagement)
 {
     VerifyOrReturnError(apFabricTable != nullptr, CHIP_ERROR_INVALID_ARGUMENT);
     VerifyOrReturnError(apExchangeMgr != nullptr, CHIP_ERROR_INVALID_ARGUMENT);
+    VerifyOrReturnError(reportScheduler != nullptr, CHIP_ERROR_INVALID_ARGUMENT);
 
-    mpExchangeMgr    = apExchangeMgr;
-    mpFabricTable    = apFabricTable;
-    mpCASESessionMgr = apCASESessionMgr;
+    mState                          = State::kInitializing;
+    mpExchangeMgr                   = apExchangeMgr;
+    mpFabricTable                   = apFabricTable;
+    mpCASESessionMgr                = apCASESessionMgr;
+    mpSubscriptionResumptionStorage = subscriptionResumptionStorage;
+    mReportScheduler                = reportScheduler;
 
     ReturnErrorOnFailure(mpFabricTable->AddFabricDelegate(this));
     ReturnErrorOnFailure(mpExchangeMgr->RegisterUnsolicitedMessageHandlerForProtocol(Protocols::InteractionModel::Id, this));
 
-    mReportingEngine.Init();
-    mMagic++;
+    mReportingEngine.Init((eventManagement != nullptr) ? eventManagement : &EventManagement::GetInstance());
 
     StatusIB::RegisterErrorFormatter();
 
+    mState = State::kInitialized;
     return CHIP_NO_ERROR;
 }
 
 void InteractionModelEngine::Shutdown()
 {
-    CommandHandlerInterface * handlerIter = mCommandHandlerList;
+    VerifyOrReturn(State::kUninitialized != mState);
 
+    mpExchangeMgr->GetSessionManager()->SystemLayer()->CancelTimer(ResumeSubscriptionsTimerCallback, this);
+
+    // TODO: individual object clears the entire command handler interface registry.
+    //       This may not be expected as IME does NOT own the command handler interface registry.
     //
-    // Walk our list of command handlers and de-register them, before finally
-    // nulling out the list entirely.
-    //
-    while (handlerIter)
-    {
-        CommandHandlerInterface * nextHandler = handlerIter->GetNext();
-        handlerIter->SetNext(nullptr);
-        handlerIter = nextHandler;
-    }
-
-    mCommandHandlerList = nullptr;
-
-    // Increase magic number to invalidate all Handle-s.
-    mMagic++;
-
-    mCommandHandlerObjs.ReleaseAll();
+    //       This is to be cleaned up once InteractionModelEngine maintains a data model fully and
+    //       the code-generation model can do its clear in its shutdown method.
+    CommandHandlerInterfaceRegistry::Instance().UnregisterAllHandlers();
+    mCommandResponderObjs.ReleaseAll();
 
     mTimedHandlers.ForEachActiveObject([this](TimedHandler * obj) -> Loop {
         mpExchangeMgr->CloseAllContextsForDelegate(obj);
@@ -101,6 +200,7 @@ void InteractionModelEngine::Shutdown()
 
     mReadHandlers.ReleaseAll();
 
+#if CHIP_CONFIG_ENABLE_READ_CLIENT
     // Shut down any subscription clients that are still around.  They won't be
     // able to work after this point anyway, since we're about to drop our refs
     // to them.
@@ -127,10 +227,14 @@ void InteractionModelEngine::Shutdown()
     // After that, we just null out our tracker.
     //
     mpActiveReadClientList = nullptr;
+#endif // CHIP_CONFIG_ENABLE_READ_CLIENT
 
     for (auto & writeHandler : mWriteHandlers)
     {
-        writeHandler.Abort();
+        if (!writeHandler.IsFree())
+        {
+            writeHandler.Close();
+        }
     }
 
     mReportingEngine.Shutdown();
@@ -148,6 +252,8 @@ void InteractionModelEngine::Shutdown()
     //
     // mpFabricTable    = nullptr;
     // mpExchangeMgr    = nullptr;
+
+    mState = State::kUninitialized;
 }
 
 uint32_t InteractionModelEngine::GetNumActiveReadHandlers() const
@@ -244,16 +350,21 @@ uint32_t InteractionModelEngine::GetNumActiveWriteHandlers() const
     return numActive;
 }
 
+#if CHIP_CONFIG_ENABLE_READ_CLIENT
 CHIP_ERROR InteractionModelEngine::ShutdownSubscription(const ScopedNodeId & aPeerNodeId, SubscriptionId aSubscriptionId)
 {
-    for (auto * readClient = mpActiveReadClientList; readClient != nullptr; readClient = readClient->GetNextClient())
+    assertChipStackLockedByCurrentThread();
+    for (auto * readClient = mpActiveReadClientList; readClient != nullptr;)
     {
+        // Grab the next client now, because we might be about to delete readClient.
+        auto * nextClient = readClient->GetNextClient();
         if (readClient->IsSubscriptionType() && readClient->IsMatchingSubscriptionId(aSubscriptionId) &&
             readClient->GetFabricIndex() == aPeerNodeId.GetFabricIndex() && readClient->GetPeerNodeId() == aPeerNodeId.GetNodeId())
         {
             readClient->Close(CHIP_NO_ERROR);
             return CHIP_NO_ERROR;
         }
+        readClient = nextClient;
     }
 
     return CHIP_ERROR_KEY_NOT_FOUND;
@@ -261,15 +372,18 @@ CHIP_ERROR InteractionModelEngine::ShutdownSubscription(const ScopedNodeId & aPe
 
 void InteractionModelEngine::ShutdownSubscriptions(FabricIndex aFabricIndex, NodeId aPeerNodeId)
 {
+    assertChipStackLockedByCurrentThread();
     ShutdownMatchingSubscriptions(MakeOptional(aFabricIndex), MakeOptional(aPeerNodeId));
 }
 void InteractionModelEngine::ShutdownSubscriptions(FabricIndex aFabricIndex)
 {
+    assertChipStackLockedByCurrentThread();
     ShutdownMatchingSubscriptions(MakeOptional(aFabricIndex));
 }
 
 void InteractionModelEngine::ShutdownAllSubscriptions()
 {
+    assertChipStackLockedByCurrentThread();
     ShutdownMatchingSubscriptions();
 }
 
@@ -294,10 +408,96 @@ void InteractionModelEngine::ShutdownMatchingSubscriptions(const Optional<Fabric
         readClient = nextClient;
     }
 }
+#endif // CHIP_CONFIG_ENABLE_READ_CLIENT
 
-void InteractionModelEngine::OnDone(CommandHandler & apCommandObj)
+bool InteractionModelEngine::SubjectHasActiveSubscription(FabricIndex aFabricIndex, NodeId subjectID)
 {
-    mCommandHandlerObjs.ReleaseObject(&apCommandObj);
+    bool isActive = false;
+    mReadHandlers.ForEachActiveObject([aFabricIndex, subjectID, &isActive](ReadHandler * handler) {
+        VerifyOrReturnValue(handler->IsType(ReadHandler::InteractionType::Subscribe), Loop::Continue);
+
+        Access::SubjectDescriptor subject = handler->GetSubjectDescriptor();
+        VerifyOrReturnValue(subject.fabricIndex == aFabricIndex, Loop::Continue);
+
+        if (subject.authMode == Access::AuthMode::kCase)
+        {
+            if (subject.cats.CheckSubjectAgainstCATs(subjectID) || subjectID == subject.subject)
+            {
+                isActive = handler->IsActiveSubscription();
+
+                // Exit loop only if isActive is set to true.
+                // Otherwise keep looking for another subscription that could match the subject.
+                VerifyOrReturnValue(!isActive, Loop::Break);
+            }
+        }
+
+        return Loop::Continue;
+    });
+
+    return isActive;
+}
+
+bool InteractionModelEngine::SubjectHasPersistedSubscription(FabricIndex aFabricIndex, NodeId subjectID)
+{
+    bool persistedSubMatches = false;
+
+#if CHIP_CONFIG_PERSIST_SUBSCRIPTIONS
+    auto * iterator = mpSubscriptionResumptionStorage->IterateSubscriptions();
+    // Verify that we were able to allocate an iterator. If not, we are probably currently trying to resubscribe to our persisted
+    // subscriptions. As such, we assume we have a persisted subscription and return true.
+    // If we don't have a persisted subscription for the given fabric index and subjectID, we will send a Check-In message next time
+    // we transition to ActiveMode.
+    VerifyOrReturnValue(iterator, true);
+
+    SubscriptionResumptionStorage::SubscriptionInfo subscriptionInfo;
+    while (iterator->Next(subscriptionInfo))
+    {
+        // TODO(#31873): Persistent subscription only stores the NodeID for now. We cannot check if the CAT matches
+        if (subscriptionInfo.mFabricIndex == aFabricIndex && subscriptionInfo.mNodeId == subjectID)
+        {
+            persistedSubMatches = true;
+            break;
+        }
+    }
+    iterator->Release();
+#endif // CHIP_CONFIG_PERSIST_SUBSCRIPTIONS
+
+    return persistedSubMatches;
+}
+
+bool InteractionModelEngine::FabricHasAtLeastOneActiveSubscription(FabricIndex aFabricIndex)
+{
+    bool hasActiveSubscription = false;
+    mReadHandlers.ForEachActiveObject([aFabricIndex, &hasActiveSubscription](ReadHandler * handler) {
+        VerifyOrReturnValue(handler->IsType(ReadHandler::InteractionType::Subscribe), Loop::Continue);
+
+        Access::SubjectDescriptor subject = handler->GetSubjectDescriptor();
+        VerifyOrReturnValue(subject.fabricIndex == aFabricIndex, Loop::Continue);
+
+        if ((subject.authMode == Access::AuthMode::kCase) && handler->IsActiveSubscription())
+        {
+            // On first subscription found for fabric, we can immediately stop checking.
+            hasActiveSubscription = true;
+            return Loop::Break;
+        }
+
+        return Loop::Continue;
+    });
+
+    return hasActiveSubscription;
+}
+
+void InteractionModelEngine::OnDone(CommandResponseSender & apResponderObj)
+{
+    mCommandResponderObjs.ReleaseObject(&apResponderObj);
+}
+
+// TODO(#30453): Follow up refactor. Remove need for InteractionModelEngine::OnDone(CommandHandlerImpl).
+void InteractionModelEngine::OnDone(CommandHandlerImpl & apCommandObj)
+{
+    // We are no longer expecting to receive this callback. With the introduction of CommandResponseSender, it is now
+    // responsible for receiving this callback.
+    VerifyOrDie(false);
 }
 
 void InteractionModelEngine::OnDone(ReadHandler & apReadObj)
@@ -310,19 +510,52 @@ void InteractionModelEngine::OnDone(ReadHandler & apReadObj)
     mReportingEngine.ResetReadHandlerTracker(&apReadObj);
 
     mReadHandlers.ReleaseObject(&apReadObj);
+    TryToResumeSubscriptions();
+}
+
+void InteractionModelEngine::TryToResumeSubscriptions()
+{
+#if CHIP_CONFIG_PERSIST_SUBSCRIPTIONS && CHIP_CONFIG_SUBSCRIPTION_TIMEOUT_RESUMPTION
+    if (!mSubscriptionResumptionScheduled && HasSubscriptionsToResume())
+    {
+        mSubscriptionResumptionScheduled            = true;
+        auto timeTillNextSubscriptionResumptionSecs = ComputeTimeSecondsTillNextSubscriptionResumption();
+        mpExchangeMgr->GetSessionManager()->SystemLayer()->StartTimer(
+            System::Clock::Seconds32(timeTillNextSubscriptionResumptionSecs), ResumeSubscriptionsTimerCallback, this);
+        mNumSubscriptionResumptionRetries++;
+        ChipLogProgress(InteractionModel, "Schedule subscription resumption when failing to establish session, Retries: %" PRIu32,
+                        mNumSubscriptionResumptionRetries);
+    }
+#endif // CHIP_CONFIG_PERSIST_SUBSCRIPTIONS && CHIP_CONFIG_SUBSCRIPTION_TIMEOUT_RESUMPTION
 }
 
 Status InteractionModelEngine::OnInvokeCommandRequest(Messaging::ExchangeContext * apExchangeContext,
                                                       const PayloadHeader & aPayloadHeader, System::PacketBufferHandle && aPayload,
                                                       bool aIsTimedInvoke)
 {
-    CommandHandler * commandHandler = mCommandHandlerObjs.CreateObject(this);
-    if (commandHandler == nullptr)
+    // TODO(#30453): Refactor CommandResponseSender's constructor to accept an exchange context parameter.
+    CommandResponseSender * commandResponder = mCommandResponderObjs.CreateObject(this, this);
+    if (commandResponder == nullptr)
     {
         ChipLogProgress(InteractionModel, "no resource for Invoke interaction");
         return Status::Busy;
     }
-    commandHandler->OnInvokeCommandRequest(apExchangeContext, aPayloadHeader, std::move(aPayload), aIsTimedInvoke);
+    CHIP_FAULT_INJECT(FaultInjection::kFault_IMInvoke_SeparateResponses,
+                      commandResponder->TestOnlyInvokeCommandRequestWithFaultsInjected(
+                          apExchangeContext, std::move(aPayload), aIsTimedInvoke,
+                          CommandHandlerImpl::NlFaultInjectionType::SeparateResponseMessages);
+                      return Status::Success;);
+    CHIP_FAULT_INJECT(FaultInjection::kFault_IMInvoke_SeparateResponsesInvertResponseOrder,
+                      commandResponder->TestOnlyInvokeCommandRequestWithFaultsInjected(
+                          apExchangeContext, std::move(aPayload), aIsTimedInvoke,
+                          CommandHandlerImpl::NlFaultInjectionType::SeparateResponseMessagesAndInvertedResponseOrder);
+                      return Status::Success;);
+    CHIP_FAULT_INJECT(
+        FaultInjection::kFault_IMInvoke_SkipSecondResponse,
+        commandResponder->TestOnlyInvokeCommandRequestWithFaultsInjected(
+            apExchangeContext, std::move(aPayload), aIsTimedInvoke, CommandHandlerImpl::NlFaultInjectionType::SkipSecondResponse);
+        return Status::Success;);
+    commandResponder->OnInvokeCommandRequest(apExchangeContext, std::move(aPayload), aIsTimedInvoke);
     return Status::Success;
 }
 
@@ -337,31 +570,34 @@ CHIP_ERROR InteractionModelEngine::ParseAttributePaths(const Access::SubjectDesc
     aHasValidAttributePath       = false;
     aRequestedAttributePathCount = 0;
 
-    while (CHIP_NO_ERROR == (err = pathReader.Next()))
+    while (CHIP_NO_ERROR == (err = pathReader.Next(TLV::AnonymousTag())))
     {
-        VerifyOrReturnError(TLV::AnonymousTag() == pathReader.GetTag(), CHIP_ERROR_INVALID_TLV_TAG);
-
         AttributePathIB::Parser path;
         //
         // We create an iterator to point to a single item object list that tracks the path we just parsed.
         // This avoids the 'parse all paths' approach that is employed in ReadHandler since we want to
         // avoid allocating out of the path store during this minimal initial processing stage.
         //
-        ObjectList<AttributePathParams> paramsList;
+        SingleLinkedListNode<AttributePathParams> paramsList;
 
         ReturnErrorOnFailure(path.Init(pathReader));
         ReturnErrorOnFailure(path.ParsePath(paramsList.mValue));
 
         if (paramsList.mValue.IsWildcardPath())
         {
-            AttributePathExpandIterator pathIterator(&paramsList);
+
+            auto state = AttributePathExpandIterator::Position::StartIterating(&paramsList);
+            AttributePathExpandIterator pathIterator(GetDataModelProvider(), state);
             ConcreteAttributePath readPath;
 
             // The definition of "valid path" is "path exists and ACL allows access". The "path exists" part is handled by
             // AttributePathExpandIterator. So we just need to check the ACL bits.
-            for (; pathIterator.Get(readPath); pathIterator.Next())
+            while (pathIterator.Next(readPath))
             {
-                Access::RequestPath requestPath{ .cluster = readPath.mClusterId, .endpoint = readPath.mEndpointId };
+                // leave requestPath.entityId optional value unset to indicate wildcard
+                Access::RequestPath requestPath{ .cluster     = readPath.mClusterId,
+                                                 .endpoint    = readPath.mEndpointId,
+                                                 .requestType = Access::RequestType::kAttributeReadRequest };
                 err = Access::GetAccessControl().Check(aSubjectDescriptor, requestPath,
                                                        RequiredPrivilege::ForReadAttribute(readPath));
                 if (err == CHIP_NO_ERROR)
@@ -375,9 +611,13 @@ CHIP_ERROR InteractionModelEngine::ParseAttributePaths(const Access::SubjectDesc
         {
             ConcreteAttributePath concretePath(paramsList.mValue.mEndpointId, paramsList.mValue.mClusterId,
                                                paramsList.mValue.mAttributeId);
-            if (ConcreteAttributePathExists(concretePath))
+
+            if (IsExistentAttributePath(concretePath))
             {
-                Access::RequestPath requestPath{ .cluster = concretePath.mClusterId, .endpoint = concretePath.mEndpointId };
+                Access::RequestPath requestPath{ .cluster     = concretePath.mClusterId,
+                                                 .endpoint    = concretePath.mEndpointId,
+                                                 .requestType = Access::RequestType::kAttributeReadRequest,
+                                                 .entityId    = paramsList.mValue.mAttributeId };
 
                 err = Access::GetAccessControl().Check(aSubjectDescriptor, requestPath,
                                                        RequiredPrivilege::ForReadAttribute(concretePath));
@@ -389,6 +629,46 @@ CHIP_ERROR InteractionModelEngine::ParseAttributePaths(const Access::SubjectDesc
         }
 
         aRequestedAttributePathCount++;
+    }
+
+    if (err == CHIP_ERROR_END_OF_TLV)
+    {
+        err = CHIP_NO_ERROR;
+    }
+
+    return err;
+}
+
+CHIP_ERROR InteractionModelEngine::ParseEventPaths(const Access::SubjectDescriptor & aSubjectDescriptor,
+                                                   EventPathIBs::Parser & aEventPathListParser, bool & aHasValidEventPath,
+                                                   size_t & aRequestedEventPathCount)
+{
+    TLV::TLVReader pathReader;
+    aEventPathListParser.GetReader(&pathReader);
+    CHIP_ERROR err = CHIP_NO_ERROR;
+
+    aHasValidEventPath       = false;
+    aRequestedEventPathCount = 0;
+
+    while (CHIP_NO_ERROR == (err = pathReader.Next(TLV::AnonymousTag())))
+    {
+        EventPathIB::Parser path;
+        ReturnErrorOnFailure(path.Init(pathReader));
+
+        EventPathParams eventPath;
+        ReturnErrorOnFailure(path.ParsePath(eventPath));
+
+        ++aRequestedEventPathCount;
+
+        if (aHasValidEventPath)
+        {
+            // Can skip all the rest of the checking.
+            continue;
+        }
+
+        // The definition of "valid path" is "path exists and ACL allows
+        // access".  We need to do some expansion of wildcards to handle that.
+        aHasValidEventPath = MayHaveAccessibleEventPath(mDataModelProvider, eventPath, aSubjectDescriptor);
     }
 
     if (err == CHIP_ERROR_END_OF_TLV)
@@ -427,6 +707,10 @@ Protocols::InteractionModel::Status InteractionModelEngine::OnReadInitialRequest
         SubscribeRequestMessage::Parser subscribeRequestParser;
         VerifyOrReturnError(subscribeRequestParser.Init(reader) == CHIP_NO_ERROR, Status::InvalidAction);
 
+#if CHIP_CONFIG_IM_PRETTY_PRINT
+        subscribeRequestParser.PrettyPrint();
+#endif
+
         VerifyOrReturnError(subscribeRequestParser.GetKeepSubscriptions(&keepExistingSubscriptions) == CHIP_NO_ERROR,
                             Status::InvalidAction);
         if (!keepExistingSubscriptions)
@@ -435,18 +719,51 @@ Protocols::InteractionModel::Status InteractionModelEngine::OnReadInitialRequest
             // Walk through all existing subscriptions and shut down those whose subscriber matches
             // that which just came in.
             //
-            mReadHandlers.ForEachActiveObject([this, apExchangeContext](ReadHandler * handler) {
+            mReadHandlers.ForEachActiveObject([apExchangeContext](ReadHandler * handler) {
                 if (handler->IsFromSubscriber(*apExchangeContext))
                 {
                     ChipLogProgress(InteractionModel,
-                                    "Deleting previous subscription from NodeId: " ChipLogFormatX64 ", FabricIndex: %u",
+                                    "Deleting previous active subscription from NodeId: " ChipLogFormatX64 ", FabricIndex: %u",
                                     ChipLogValueX64(apExchangeContext->GetSessionHandle()->AsSecureSession()->GetPeerNodeId()),
                                     apExchangeContext->GetSessionHandle()->GetFabricIndex());
-                    mReadHandlers.ReleaseObject(handler);
+                    handler->Close();
                 }
 
                 return Loop::Continue;
             });
+
+#if CHIP_CONFIG_PERSIST_SUBSCRIPTIONS && CHIP_CONFIG_SUBSCRIPTION_TIMEOUT_RESUMPTION
+            if (mpSubscriptionResumptionStorage != nullptr)
+            {
+                SubscriptionResumptionStorage::SubscriptionInfo subscriptionInfo;
+                auto * iterator = mpSubscriptionResumptionStorage->IterateSubscriptions();
+
+                while (iterator->Next(subscriptionInfo))
+                {
+                    if (subscriptionInfo.mNodeId == apExchangeContext->GetSessionHandle()->AsSecureSession()->GetPeerNodeId() &&
+                        subscriptionInfo.mFabricIndex == apExchangeContext->GetSessionHandle()->GetFabricIndex())
+                    {
+                        ChipLogProgress(InteractionModel,
+                                        "Deleting previous non-active subscription from NodeId: " ChipLogFormatX64
+                                        ", FabricIndex: %u, SubscriptionId: 0x%" PRIx32,
+                                        ChipLogValueX64(subscriptionInfo.mNodeId), subscriptionInfo.mFabricIndex,
+                                        subscriptionInfo.mSubscriptionId);
+                        mpSubscriptionResumptionStorage->Delete(subscriptionInfo.mNodeId, subscriptionInfo.mFabricIndex,
+                                                                subscriptionInfo.mSubscriptionId);
+                    }
+                }
+                iterator->Release();
+
+                // If we have no subscriptions to resume, we can cancel the timer, which might be armed
+                // if one of the subscriptions we deleted was about to be resumed.
+                if (!HasSubscriptionsToResume())
+                {
+                    mpExchangeMgr->GetSessionManager()->SystemLayer()->CancelTimer(ResumeSubscriptionsTimerCallback, this);
+                    mSubscriptionResumptionScheduled  = false;
+                    mNumSubscriptionResumptionRetries = 0;
+                }
+            }
+#endif // CHIP_CONFIG_SUBSCRIPTION_TIMEOUT_RESUMPTION && CHIP_CONFIG_SUBSCRIPTION_TIMEOUT_RESUMPTION
         }
 
         {
@@ -454,13 +771,14 @@ Protocols::InteractionModel::Status InteractionModelEngine::OnReadInitialRequest
             size_t requestedEventPathCount     = 0;
             AttributePathIBs::Parser attributePathListParser;
             bool hasValidAttributePath = false;
+            bool mayHaveValidEventPath = false;
 
             CHIP_ERROR err = subscribeRequestParser.GetAttributeRequests(&attributePathListParser);
             if (err == CHIP_NO_ERROR)
             {
                 auto subjectDescriptor = apExchangeContext->GetSessionHandle()->AsSecureSession()->GetSubjectDescriptor();
                 err                    = ParseAttributePaths(subjectDescriptor, attributePathListParser, hasValidAttributePath,
-                                          requestedAttributePathCount);
+                                                             requestedAttributePathCount);
                 if (err != CHIP_NO_ERROR)
                 {
                     return Status::InvalidAction;
@@ -471,14 +789,16 @@ Protocols::InteractionModel::Status InteractionModelEngine::OnReadInitialRequest
                 return Status::InvalidAction;
             }
 
-            EventPathIBs::Parser eventpathListParser;
-            err = subscribeRequestParser.GetEventRequests(&eventpathListParser);
+            EventPathIBs::Parser eventPathListParser;
+            err = subscribeRequestParser.GetEventRequests(&eventPathListParser);
             if (err == CHIP_NO_ERROR)
             {
-                TLV::TLVReader pathReader;
-                eventpathListParser.GetReader(&pathReader);
-                ReturnErrorCodeIf(TLV::Utilities::Count(pathReader, requestedEventPathCount, false) != CHIP_NO_ERROR,
-                                  Status::InvalidAction);
+                auto subjectDescriptor = apExchangeContext->GetSessionHandle()->AsSecureSession()->GetSubjectDescriptor();
+                err = ParseEventPaths(subjectDescriptor, eventPathListParser, mayHaveValidEventPath, requestedEventPathCount);
+                if (err != CHIP_NO_ERROR)
+                {
+                    return Status::InvalidAction;
+                }
             }
             else if (err != CHIP_ERROR_END_OF_TLV)
             {
@@ -494,12 +814,7 @@ Protocols::InteractionModel::Status InteractionModelEngine::OnReadInitialRequest
                 return Status::InvalidAction;
             }
 
-            //
-            // TODO: We don't have an easy way to do a similar 'path expansion' for events to deduce
-            // access so for now, assume that the presence of any path in the event list means they
-            // might have some access to those events.
-            //
-            if (!hasValidAttributePath && requestedEventPathCount == 0)
+            if (!hasValidAttributePath && !mayHaveValidEventPath)
             {
                 ChipLogError(InteractionModel,
                              "Subscription from [%u:" ChipLogFormatX64 "] has no access at all. Rejecting request.",
@@ -524,6 +839,9 @@ Protocols::InteractionModel::Status InteractionModelEngine::OnReadInitialRequest
         ReadRequestMessage::Parser readRequestParser;
         VerifyOrReturnError(readRequestParser.Init(reader) == CHIP_NO_ERROR, Status::InvalidAction);
 
+#if CHIP_CONFIG_IM_PRETTY_PRINT
+        readRequestParser.PrettyPrint();
+#endif
         {
             size_t requestedAttributePathCount = 0;
             size_t requestedEventPathCount     = 0;
@@ -533,8 +851,8 @@ Protocols::InteractionModel::Status InteractionModelEngine::OnReadInitialRequest
             {
                 TLV::TLVReader pathReader;
                 attributePathListParser.GetReader(&pathReader);
-                ReturnErrorCodeIf(TLV::Utilities::Count(pathReader, requestedAttributePathCount, false) != CHIP_NO_ERROR,
-                                  Status::InvalidAction);
+                VerifyOrReturnError(TLV::Utilities::Count(pathReader, requestedAttributePathCount, false) == CHIP_NO_ERROR,
+                                    Status::InvalidAction);
             }
             else if (err != CHIP_ERROR_END_OF_TLV)
             {
@@ -546,8 +864,8 @@ Protocols::InteractionModel::Status InteractionModelEngine::OnReadInitialRequest
             {
                 TLV::TLVReader pathReader;
                 eventpathListParser.GetReader(&pathReader);
-                ReturnErrorCodeIf(TLV::Utilities::Count(pathReader, requestedEventPathCount, false) != CHIP_NO_ERROR,
-                                  Status::InvalidAction);
+                VerifyOrReturnError(TLV::Utilities::Count(pathReader, requestedEventPathCount, false) == CHIP_NO_ERROR,
+                                    Status::InvalidAction);
             }
             else if (err != CHIP_ERROR_END_OF_TLV)
             {
@@ -566,7 +884,7 @@ Protocols::InteractionModel::Status InteractionModelEngine::OnReadInitialRequest
 
     // We have already reserved enough resources for read requests, and have granted enough resources for current subscriptions, so
     // we should be able to allocate resources requested by this request.
-    ReadHandler * handler = mReadHandlers.CreateObject(*this, apExchangeContext, aInteractionType);
+    ReadHandler * handler = mReadHandlers.CreateObject(*this, apExchangeContext, aInteractionType, mReportScheduler);
     if (handler == nullptr)
     {
         ChipLogProgress(InteractionModel, "no resource for %s interaction",
@@ -590,7 +908,7 @@ Protocols::InteractionModel::Status InteractionModelEngine::OnWriteRequest(Messa
     {
         if (writeHandler.IsFree())
         {
-            VerifyOrReturnError(writeHandler.Init() == CHIP_NO_ERROR, Status::Busy);
+            VerifyOrReturnError(writeHandler.Init(GetDataModelProvider(), this) == CHIP_NO_ERROR, Status::Busy);
             return writeHandler.OnWriteRequest(apExchangeContext, std::move(aPayload), aIsTimedWrite);
         }
     }
@@ -602,7 +920,7 @@ CHIP_ERROR InteractionModelEngine::OnTimedRequest(Messaging::ExchangeContext * a
                                                   const PayloadHeader & aPayloadHeader, System::PacketBufferHandle && aPayload,
                                                   Protocols::InteractionModel::Status & aStatus)
 {
-    TimedHandler * handler = mTimedHandlers.CreateObject();
+    TimedHandler * handler = mTimedHandlers.CreateObject(this);
     if (handler == nullptr)
     {
         ChipLogProgress(InteractionModel, "no resource for Timed interaction");
@@ -617,6 +935,7 @@ CHIP_ERROR InteractionModelEngine::OnTimedRequest(Messaging::ExchangeContext * a
     return handler->OnMessageReceived(apExchangeContext, aPayloadHeader, std::move(aPayload));
 }
 
+#if CHIP_CONFIG_ENABLE_READ_CLIENT
 Status InteractionModelEngine::OnUnsolicitedReportData(Messaging::ExchangeContext * apExchangeContext,
                                                        const PayloadHeader & aPayloadHeader, System::PacketBufferHandle && aPayload)
 {
@@ -626,28 +945,53 @@ Status InteractionModelEngine::OnUnsolicitedReportData(Messaging::ExchangeContex
     ReportDataMessage::Parser report;
     VerifyOrReturnError(report.Init(reader) == CHIP_NO_ERROR, Status::InvalidAction);
 
+#if CHIP_CONFIG_IM_PRETTY_PRINT
+    report.PrettyPrint();
+#endif
+
     SubscriptionId subscriptionId = 0;
     VerifyOrReturnError(report.GetSubscriptionId(&subscriptionId) == CHIP_NO_ERROR, Status::InvalidAction);
     VerifyOrReturnError(report.ExitContainer() == CHIP_NO_ERROR, Status::InvalidAction);
 
+    ReadClient * foundSubscription = nullptr;
     for (auto * readClient = mpActiveReadClientList; readClient != nullptr; readClient = readClient->GetNextClient())
     {
+        auto peer = apExchangeContext->GetSessionHandle()->GetPeer();
+        if (readClient->GetFabricIndex() != peer.GetFabricIndex() || readClient->GetPeerNodeId() != peer.GetNodeId())
+        {
+            continue;
+        }
+
+        // Notify Subscriptions about incoming communication from node
+        readClient->OnUnsolicitedMessageFromPublisher();
+
         if (!readClient->IsSubscriptionActive())
         {
             continue;
         }
-        auto peer = apExchangeContext->GetSessionHandle()->GetPeer();
-        if (readClient->GetFabricIndex() != peer.GetFabricIndex() || readClient->GetPeerNodeId() != peer.GetNodeId() ||
-            !readClient->IsMatchingSubscriptionId(subscriptionId))
+
+        if (!readClient->IsMatchingSubscriptionId(subscriptionId))
         {
             continue;
         }
-        readClient->OnUnsolicitedReportData(apExchangeContext, std::move(aPayload));
+
+        if (!foundSubscription)
+        {
+            foundSubscription = readClient;
+        }
+    }
+
+    if (foundSubscription)
+    {
+        foundSubscription->OnUnsolicitedReportData(apExchangeContext, std::move(aPayload));
         return Status::Success;
     }
 
+    ChipLogDetail(InteractionModel, "Received report with invalid subscriptionId %" PRIu32, subscriptionId);
+
     return Status::InvalidSubscription;
 }
+#endif // CHIP_CONFIG_ENABLE_READ_CLIENT
 
 CHIP_ERROR InteractionModelEngine::OnUnsolicitedMessageReceived(const PayloadHeader & payloadHeader,
                                                                 ExchangeDelegate *& newDelegate)
@@ -664,6 +1008,9 @@ CHIP_ERROR InteractionModelEngine::OnMessageReceived(Messaging::ExchangeContext 
     using namespace Protocols::InteractionModel;
 
     Protocols::InteractionModel::Status status = Status::Failure;
+
+    // Ensure that DataModel::Provider has access to the exchange the message was received on.
+    CurrentExchangeValueScope scopedExchangeContext(*this, apExchangeContext);
 
     // Group Message can only be an InvokeCommandRequest or WriteRequest
     if (apExchangeContext->IsGroupExchangeContext() &&
@@ -691,10 +1038,12 @@ CHIP_ERROR InteractionModelEngine::OnMessageReceived(Messaging::ExchangeContext 
         status =
             OnReadInitialRequest(apExchangeContext, aPayloadHeader, std::move(aPayload), ReadHandler::InteractionType::Subscribe);
     }
+#if CHIP_CONFIG_ENABLE_READ_CLIENT
     else if (aPayloadHeader.HasMessageType(Protocols::InteractionModel::MsgType::ReportData))
     {
         status = OnUnsolicitedReportData(apExchangeContext, aPayloadHeader, std::move(aPayload));
     }
+#endif // CHIP_CONFIG_ENABLE_READ_CLIENT
     else if (aPayloadHeader.HasMessageType(MsgType::TimedRequest))
     {
         OnTimedRequest(apExchangeContext, aPayloadHeader, std::move(aPayload), status);
@@ -719,11 +1068,44 @@ void InteractionModelEngine::OnResponseTimeout(Messaging::ExchangeContext * ec)
                  ChipLogValueExchange(ec));
 }
 
+#if CHIP_CONFIG_ENABLE_READ_CLIENT
+void InteractionModelEngine::OnActiveModeNotification(ScopedNodeId aPeer)
+{
+    for (ReadClient * pListItem = mpActiveReadClientList; pListItem != nullptr;)
+    {
+        auto pNextItem = pListItem->GetNextClient();
+        // It is possible that pListItem is destroyed by the app in OnActiveModeNotification.
+        // Get the next item before invoking `OnActiveModeNotification`.
+        if (ScopedNodeId(pListItem->GetPeerNodeId(), pListItem->GetFabricIndex()) == aPeer)
+        {
+            pListItem->OnActiveModeNotification();
+        }
+        pListItem = pNextItem;
+    }
+}
+
+void InteractionModelEngine::OnPeerTypeChange(ScopedNodeId aPeer, ReadClient::PeerType aType)
+{
+    // TODO: Follow up to use a iterator function to avoid copy/paste here.
+    for (ReadClient * pListItem = mpActiveReadClientList; pListItem != nullptr;)
+    {
+        // It is possible that pListItem is destroyed by the app in OnPeerTypeChange.
+        // Get the next item before invoking `OnPeerTypeChange`.
+        auto pNextItem = pListItem->GetNextClient();
+        if (ScopedNodeId(pListItem->GetPeerNodeId(), pListItem->GetFabricIndex()) == aPeer)
+        {
+            pListItem->OnPeerTypeChange(aType);
+        }
+        pListItem = pNextItem;
+    }
+}
+
 void InteractionModelEngine::AddReadClient(ReadClient * apReadClient)
 {
     apReadClient->SetNextClient(mpActiveReadClientList);
     mpActiveReadClientList = apReadClient;
 }
+#endif // CHIP_CONFIG_ENABLE_READ_CLIENT
 
 bool InteractionModelEngine::TrimFabricForSubscriptions(FabricIndex aFabricIndex, bool aForceEvict)
 {
@@ -1121,6 +1503,7 @@ Protocols::InteractionModel::Status InteractionModelEngine::EnsureResourceForRea
     return Status::Success;
 }
 
+#if CHIP_CONFIG_ENABLE_READ_CLIENT
 void InteractionModelEngine::RemoveReadClient(ReadClient * apReadClient)
 {
     ReadClient * pPrevListItem = nullptr;
@@ -1179,6 +1562,7 @@ bool InteractionModelEngine::InActiveReadClientList(ReadClient * apReadClient)
 
     return false;
 }
+#endif // CHIP_CONFIG_ENABLE_READ_CLIENT
 
 bool InteractionModelEngine::HasConflictWriteRequests(const WriteHandler * apWriteHandler, const ConcreteAttributePath & aPath)
 {
@@ -1196,12 +1580,12 @@ bool InteractionModelEngine::HasConflictWriteRequests(const WriteHandler * apWri
     return false;
 }
 
-void InteractionModelEngine::ReleaseAttributePathList(ObjectList<AttributePathParams> *& aAttributePathList)
+void InteractionModelEngine::ReleaseAttributePathList(SingleLinkedListNode<AttributePathParams> *& aAttributePathList)
 {
     ReleasePool(aAttributePathList, mAttributePathPool);
 }
 
-CHIP_ERROR InteractionModelEngine::PushFrontAttributePathList(ObjectList<AttributePathParams> *& aAttributePathList,
+CHIP_ERROR InteractionModelEngine::PushFrontAttributePathList(SingleLinkedListNode<AttributePathParams> *& aAttributePathList,
                                                               AttributePathParams & aAttributePath)
 {
     CHIP_ERROR err = PushFront(aAttributePathList, aAttributePath, mAttributePathPool);
@@ -1213,17 +1597,25 @@ CHIP_ERROR InteractionModelEngine::PushFrontAttributePathList(ObjectList<Attribu
     return err;
 }
 
-void InteractionModelEngine::RemoveDuplicateConcreteAttributePath(ObjectList<AttributePathParams> *& aAttributePaths)
+bool InteractionModelEngine::IsExistentAttributePath(const ConcreteAttributePath & path)
 {
-    ObjectList<AttributePathParams> * prev = nullptr;
-    auto * path1                           = aAttributePaths;
+    DataModel::AttributeFinder finder(mDataModelProvider);
+    return finder.Find(path).has_value();
+}
+
+void InteractionModelEngine::RemoveDuplicateConcreteAttributePath(SingleLinkedListNode<AttributePathParams> *& aAttributePaths)
+{
+    SingleLinkedListNode<AttributePathParams> * prev = nullptr;
+    auto * path1                                     = aAttributePaths;
 
     while (path1 != nullptr)
     {
         bool duplicate = false;
+
         // skip all wildcard paths and invalid concrete attribute
         if (path1->mValue.IsWildcardPath() ||
-            !emberAfContainsAttribute(path1->mValue.mEndpointId, path1->mValue.mClusterId, path1->mValue.mAttributeId))
+            !IsExistentAttributePath(
+                ConcreteAttributePath(path1->mValue.mEndpointId, path1->mValue.mClusterId, path1->mValue.mAttributeId)))
         {
             prev  = path1;
             path1 = path1->mpNext;
@@ -1268,12 +1660,12 @@ void InteractionModelEngine::RemoveDuplicateConcreteAttributePath(ObjectList<Att
     }
 }
 
-void InteractionModelEngine::ReleaseEventPathList(ObjectList<EventPathParams> *& aEventPathList)
+void InteractionModelEngine::ReleaseEventPathList(SingleLinkedListNode<EventPathParams> *& aEventPathList)
 {
     ReleasePool(aEventPathList, mEventPathPool);
 }
 
-CHIP_ERROR InteractionModelEngine::PushFrontEventPathParamsList(ObjectList<EventPathParams> *& aEventPathList,
+CHIP_ERROR InteractionModelEngine::PushFrontEventPathParamsList(SingleLinkedListNode<EventPathParams> *& aEventPathList,
                                                                 EventPathParams & aEventPath)
 {
     CHIP_ERROR err = PushFront(aEventPathList, aEventPath, mEventPathPool);
@@ -1285,12 +1677,12 @@ CHIP_ERROR InteractionModelEngine::PushFrontEventPathParamsList(ObjectList<Event
     return err;
 }
 
-void InteractionModelEngine::ReleaseDataVersionFilterList(ObjectList<DataVersionFilter> *& aDataVersionFilterList)
+void InteractionModelEngine::ReleaseDataVersionFilterList(SingleLinkedListNode<DataVersionFilter> *& aDataVersionFilterList)
 {
     ReleasePool(aDataVersionFilterList, mDataVersionFilterPool);
 }
 
-CHIP_ERROR InteractionModelEngine::PushFrontDataVersionFilterList(ObjectList<DataVersionFilter> *& aDataVersionFilterList,
+CHIP_ERROR InteractionModelEngine::PushFrontDataVersionFilterList(SingleLinkedListNode<DataVersionFilter> *& aDataVersionFilterList,
                                                                   DataVersionFilter & aDataVersionFilter)
 {
     CHIP_ERROR err = PushFront(aDataVersionFilterList, aDataVersionFilter, mDataVersionFilterPool);
@@ -1303,12 +1695,13 @@ CHIP_ERROR InteractionModelEngine::PushFrontDataVersionFilterList(ObjectList<Dat
 }
 
 template <typename T, size_t N>
-void InteractionModelEngine::ReleasePool(ObjectList<T> *& aObjectList, ObjectPool<ObjectList<T>, N> & aObjectPool)
+void InteractionModelEngine::ReleasePool(SingleLinkedListNode<T> *& aObjectList,
+                                         ObjectPool<SingleLinkedListNode<T>, N> & aObjectPool)
 {
-    ObjectList<T> * current = aObjectList;
+    SingleLinkedListNode<T> * current = aObjectList;
     while (current != nullptr)
     {
-        ObjectList<T> * nextObject = current->mpNext;
+        SingleLinkedListNode<T> * nextObject = current->mpNext;
         aObjectPool.ReleaseObject(current);
         current = nextObject;
     }
@@ -1317,9 +1710,10 @@ void InteractionModelEngine::ReleasePool(ObjectList<T> *& aObjectList, ObjectPoo
 }
 
 template <typename T, size_t N>
-CHIP_ERROR InteractionModelEngine::PushFront(ObjectList<T> *& aObjectList, T & aData, ObjectPool<ObjectList<T>, N> & aObjectPool)
+CHIP_ERROR InteractionModelEngine::PushFront(SingleLinkedListNode<T> *& aObjectList, T & aData,
+                                             ObjectPool<SingleLinkedListNode<T>, N> & aObjectPool)
 {
-    ObjectList<T> * object = aObjectPool.CreateObject();
+    SingleLinkedListNode<T> * object = aObjectPool.CreateObject();
     if (object == nullptr)
     {
         return CHIP_ERROR_NO_MEMORY;
@@ -1330,118 +1724,166 @@ CHIP_ERROR InteractionModelEngine::PushFront(ObjectList<T> *& aObjectList, T & a
     return CHIP_NO_ERROR;
 }
 
-void InteractionModelEngine::DispatchCommand(CommandHandler & apCommandObj, const ConcreteCommandPath & aCommandPath,
+void InteractionModelEngine::DispatchCommand(CommandHandlerImpl & apCommandObj, const ConcreteCommandPath & aCommandPath,
                                              TLV::TLVReader & apPayload)
 {
-    CommandHandlerInterface * handler = FindCommandHandler(aCommandPath.mEndpointId, aCommandPath.mClusterId);
+    Access::SubjectDescriptor subjectDescriptor = apCommandObj.GetSubjectDescriptor();
 
-    if (handler)
+    DataModel::InvokeRequest request;
+    request.path = aCommandPath;
+    request.invokeFlags.Set(DataModel::InvokeFlags::kTimed, apCommandObj.IsTimedInvoke());
+    request.subjectDescriptor = &subjectDescriptor;
+
+    std::optional<DataModel::ActionReturnStatus> status = GetDataModelProvider()->InvokeCommand(request, apPayload, &apCommandObj);
+
+    // Provider indicates that handler status or data was already set (or will be set asynchronously) by
+    // returning std::nullopt. If any other value is returned, it is requesting that a status is set. This
+    // includes CHIP_NO_ERROR: in this case CHIP_NO_ERROR would mean set a `status success on the command`
+    if (status.has_value())
     {
-        CommandHandlerInterface::HandlerContext context(apCommandObj, aCommandPath, apPayload);
-        handler->InvokeCommand(context);
-
-        //
-        // If the command was handled, don't proceed any further and return successfully.
-        //
-        if (context.mCommandHandled)
-        {
-            return;
-        }
-    }
-
-    DispatchSingleClusterCommand(aCommandPath, apPayload, &apCommandObj);
-}
-
-Protocols::InteractionModel::Status InteractionModelEngine::CommandExists(const ConcreteCommandPath & aCommandPath)
-{
-    return ServerClusterCommandExists(aCommandPath);
-}
-
-CHIP_ERROR InteractionModelEngine::RegisterCommandHandler(CommandHandlerInterface * handler)
-{
-    VerifyOrReturnError(handler != nullptr, CHIP_ERROR_INVALID_ARGUMENT);
-
-    for (auto * cur = mCommandHandlerList; cur; cur = cur->GetNext())
-    {
-        if (cur->Matches(*handler))
-        {
-            ChipLogError(InteractionModel, "Duplicate command handler registration failed");
-            return CHIP_ERROR_INCORRECT_STATE;
-        }
-    }
-
-    handler->SetNext(mCommandHandlerList);
-    mCommandHandlerList = handler;
-
-    return CHIP_NO_ERROR;
-}
-
-void InteractionModelEngine::UnregisterCommandHandlers(EndpointId endpointId)
-{
-    CommandHandlerInterface * prev = nullptr;
-
-    for (auto * cur = mCommandHandlerList; cur; cur = cur->GetNext())
-    {
-        if (cur->MatchesEndpoint(endpointId))
-        {
-            if (prev == nullptr)
-            {
-                mCommandHandlerList = cur->GetNext();
-            }
-            else
-            {
-                prev->SetNext(cur->GetNext());
-            }
-
-            cur->SetNext(nullptr);
-        }
-        else
-        {
-            prev = cur;
-        }
+        apCommandObj.AddStatus(aCommandPath, status->GetStatusCode());
     }
 }
 
-CHIP_ERROR InteractionModelEngine::UnregisterCommandHandler(CommandHandlerInterface * handler)
+Protocols::InteractionModel::Status InteractionModelEngine::ValidateCommandCanBeDispatched(const DataModel::InvokeRequest & request)
 {
-    VerifyOrReturnError(handler != nullptr, CHIP_ERROR_INVALID_ARGUMENT);
-    CommandHandlerInterface * prev = nullptr;
 
-    for (auto * cur = mCommandHandlerList; cur; cur = cur->GetNext())
+    DataModel::AcceptedCommandEntry acceptedCommandEntry;
+
+    Status status = CheckCommandExistence(request.path, acceptedCommandEntry);
+
+    if (status != Status::Success)
     {
-        if (cur->Matches(*handler))
-        {
-            if (prev == nullptr)
-            {
-                mCommandHandlerList = cur->GetNext();
-            }
-            else
-            {
-                prev->SetNext(cur->GetNext());
-            }
-
-            cur->SetNext(nullptr);
-
-            return CHIP_NO_ERROR;
-        }
-
-        prev = cur;
+        ChipLogDetail(DataManagement, "No command " ChipLogFormatMEI " in Cluster " ChipLogFormatMEI " on Endpoint %u",
+                      ChipLogValueMEI(request.path.mCommandId), ChipLogValueMEI(request.path.mClusterId), request.path.mEndpointId);
+        return status;
     }
 
-    return CHIP_ERROR_KEY_NOT_FOUND;
+    status = CheckCommandAccess(request, acceptedCommandEntry);
+    VerifyOrReturnValue(status == Status::Success, status);
+
+    return CheckCommandFlags(request, acceptedCommandEntry);
 }
 
-CommandHandlerInterface * InteractionModelEngine::FindCommandHandler(EndpointId endpointId, ClusterId clusterId)
+Protocols::InteractionModel::Status InteractionModelEngine::CheckCommandAccess(const DataModel::InvokeRequest & aRequest,
+                                                                               const DataModel::AcceptedCommandEntry & entry)
 {
-    for (auto * cur = mCommandHandlerList; cur; cur = cur->GetNext())
+    if (aRequest.subjectDescriptor == nullptr)
     {
-        if (cur->Matches(endpointId, clusterId))
+        return Status::UnsupportedAccess; // we require a subject for invoke
+    }
+
+    Access::RequestPath requestPath{ .cluster     = aRequest.path.mClusterId,
+                                     .endpoint    = aRequest.path.mEndpointId,
+                                     .requestType = Access::RequestType::kCommandInvokeRequest,
+                                     .entityId    = aRequest.path.mCommandId };
+
+    CHIP_ERROR err = Access::GetAccessControl().Check(*aRequest.subjectDescriptor, requestPath, entry.invokePrivilege);
+    if (err != CHIP_NO_ERROR)
+    {
+        if ((err != CHIP_ERROR_ACCESS_DENIED) && (err != CHIP_ERROR_ACCESS_RESTRICTED_BY_ARL))
         {
-            return cur;
+            return Status::Failure;
+        }
+        return err == CHIP_ERROR_ACCESS_DENIED ? Status::UnsupportedAccess : Status::AccessRestricted;
+    }
+
+    return Status::Success;
+}
+
+Protocols::InteractionModel::Status InteractionModelEngine::CheckCommandFlags(const DataModel::InvokeRequest & aRequest,
+                                                                              const DataModel::AcceptedCommandEntry & entry)
+{
+    const bool commandNeedsTimedInvoke = entry.flags.Has(DataModel::CommandQualityFlags::kTimed);
+    const bool commandIsFabricScoped   = entry.flags.Has(DataModel::CommandQualityFlags::kFabricScoped);
+
+    if (commandNeedsTimedInvoke && !aRequest.invokeFlags.Has(DataModel::InvokeFlags::kTimed))
+    {
+        return Status::NeedsTimedInteraction;
+    }
+
+    if (commandIsFabricScoped)
+    {
+        // SPEC: Else if the command in the path is fabric-scoped and there is no accessing fabric,
+        // a CommandStatusIB SHALL be generated with the UNSUPPORTED_ACCESS Status Code.
+
+        // Fabric-scoped commands are not allowed before a specific accessing fabric is available.
+        // This is mostly just during a PASE session before AddNOC.
+        if (aRequest.GetAccessingFabricIndex() == kUndefinedFabricIndex)
+        {
+            return Status::UnsupportedAccess;
         }
     }
 
-    return nullptr;
+    return Status::Success;
+}
+
+Protocols::InteractionModel::Status InteractionModelEngine::CheckCommandExistence(const ConcreteCommandPath & aCommandPath,
+                                                                                  DataModel::AcceptedCommandEntry & entry)
+{
+    auto provider = GetDataModelProvider();
+
+    DataModel::ListBuilder<DataModel::AcceptedCommandEntry> acceptedCommands;
+    (void) provider->AcceptedCommands(aCommandPath, acceptedCommands);
+    for (auto & existing : acceptedCommands.TakeBuffer())
+    {
+        if (existing.commandId == aCommandPath.mCommandId)
+        {
+            entry = existing;
+            return Protocols::InteractionModel::Status::Success;
+        }
+    }
+
+    // invalid command, return the right failure status
+    return DataModel::ValidateClusterPath(provider, aCommandPath, Protocols::InteractionModel::Status::UnsupportedCommand);
+}
+
+DataModel::Provider * InteractionModelEngine::SetDataModelProvider(DataModel::Provider * model)
+{
+    // Altering data model should not be done while IM is actively handling requests.
+    VerifyOrDie(mReadHandlers.begin() == mReadHandlers.end());
+
+    if (model == mDataModelProvider)
+    {
+        // no-op, just return
+        return model;
+    }
+
+    DataModel::Provider * oldModel = mDataModelProvider;
+    if (oldModel != nullptr)
+    {
+        CHIP_ERROR err = oldModel->Shutdown();
+        if (err != CHIP_NO_ERROR)
+        {
+            ChipLogError(InteractionModel, "Failure on interaction model shutdown: %" CHIP_ERROR_FORMAT, err.Format());
+        }
+    }
+
+    mDataModelProvider = model;
+    if (mDataModelProvider != nullptr)
+    {
+        DataModel::InteractionModelContext context;
+
+        context.eventsGenerator         = &EventManagement::GetInstance();
+        context.dataModelChangeListener = &mReportingEngine;
+        context.actionContext           = this;
+
+        CHIP_ERROR err = mDataModelProvider->Startup(context);
+        if (err != CHIP_NO_ERROR)
+        {
+            ChipLogError(InteractionModel, "Failure on interaction model startup: %" CHIP_ERROR_FORMAT, err.Format());
+        }
+    }
+
+    return oldModel;
+}
+
+DataModel::Provider * InteractionModelEngine::GetDataModelProvider() const
+{
+    // These should be called within the CHIP processing loop.
+    assertChipStackLockedByCurrentThread();
+
+    return mDataModelProvider;
 }
 
 void InteractionModelEngine::OnTimedInteractionFailed(TimedHandler * apTimedHandler)
@@ -1507,7 +1949,7 @@ uint16_t InteractionModelEngine::GetMinGuaranteedSubscriptionsPerFabric() const
     return UINT16_MAX;
 #else
     return static_cast<uint16_t>(
-        min(GetReadHandlerPoolCapacityForSubscriptions() / GetConfigMaxFabrics(), static_cast<size_t>(UINT16_MAX)));
+        std::min(GetReadHandlerPoolCapacityForSubscriptions() / GetConfigMaxFabrics(), static_cast<size_t>(UINT16_MAX)));
 #endif
 }
 
@@ -1537,14 +1979,24 @@ void InteractionModelEngine::OnFabricRemoved(const FabricTable & fabricTable, Fa
         return Loop::Continue;
     });
 
-    for (auto * readClient = mpActiveReadClientList; readClient != nullptr; readClient = readClient->GetNextClient())
+#if CHIP_CONFIG_ENABLE_READ_CLIENT
+    for (auto * readClient = mpActiveReadClientList; readClient != nullptr;)
     {
+        // ReadClient::Close may delete the read client so that readClient->GetNextClient() will be use-after-free.
+        // We need save readClient as nextReadClient before closing.
         if (readClient->GetFabricIndex() == fabricIndex)
         {
             ChipLogProgress(InteractionModel, "Fabric removed, deleting obsolete read client with FabricIndex: %u", fabricIndex);
+            auto * nextReadClient = readClient->GetNextClient();
             readClient->Close(CHIP_ERROR_IM_FABRIC_DELETED, false);
+            readClient = nextReadClient;
+        }
+        else
+        {
+            readClient = readClient->GetNextClient();
         }
     }
+#endif // CHIP_CONFIG_ENABLE_READ_CLIENT
 
     for (auto & handler : mWriteHandlers)
     {
@@ -1555,10 +2007,196 @@ void InteractionModelEngine::OnFabricRemoved(const FabricTable & fabricTable, Fa
         }
     }
 
-    // Applications may hold references to CommandHandler instances for async command processing.
+    // Applications may hold references to CommandHandlerImpl instances for async command processing.
     // Therefore we can't forcible destroy CommandHandlers here.  Their exchanges will get closed by
     // the fabric removal, though, so they will fail when they try to actually send their command response
     // and will close at that point.
 }
+
+CHIP_ERROR InteractionModelEngine::ResumeSubscriptions()
+{
+#if CHIP_CONFIG_PERSIST_SUBSCRIPTIONS
+    VerifyOrReturnError(mpSubscriptionResumptionStorage, CHIP_NO_ERROR);
+#if CHIP_CONFIG_SUBSCRIPTION_TIMEOUT_RESUMPTION
+    VerifyOrReturnError(!mSubscriptionResumptionScheduled, CHIP_NO_ERROR);
+#endif
+
+    // To avoid the case of a reboot loop causing rapid traffic generation / power consumption, subscription resumption should make
+    // use of the persisted min-interval values, and wait before resumption. Ideally, each persisted subscription should wait their
+    // own min-interval value before resumption, but that both A) potentially runs into a timer resource issue, and B) having a
+    // low-powered device wake many times also has energy use implications. The logic below waits the largest of the persisted
+    // min-interval values before resuming subscriptions.
+
+    // Even though this causes subscription-to-subscription interaction by linking the min-interval values, this is the right thing
+    // to do for now because it's both simple and avoids the timer resource and multiple-wake problems. This issue is to track
+    // future improvements: https://github.com/project-chip/connectedhomeip/issues/25439
+
+    SubscriptionResumptionStorage::SubscriptionInfo subscriptionInfo;
+    auto * iterator             = mpSubscriptionResumptionStorage->IterateSubscriptions();
+    mNumOfSubscriptionsToResume = 0;
+    uint16_t minInterval        = 0;
+    while (iterator->Next(subscriptionInfo))
+    {
+        mNumOfSubscriptionsToResume++;
+        minInterval = std::max(minInterval, subscriptionInfo.mMinInterval);
+    }
+    iterator->Release();
+
+    if (mNumOfSubscriptionsToResume)
+    {
+#if CHIP_CONFIG_SUBSCRIPTION_TIMEOUT_RESUMPTION
+        mSubscriptionResumptionScheduled = true;
+#endif
+        ChipLogProgress(InteractionModel, "Resuming %d subscriptions in %u seconds", mNumOfSubscriptionsToResume, minInterval);
+        ReturnErrorOnFailure(mpExchangeMgr->GetSessionManager()->SystemLayer()->StartTimer(System::Clock::Seconds16(minInterval),
+                                                                                           ResumeSubscriptionsTimerCallback, this));
+    }
+    else
+    {
+        ChipLogProgress(InteractionModel, "No subscriptions to resume");
+    }
+#endif // CHIP_CONFIG_PERSIST_SUBSCRIPTIONS
+
+    return CHIP_NO_ERROR;
+}
+
+void InteractionModelEngine::ResumeSubscriptionsTimerCallback(System::Layer * apSystemLayer, void * apAppState)
+{
+#if CHIP_CONFIG_PERSIST_SUBSCRIPTIONS
+    VerifyOrReturn(apAppState != nullptr);
+    InteractionModelEngine * imEngine = static_cast<InteractionModelEngine *>(apAppState);
+#if CHIP_CONFIG_SUBSCRIPTION_TIMEOUT_RESUMPTION
+    imEngine->mSubscriptionResumptionScheduled = false;
+    bool resumedSubscriptions                  = false;
+#endif // CHIP_CONFIG_SUBSCRIPTION_TIMEOUT_RESUMPTION
+    SubscriptionResumptionStorage::SubscriptionInfo subscriptionInfo;
+    AutoReleaseSubscriptionInfoIterator iterator(imEngine->mpSubscriptionResumptionStorage->IterateSubscriptions());
+    while (iterator->Next(subscriptionInfo))
+    {
+        // If subscription happens between reboot and this timer callback, it's already live and should skip resumption
+        if (Loop::Break == imEngine->mReadHandlers.ForEachActiveObject([&](ReadHandler * handler) {
+                SubscriptionId subscriptionId;
+                handler->GetSubscriptionId(subscriptionId);
+                if (subscriptionId == subscriptionInfo.mSubscriptionId)
+                {
+                    return Loop::Break;
+                }
+                return Loop::Continue;
+            }))
+        {
+            ChipLogProgress(InteractionModel, "Skip resuming live subscriptionId %" PRIu32, subscriptionInfo.mSubscriptionId);
+            continue;
+        }
+
+        auto subscriptionResumptionSessionEstablisher = Platform::MakeUnique<SubscriptionResumptionSessionEstablisher>();
+        if (subscriptionResumptionSessionEstablisher == nullptr)
+        {
+            ChipLogProgress(InteractionModel, "Failed to create SubscriptionResumptionSessionEstablisher");
+            return;
+        }
+
+        if (subscriptionResumptionSessionEstablisher->ResumeSubscription(*imEngine->mpCASESessionMgr, subscriptionInfo) !=
+            CHIP_NO_ERROR)
+        {
+            ChipLogProgress(InteractionModel, "Failed to ResumeSubscription 0x%" PRIx32, subscriptionInfo.mSubscriptionId);
+            return;
+        }
+        subscriptionResumptionSessionEstablisher.release();
+#if CHIP_CONFIG_SUBSCRIPTION_TIMEOUT_RESUMPTION
+        resumedSubscriptions = true;
+#endif // CHIP_CONFIG_SUBSCRIPTION_TIMEOUT_RESUMPTION
+    }
+
+#if CHIP_CONFIG_SUBSCRIPTION_TIMEOUT_RESUMPTION
+    // If no persisted subscriptions needed resumption then all resumption retries are done
+    if (!resumedSubscriptions)
+    {
+        imEngine->mNumSubscriptionResumptionRetries = 0;
+    }
+#endif // CHIP_CONFIG_SUBSCRIPTION_TIMEOUT_RESUMPTION
+
+#endif // CHIP_CONFIG_PERSIST_SUBSCRIPTIONS
+}
+
+#if CHIP_CONFIG_PERSIST_SUBSCRIPTIONS && CHIP_CONFIG_SUBSCRIPTION_TIMEOUT_RESUMPTION
+uint32_t InteractionModelEngine::ComputeTimeSecondsTillNextSubscriptionResumption()
+{
+#if CONFIG_BUILD_FOR_HOST_UNIT_TEST
+    if (mSubscriptionResumptionRetrySecondsOverride > 0)
+    {
+        return static_cast<uint32_t>(mSubscriptionResumptionRetrySecondsOverride);
+    }
+#endif
+    if (mNumSubscriptionResumptionRetries > CHIP_CONFIG_SUBSCRIPTION_TIMEOUT_RESUMPTION_MAX_FIBONACCI_STEP_INDEX)
+    {
+        return CHIP_CONFIG_SUBSCRIPTION_TIMEOUT_RESUMPTION_MAX_RETRY_INTERVAL_SECS;
+    }
+
+    return CHIP_CONFIG_SUBSCRIPTION_TIMEOUT_RESUMPTION_MIN_RETRY_INTERVAL_SECS +
+        GetFibonacciForIndex(mNumSubscriptionResumptionRetries) *
+        CHIP_CONFIG_SUBSCRIPTION_TIMEOUT_RESUMPTION_WAIT_TIME_MULTIPLIER_SECS;
+}
+
+bool InteractionModelEngine::HasSubscriptionsToResume()
+{
+    VerifyOrReturnValue(mpSubscriptionResumptionStorage != nullptr, false);
+
+    // Look through persisted subscriptions and see if any aren't already in mReadHandlers pool
+    SubscriptionResumptionStorage::SubscriptionInfo subscriptionInfo;
+    auto * iterator                = mpSubscriptionResumptionStorage->IterateSubscriptions();
+    bool foundSubscriptionToResume = false;
+    while (iterator->Next(subscriptionInfo))
+    {
+        if (Loop::Break == mReadHandlers.ForEachActiveObject([&](ReadHandler * handler) {
+                SubscriptionId subscriptionId;
+                handler->GetSubscriptionId(subscriptionId);
+                if (subscriptionId == subscriptionInfo.mSubscriptionId)
+                {
+                    return Loop::Break;
+                }
+                return Loop::Continue;
+            }))
+        {
+            continue;
+        }
+
+        foundSubscriptionToResume = true;
+        break;
+    }
+    iterator->Release();
+
+    return foundSubscriptionToResume;
+}
+#endif // CHIP_CONFIG_PERSIST_SUBSCRIPTIONS && CHIP_CONFIG_SUBSCRIPTION_TIMEOUT_RESUMPTION
+
+#if CHIP_CONFIG_PERSIST_SUBSCRIPTIONS
+void InteractionModelEngine::DecrementNumSubscriptionsToResume()
+{
+    VerifyOrReturn(mNumOfSubscriptionsToResume > 0);
+#if CHIP_CONFIG_ENABLE_ICD_CIP && !CHIP_CONFIG_SUBSCRIPTION_TIMEOUT_RESUMPTION
+    VerifyOrDie(mICDManager);
+#endif // CHIP_CONFIG_ENABLE_ICD_CIP && !CHIP_CONFIG_SUBSCRIPTION_TIMEOUT_RESUMPTION
+
+    mNumOfSubscriptionsToResume--;
+
+#if CHIP_CONFIG_ENABLE_ICD_CIP && !CHIP_CONFIG_SUBSCRIPTION_TIMEOUT_RESUMPTION
+    if (!mNumOfSubscriptionsToResume)
+    {
+        mICDManager->SetBootUpResumeSubscriptionExecuted();
+    }
+#endif // CHIP_CONFIG_ENABLE_ICD_CIP && !CHIP_CONFIG_SUBSCRIPTION_TIMEOUT_RESUMPTION
+}
+#endif // CHIP_CONFIG_PERSIST_SUBSCRIPTIONS
+
+#if CHIP_CONFIG_PERSIST_SUBSCRIPTIONS && CHIP_CONFIG_SUBSCRIPTION_TIMEOUT_RESUMPTION
+void InteractionModelEngine::ResetNumSubscriptionsRetries()
+{
+    // Check if there are any subscriptions to resume, if not the retry counter can be reset.
+    if (!HasSubscriptionsToResume())
+    {
+        mNumSubscriptionResumptionRetries = 0;
+    }
+}
+#endif // CHIP_CONFIG_PERSIST_SUBSCRIPTIONS && CHIP_CONFIG_SUBSCRIPTION_TIMEOUT_RESUMPTION
 } // namespace app
 } // namespace chip

@@ -64,6 +64,10 @@ class LoopbackTransportDelegate
 public:
     virtual ~LoopbackTransportDelegate() {}
 
+    // Called by the loopback transport when a message is requested to be sent.
+    // This is called even if the message is subsequently rejected or dropped.
+    virtual void WillSendMessage(const Transport::PeerAddress & peer, const System::PacketBufferHandle & message) {}
+
     // Called by the loopback transport when it drops one of a configurable number of messages (mDroppedMessageCount) after a
     // configurable allowed number of messages (mNumMessagesToAllowBeforeDropping)
     virtual void OnMessageDropped() {}
@@ -72,7 +76,24 @@ public:
 class LoopbackTransport : public Transport::Base
 {
 public:
-    void InitLoopbackTransport(System::Layer * systemLayer) { mSystemLayer = systemLayer; }
+    // In test scenarios using the loopback transport, we're only ever given
+    // the address we're sending to, but we don't have any information about
+    // what our local address is. Assume our fake addresses come in pairs of
+    // even and odd port numbers, so we can calculate one from the other by
+    // flipping the LSB of the port number.
+    static Transport::PeerAddress LoopbackPeer(const Transport::PeerAddress & address)
+    {
+        Transport::PeerAddress other(address);
+        other.SetPort(address.GetPort() ^ 1);
+        return other;
+    }
+
+    void InitLoopbackTransport(System::Layer * systemLayer)
+    {
+        Reset();
+        mSystemLayer = systemLayer;
+    }
+
     void ShutdownLoopbackTransport()
     {
         // Make sure no one left packets hanging out that they thought got
@@ -95,7 +116,7 @@ public:
         {
             auto item = std::move(_this->mPendingMessageQueue.front());
             _this->mPendingMessageQueue.pop();
-            _this->HandleMessageReceived(item.mDestinationAddress, std::move(item.mPendingMessage));
+            _this->HandleMessageReceived(LoopbackPeer(item.mDestinationAddress), std::move(item.mPendingMessage));
         }
     }
 
@@ -103,9 +124,21 @@ public:
 
     CHIP_ERROR SendMessage(const Transport::PeerAddress & address, System::PacketBufferHandle && msgBuf) override
     {
-        ReturnErrorOnFailure(mMessageSendError);
+        if (mDelegate != nullptr)
+        {
+            mDelegate->WillSendMessage(address, msgBuf);
+        }
+
+        if (mNumMessagesToAllowBeforeError == 0)
+        {
+            ReturnErrorOnFailure(mMessageSendError);
+        }
         mSentMessageCount++;
         bool dropMessage = false;
+        if (mNumMessagesToAllowBeforeError > 0)
+        {
+            --mNumMessagesToAllowBeforeError;
+        }
         if (mNumMessagesToAllowBeforeDropping > 0)
         {
             --mNumMessagesToAllowBeforeDropping;
@@ -124,25 +157,25 @@ public:
             {
                 mDelegate->OnMessageDropped();
             }
-        }
-        else
-        {
-            System::PacketBufferHandle receivedMessage = msgBuf.CloneData();
-            mPendingMessageQueue.push(PendingMessageItem(address, std::move(receivedMessage)));
-            mSystemLayer->ScheduleWork(OnMessageReceived, this);
+
+            return CHIP_NO_ERROR;
         }
 
-        return CHIP_NO_ERROR;
+        System::PacketBufferHandle receivedMessage = msgBuf.CloneData();
+        mPendingMessageQueue.push(PendingMessageItem(address, std::move(receivedMessage)));
+        return mSystemLayer->ScheduleWork(OnMessageReceived, this);
     }
 
     bool CanSendToPeer(const Transport::PeerAddress & address) override { return true; }
 
     void Reset()
     {
+        mPendingMessageQueue              = std::queue<PendingMessageItem>();
         mNumMessagesToDrop                = 0;
         mDroppedMessageCount              = 0;
         mSentMessageCount                 = 0;
         mNumMessagesToAllowBeforeDropping = 0;
+        mNumMessagesToAllowBeforeError    = 0;
         mMessageSendError                 = CHIP_NO_ERROR;
     }
 
@@ -158,11 +191,11 @@ public:
 
     System::Layer * mSystemLayer = nullptr;
     std::queue<PendingMessageItem> mPendingMessageQueue;
-    Transport::PeerAddress mTxAddress;
     uint32_t mNumMessagesToDrop                = 0;
     uint32_t mDroppedMessageCount              = 0;
     uint32_t mSentMessageCount                 = 0;
     uint32_t mNumMessagesToAllowBeforeDropping = 0;
+    uint32_t mNumMessagesToAllowBeforeError    = 0;
     CHIP_ERROR mMessageSendError               = CHIP_NO_ERROR;
     LoopbackTransportDelegate * mDelegate      = nullptr;
 };

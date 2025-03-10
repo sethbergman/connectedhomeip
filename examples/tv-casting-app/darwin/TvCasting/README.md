@@ -7,12 +7,19 @@ commissioning mode, advertises itself as a Commissionable Node and gets
 commissioned. Then it allows the user to send Matter ContentLauncher commands to
 the TV.
 
+Refer to the
+[Matter Casting APIs documentation](https://project-chip.github.io/connectedhomeip-doc/examples/tv-casting-app/APIs.html)
+to build the Matter “Casting Client” into your consumer-facing mobile app.
+
 ---
 
 -   [Matter TV Casting iOS App Example](#matter-tv-casting-ios-app-example)
     -   [Building the Application](#building-the-application)
+        -   [Building through command line](#building-through-command-line)
         -   [Compilation Fixes](#compilation-fixes)
     -   [Installing the Application](#installing-the-application)
+    -   [Debugging](#debugging)
+    -   [Running the Application](#running-the-application)
 
 ---
 
@@ -34,6 +41,20 @@ fail with missing signing configuration errors.
 
 You need to update the Project configuration for TvCasting app to use your
 Personal Developer account and a unique Bundle ID.
+
+### Building through command line
+
+To build the app through the command line, use the xcodebuild app.
+
+```shell
+xcodebuild -workspace TvCastingDarwin.xcworkspace -scheme TvCasting -sdk <SDK_TARGET>
+```
+
+The list of available SDKs can be found by using the showsdks flag.
+
+```shell
+xcodebuild -showsdks
+```
 
 ### Compilation Fixes
 
@@ -78,3 +99,19 @@ to run.
 
 Now you can launch the application from the Home screen or from Xcode by hitting
 the run button once more.
+
+## Debugging
+
+Use the "TvCasting" scheme when building to enable debugging. If you wish to
+build the app without any debugging symbols, use the "TvCasting Release" scheme.
+
+## Running the Application
+
+This example Matter TV Casting iOS application can be tested with the following
+video players:
+
+1. With the
+   [example Matter tv-app](https://github.com/project-chip/connectedhomeip/tree/master/examples/tv-app)
+   running on a Raspberry Pi - works out of the box.
+2. With a FireTV device - requires your Amazon Customer ID to be allow-listed
+   first.

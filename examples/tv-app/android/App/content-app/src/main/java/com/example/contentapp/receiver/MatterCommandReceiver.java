@@ -4,9 +4,13 @@ import android.app.PendingIntent;
 import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
+import android.provider.Settings;
 import android.util.Log;
 import com.example.contentapp.AttributeHolder;
+import com.example.contentapp.CommandResponseHolder;
 import com.example.contentapp.MainActivity;
+import com.example.contentapp.matter.MatterAgentClient;
+import com.matter.tv.app.api.Clusters;
 import com.matter.tv.app.api.MatterIntentConstants;
 
 public class MatterCommandReceiver extends BroadcastReceiver {
@@ -14,6 +18,9 @@ public class MatterCommandReceiver extends BroadcastReceiver {
 
   @Override
   public void onReceive(Context context, Intent intent) {
+
+    MatterAgentClient.initialize(context.getApplicationContext());
+
     final String intentAction = intent.getAction();
     Log.i(TAG, "Some Intent received from the matter server " + intentAction);
     if (intentAction == null || intentAction.isEmpty()) {
@@ -23,8 +30,8 @@ public class MatterCommandReceiver extends BroadcastReceiver {
 
     switch (intentAction) {
       case MatterIntentConstants.ACTION_MATTER_COMMAND:
-        int commandId = intent.getIntExtra(MatterIntentConstants.EXTRA_COMMAND_ID, -1);
-        int clusterId = intent.getIntExtra(MatterIntentConstants.EXTRA_CLUSTER_ID, -1);
+        long commandId = intent.getLongExtra(MatterIntentConstants.EXTRA_COMMAND_ID, -1);
+        long clusterId = intent.getLongExtra(MatterIntentConstants.EXTRA_CLUSTER_ID, -1);
         if (commandId != -1) {
           byte[] commandPayload =
               intent.getByteArrayExtra(MatterIntentConstants.EXTRA_COMMAND_PAYLOAD);
@@ -39,17 +46,34 @@ public class MatterCommandReceiver extends BroadcastReceiver {
                   .append(command)
                   .toString();
           Log.d(TAG, message);
-          String response = "{\"0\":1, \"1\":\"custom response from content app\"}";
+
+          int pinCode =
+              Settings.Secure.getInt(context.getContentResolver(), "matter_pin_code", 20202021);
+          Log.d(TAG, "Retrieved pin code:" + pinCode);
+
+          CommandResponseHolder.getInstance()
+              .setResponseValue(
+                  Clusters.AccountLogin.Id,
+                  Clusters.AccountLogin.Commands.GetSetupPIN.ID,
+                  "{\""
+                      + Clusters.AccountLogin.Commands.GetSetupPINResponse.Fields.SetupPIN
+                      + "\":\""
+                      + pinCode
+                      + "\"}");
+
+          String response =
+              CommandResponseHolder.getInstance().getCommandResponse(clusterId, commandId);
 
           Intent in = new Intent(context, MainActivity.class);
           in.putExtra(MatterIntentConstants.EXTRA_COMMAND_PAYLOAD, command);
+          in.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
           context.startActivity(in);
 
           Log.d(TAG, "Started activity. Now sending response");
 
           sendResponseViaPendingIntent(context, intent, response);
         } else {
-          int attributeId = intent.getIntExtra(MatterIntentConstants.EXTRA_ATTRIBUTE_ID, -1);
+          long attributeId = intent.getLongExtra(MatterIntentConstants.EXTRA_ATTRIBUTE_ID, -1);
           String attributeAction =
               intent.getStringExtra(MatterIntentConstants.EXTRA_ATTRIBUTE_ACTION);
           if (attributeAction.equals(MatterIntentConstants.ATTRIBUTE_ACTION_READ)) {

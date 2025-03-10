@@ -20,7 +20,10 @@ executable("persistent_storage") {
     "main.cpp",
   ]
 
-  deps = [ "${chip_root}/src/lib" ]
+  deps = [
+    "${chip_root}/src/lib",
+    "${chip_root}/src/platform/logging:default",
+  ]
 
   cflags = [ "-Wconversion" ]
 
@@ -31,4 +34,8 @@ executable("persistent_storage") {
 
 group("linux") {
   deps = [ ":persistent_storage" ]
+}
+
+group("default") {
+  deps = [ ":linux" ]
 }

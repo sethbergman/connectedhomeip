@@ -15,11 +15,17 @@
  *    limitations under the License.
  */
 
+// NOTE: This class was not intended to be part of the public Matter API;
+// internally this class has been replaced by MTRAsyncWorkQueue. This code
+// remains here simply to preserve API/ABI compatibility.
+
 #import <dispatch/dispatch.h>
 #import <os/lock.h>
 
-#import "MTRAsyncCallbackWorkQueue.h"
-#import "MTRLogging.h"
+#import "MTRLogging_Internal.h"
+#import "MTRUnfairLock.h"
+
+#import <Matter/MTRAsyncCallbackWorkQueue.h>
 
 #pragma mark - Class extensions
 
@@ -41,10 +47,13 @@
 @end
 
 @interface MTRAsyncCallbackQueueWorkItem ()
+@property (nonatomic, readonly) os_unfair_lock lock;
 @property (nonatomic, strong, readonly) dispatch_queue_t queue;
 @property (nonatomic, readwrite) NSUInteger retryCount;
 @property (nonatomic, strong) MTRAsyncCallbackWorkQueue * workQueue;
+@property (nonatomic, readonly) BOOL enqueued;
 // Called by the queue
+- (void)markEnqueued;
 - (void)callReadyHandlerWithContext:(id)context;
 - (void)cancel;
 @end
@@ -63,14 +72,28 @@
     return self;
 }
 
+- (NSString *)description
+{
+    std::lock_guard lock(_lock);
+
+    return [NSString
+        stringWithFormat:@"MTRAsyncCallbackWorkQueue context: %@ items count: %lu", self.context, static_cast<unsigned long>(self.items.count)];
+}
+
 - (void)enqueueWorkItem:(MTRAsyncCallbackQueueWorkItem *)item
 {
-    os_unfair_lock_lock(&_lock);
+    if (item.enqueued) {
+        MTR_LOG_ERROR("MTRAsyncCallbackWorkQueue enqueueWorkItem: item cannot be enqueued twice");
+        return;
+    }
+
+    [item markEnqueued];
+
+    std::lock_guard lock(_lock);
     item.workQueue = self;
     [self.items addObject:item];
 
     [self _callNextReadyWorkItem];
-    os_unfair_lock_unlock(&_lock);
 }
 
 - (void)invalidate
@@ -89,12 +112,11 @@
 // called after executing a work item
 - (void)_postProcessWorkItem:(MTRAsyncCallbackQueueWorkItem *)workItem retry:(BOOL)retry
 {
-    os_unfair_lock_lock(&_lock);
+    std::lock_guard lock(_lock);
     // sanity check if running
     if (!self.runningWorkItemCount) {
         // something is wrong with state - nothing is currently running
-        os_unfair_lock_unlock(&_lock);
-        MTR_LOG_ERROR("endWork: no work is running on work queue");
+        MTR_LOG_ERROR("MTRAsyncCallbackWorkQueue endWork: no work is running on work queue");
         return;
     }
 
@@ -103,8 +125,7 @@
     MTRAsyncCallbackQueueWorkItem * firstWorkItem = self.items.firstObject;
     if (firstWorkItem != workItem) {
         // something is wrong with this work item - should not be currently running
-        os_unfair_lock_unlock(&_lock);
-        MTR_LOG_ERROR("endWork: work item is not first on work queue");
+        MTR_LOG_ERROR("MTRAsyncCallbackWorkQueue endWork: work item is not first on work queue");
         return;
     }
 
@@ -116,7 +137,6 @@
     // when "concurrency width" is implemented this will be decremented instead
     self.runningWorkItemCount = 0;
     [self _callNextReadyWorkItem];
-    os_unfair_lock_unlock(&_lock);
 }
 
 - (void)endWork:(MTRAsyncCallbackQueueWorkItem *)workItem
@@ -138,12 +158,16 @@
         return;
     }
 
-    // when "concurrency width" is implemented this will be incremented instead
-    self.runningWorkItemCount = 1;
+    // only proceed to mark queue as running if there are items to run
+    if (self.items.count) {
+        // when "concurrency width" is implemented this will be incremented instead
+        self.runningWorkItemCount = 1;
 
-    MTRAsyncCallbackQueueWorkItem * workItem = self.items.firstObject;
-    [workItem callReadyHandlerWithContext:self.context];
+        MTRAsyncCallbackQueueWorkItem * workItem = self.items.firstObject;
+        [workItem callReadyHandlerWithContext:self.context];
+    }
 }
+
 @end
 
 @implementation MTRAsyncCallbackQueueWorkItem
@@ -151,14 +175,58 @@
 - (instancetype)initWithQueue:(dispatch_queue_t)queue
 {
     if (self = [super init]) {
+        _lock = OS_UNFAIR_LOCK_INIT;
         _queue = queue;
     }
     return self;
 }
 
+// assume lock is held
+- (void)_invalidate
+{
+    // Make sure we don't leak via handlers that close over us, as ours must.
+    // This is a bit odd, since these are supposed to be non-nullable
+    // properties, but it's the best we can do given our API surface, unless we
+    // assume that all consumers consistently use __weak refs to us inside their
+    // handlers.
+    //
+    // Setting the attributes to nil will not compile; set the ivars directly.
+    _readyHandler = nil;
+    _cancelHandler = nil;
+}
+
+- (void)invalidate
+{
+    std::lock_guard lock(_lock);
+    [self _invalidate];
+}
+
+- (void)markEnqueued
+{
+    std::lock_guard lock(_lock);
+    _enqueued = YES;
+}
+
+- (void)setReadyHandler:(MTRAsyncCallbackReadyHandler)readyHandler
+{
+    std::lock_guard lock(_lock);
+    if (!_enqueued) {
+        _readyHandler = readyHandler;
+    }
+}
+
+- (void)setCancelHandler:(dispatch_block_t)cancelHandler
+{
+    std::lock_guard lock(_lock);
+    if (!_enqueued) {
+        _cancelHandler = cancelHandler;
+    }
+}
+
 - (void)endWork
 {
     [self.workQueue endWork:self];
+    [self invalidate];
 }
 
 - (void)retryWork
@@ -170,16 +238,36 @@
 - (void)callReadyHandlerWithContext:(id)context
 {
     dispatch_async(self.queue, ^{
-        self.readyHandler(context, self.retryCount);
-        self.retryCount++;
+        os_unfair_lock_lock(&self->_lock);
+        MTRAsyncCallbackReadyHandler readyHandler = self->_readyHandler;
+        NSUInteger retryCount = self->_retryCount;
+        if (readyHandler) {
+            self->_retryCount++;
+        }
+        os_unfair_lock_unlock(&self->_lock);
+
+        if (readyHandler == nil) {
+            // Nothing to do here.
+            [self endWork];
+        } else {
+            readyHandler(context, retryCount);
+        }
     });
 }
 
 // Called by the work queue
 - (void)cancel
 {
-    dispatch_async(self.queue, ^{
-        self.cancelHandler();
-    });
+    os_unfair_lock_lock(&self->_lock);
+    dispatch_block_t cancelHandler = self->_cancelHandler;
+    [self _invalidate];
+    os_unfair_lock_unlock(&self->_lock);
+
+    if (cancelHandler) {
+        dispatch_async(self.queue, ^{
+            cancelHandler();
+        });
+    }
 }
+
 @end

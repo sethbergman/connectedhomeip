@@ -42,6 +42,7 @@ source_set("additional_data_payload") {
     "${chip_root}/src/crypto",
     "${chip_root}/src/lib/core",
     "${chip_root}/src/lib/support",
+    "${chip_root}/src/protocols:type_definitions",
     "${chip_root}/src/setup_payload:additional_data_payload_buildconfig",
   ]
 }
@@ -65,8 +66,6 @@ static_library("setup_payload") {
     "QRCodeSetupPayloadParser.h",
     "SetupPayload.cpp",
     "SetupPayload.h",
-    "SetupPayloadHelper.cpp",
-    "SetupPayloadHelper.h",
   ]
 
   cflags = [ "-Wconversion" ]
@@ -77,4 +76,26 @@ static_library("setup_payload") {
     "${chip_root}/src/lib/core",
     "${chip_root}/src/lib/support",
   ]
+}
+
+source_set("setup_payload_helper") {
+  sources = [
+    "SetupPayloadHelper.cpp",
+    "SetupPayloadHelper.h",
+  ]
+
+  public_deps = [ "${chip_root}/src/setup_payload" ]
+}
+
+source_set("onboarding-codes-utils") {
+  sources = [
+    "OnboardingCodesUtil.cpp",
+    "OnboardingCodesUtil.h",
+  ]
+
+  deps = [ "${chip_root}/src/platform" ]
+
+  public_deps = [ "${chip_root}/src/setup_payload" ]
+
+  public_configs = [ "${chip_root}/src:includes" ]
 }

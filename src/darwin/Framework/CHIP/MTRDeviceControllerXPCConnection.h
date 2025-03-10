@@ -15,6 +15,8 @@
  *    limitations under the License.
  */
 
+#import <Matter/MTRDefines.h>
+
 #import "MTRDeviceController+XPC.h"
 
 NS_ASSUME_NONNULL_BEGIN
@@ -43,9 +45,10 @@ typedef void (^MTRGetProxyHandleHandler)(dispatch_queue_t queue, MTRDeviceContro
 @interface MTRDeviceControllerXPCConnection<MTRDeviceControllerClientProtocol> : NSObject
 
 /**
- * This method is just for test purpsoe.
+ * This method is just for test purpose.
  */
-+ (instancetype)connectionWithWorkQueue:(dispatch_queue_t)workQueue connectBlock:(MTRXPCConnectBlock)connectBlock;
++ (MTRDeviceControllerXPCConnection *)connectionWithWorkQueue:(dispatch_queue_t)workQueue
+                                                 connectBlock:(MTRXPCConnectBlock)connectBlock;
 
 - (void)getProxyHandleWithCompletion:(MTRGetProxyHandleHandler)completion;
 - (void)registerReportHandlerWithController:(id<NSCopying>)controller
@@ -54,6 +57,7 @@ typedef void (^MTRGetProxyHandleHandler)(dispatch_queue_t queue, MTRDeviceContro
 - (void)deregisterReportHandlersWithController:(id<NSCopying>)controller
                                         nodeID:(NSNumber *)nodeID
                                     completion:(dispatch_block_t)completion;
+- (void)callSubscriptionEstablishedHandler:(dispatch_block_t)handler;
 
 @end
 

@@ -1,6 +1,6 @@
 ![ARM Mbed-OS logo](https://raw.githubusercontent.com/ARMmbed/mbed-os/master/logo.png)
 
-<h1> Matter Arm Mbed OS All Clusters Example Application </h1>
+# Matter Arm Mbed OS All Clusters Example Application
 
 The Arm Mbed OS All Clusters Example demonstrates device commissioning process
 and all available clusters control.
@@ -95,7 +95,7 @@ its requirements.
 > devcontainer is the recommended way to interact with Arm Mbed-OS port of the
 > Matter Project.**
 >
-> **Please read this [README.md](../../..//docs/VSCODE_DEVELOPMENT.md) for more
+> **Please read this [README.md](../../../docs/VSCODE_DEVELOPMENT.md) for more
 > information about using VSCode in container.**
 
 To initialize the development environment, download all registered sub-modules
@@ -131,7 +131,7 @@ ${MATTER_ROOT}/scripts/examples/mbed_example.sh -c=build -a=all-clusters-minimal
 ```
 
 Both approaches are limited to supported evaluation boards which are listed in
-[Supported devices](#supported_devices) paragraph.
+[Supported devices](#supported-devices) paragraph.
 
 Mbed OS defines three building profiles: _develop, debug_ and _release_. For
 more details please visit
@@ -225,21 +225,22 @@ traces in the terminal.
 
 ### CHIP Tools
 
-Read the [MbedCommissioning](../../../docs/guides/mbedos_commissioning.md) to
+Read the
+[MbedCommissioning](../../../docs/platforms/mbedos/mbedos_commissioning.md) to
 see how to use different CHIP tools to commission and control the application
 within a WiFi network.
 
 ## Supported devices
 
-| Manufacturer                                          | Hardware platform                                                         | Build target          | Platform image                                                                                         |       Status       | Platform components                                                                                                                                                                                                                                                           |
-| ----------------------------------------------------- | ------------------------------------------------------------------------- | --------------------- | ------------------------------------------------------------------------------------------------------ | :----------------: | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| [Cypress<br> Semiconductor](https://www.cypress.com/) | [CY8CPROTO-062-4343W](https://os.mbed.com/platforms/CY8CPROTO-062-4343W/) | `CY8CPROTO_062_4343W` | ![CY8CPROTO-062-4343W](https://os.mbed.com/media/cache/platforms/p6_wifi-bt_proto.png.250x250_q85.jpg) | :heavy_check_mark: | <details><summary>LEDs</summary><ul><li>Board has only one usable LED (LED4) which corresponds to USER LED from UI.</li></ul></details> <details><summary>Buttons</summary><ul><li>Unused</li></ul></details> <details><summary>Slider</summary><ul><li>Unused</ul></details> |
+| Manufacturer                                          | Hardware platform                                                         | Build target          | Platform image                                                                                         | Status | Platform components                                                                                                                                                                                                                                                           |
+| ----------------------------------------------------- | ------------------------------------------------------------------------- | --------------------- | ------------------------------------------------------------------------------------------------------ | :----: | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| [Cypress<br> Semiconductor](https://www.cypress.com/) | [CY8CPROTO-062-4343W](https://os.mbed.com/platforms/CY8CPROTO-062-4343W/) | `CY8CPROTO_062_4343W` | ![CY8CPROTO-062-4343W](https://os.mbed.com/media/cache/platforms/p6_wifi-bt_proto.png.250x250_q85.jpg) |   ✔    | <details><summary>LEDs</summary><ul><li>Board has only one usable LED (LED4) which corresponds to USER LED from UI.</li></ul></details> <details><summary>Buttons</summary><ul><li>Unused</li></ul></details> <details><summary>Slider</summary><ul><li>Unused</ul></details> |
 
 #### Notes
 
 -   More details and guidelines about porting new hardware into the Matter
     project with Mbed OS can be found in
-    [MbedNewTarget](../../../docs/guides/mbedos_add_new_target.md)
+    [MbedNewTarget](../../../docs/platforms/mbedos/mbedos_add_new_target.md)
 -   Some useful information about HW platform specific settings can be found in
     `all-clusters-minimal-app/mbed/mbed_app.json`.  
     Information about this file syntax and its meaning in mbed-os project can be
@@ -273,5 +274,5 @@ following states are possible:
 
 Some of the supported boards may not have sufficient number PCB components to
 follow above description. In that case please refer to
-[Supported devices](#Supported-devices) section and check board's 'Platform
+[Supported devices](#supported-devices) section and check board's 'Platform
 components' column for additional information about the limitation.

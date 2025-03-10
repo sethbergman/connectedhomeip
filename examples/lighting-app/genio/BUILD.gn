@@ -64,10 +64,14 @@ mt793x_sdk("sdk") {
 mt793x_executable("lighting_app") {
   output_name = "chip-mt793x-lighting-app-example.out"
   include_dirs = [ "include" ]
-  defines = []
+  defines = [
+    #"__PWM_DIMMABLE_LED__"
+  ]
 
   sources = [
     "src/AppTask.cpp",
+    "src/ColorFormat.cpp",
+    "src/DimmableLEDWidget.cpp",
     "src/LEDWidget.cpp",
     "src/LightingManager.cpp",
     "src/ZclCallbacks.cpp",
@@ -80,6 +84,7 @@ mt793x_executable("lighting_app") {
     "${chip_root}/examples/lighting-app/lighting-common",
     "${chip_root}/examples/providers:device_info_provider",
     "${chip_root}/src/lib",
+    "${chip_root}/src/platform/logging:default",
     "${chip_root}/src/setup_payload",
     "${mt793x_examples_plat_dir}:genio-matter-shell",
   ]

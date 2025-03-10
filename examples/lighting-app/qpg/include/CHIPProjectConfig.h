@@ -28,14 +28,6 @@
 
 #pragma once
 
-// Use a default setup PIN code if one hasn't been provisioned in flash.
-#ifndef CHIP_DEVICE_CONFIG_USE_TEST_SETUP_PIN_CODE
-#define CHIP_DEVICE_CONFIG_USE_TEST_SETUP_PIN_CODE 20202021
-#endif
-#ifndef CHIP_DEVICE_CONFIG_USE_TEST_SETUP_DISCRIMINATOR
-#define CHIP_DEVICE_CONFIG_USE_TEST_SETUP_DISCRIMINATOR 0xF00
-#endif
-
 // For convenience, enable Chip Security Test Mode and disable the requirement for
 // authentication in various protocols.
 //
@@ -45,40 +37,21 @@
 #define CHIP_CONFIG_SECURITY_TEST_MODE 0
 
 /**
- * CHIP_DEVICE_CONFIG_DEVICE_VENDOR_ID
- *
- * 0xFFF1: Test Vendor.
- */
-#ifndef CHIP_DEVICE_CONFIG_DEVICE_VENDOR_ID
-#define CHIP_DEVICE_CONFIG_DEVICE_VENDOR_ID 0xFFF1
-#endif // CHIP_DEVICE_CONFIG_DEVICE_VENDOR_ID
-
-/**
- * CHIP_DEVICE_CONFIG_DEVICE_PRODUCT_ID
- *
- * 0x8005: example lighting app
- */
-#ifndef CHIP_DEVICE_CONFIG_DEVICE_PRODUCT_ID
-#define CHIP_DEVICE_CONFIG_DEVICE_PRODUCT_ID 0x8005
-#endif // CHIP_DEVICE_CONFIG_DEVICE_PRODUCT_ID
-
-/**
- * CHIP_DEVICE_CONFIG_DEVICE_HARDWARE_VERSION
- *
- * The hardware version number assigned to device or product by the device vendor.  This
- * number is scoped to the device product id, and typically corresponds to a revision of the
- * physical device, a change to its packaging, and/or a change to its marketing presentation.
- * This value is generally *not* incremented for device software versions.
- */
-#define CHIP_DEVICE_CONFIG_DEVICE_HARDWARE_VERSION 1
-
-/**
  * CHIP_DEVICE_CONFIG_DEVICE_SOFTWARE_VERSION
  *
  * A uint32_t identifying the software version running on the device.
+ * First two bytes are reflecting the Matter standard
+ * Last two bytes are reflecting the SDK version of which the first nibble of the first byte represents the major
+ * version and the second nibble of the first byte has the minor number. The last byte holds the patch number.
+ * example for SDK v0.1.5 with Matter v1.2 standard:
+ * 0x01020105
  */
 #ifndef CHIP_DEVICE_CONFIG_DEVICE_SOFTWARE_VERSION
-#define CHIP_DEVICE_CONFIG_DEVICE_SOFTWARE_VERSION 0x0001
+#ifndef OTA_TEST_IMAGE
+#define CHIP_DEVICE_CONFIG_DEVICE_SOFTWARE_VERSION 0x01020105
+#else
+#define CHIP_DEVICE_CONFIG_DEVICE_SOFTWARE_VERSION 0x01020106
+#endif
 #endif
 
 /**
@@ -89,37 +62,19 @@
  * {MAJOR_VERSION}.0d{MINOR_VERSION}
  */
 #ifndef CHIP_DEVICE_CONFIG_DEVICE_SOFTWARE_VERSION_STRING
-#define CHIP_DEVICE_CONFIG_DEVICE_SOFTWARE_VERSION_STRING "0.1ALPHA"
+#ifndef OTA_TEST_IMAGE
+#define CHIP_DEVICE_CONFIG_DEVICE_SOFTWARE_VERSION_STRING "1.2-0.1.5"
+#else
+#define CHIP_DEVICE_CONFIG_DEVICE_SOFTWARE_VERSION_STRING "1.2-0.1.6"
 #endif
+#endif
+
 /**
  * CHIP_DEVICE_CONFIG_ENABLE_CHIPOBLE
  *
  * Enable support for Chip-over-BLE (CHIPoBLE).
  */
 #define CHIP_DEVICE_CONFIG_ENABLE_CHIPOBLE 1
-
-/**
- * CHIP_DEVICE_CONFIG_ENABLE_CHIP_TIME_SERVICE_TIME_SYNC
- *
- * Enables synchronizing the device's real time clock with a remote Chip Time service
- * using the Chip Time Sync protocol.
- */
-#define CHIP_DEVICE_CONFIG_ENABLE_CHIP_TIME_SERVICE_TIME_SYNC 0
-
-/**
- * CHIP_DEVICE_CONFIG_TEST_SERIAL_NUMBER
- *
- * Enables the use of a hard-coded default serial number if none
- * is found in Chip NV storage.
- */
-#define CHIP_DEVICE_CONFIG_TEST_SERIAL_NUMBER "TEST_SN"
-
-/**
- * CHIP_DEVICE_CONFIG_EVENT_LOGGING_DEBUG_BUFFER_SIZE
- *
- * A size, in bytes, of the individual debug event logging buffer.
- */
-#define CHIP_DEVICE_CONFIG_EVENT_LOGGING_DEBUG_BUFFER_SIZE (512)
 
 /**
  *  @name Interaction Model object pool configuration.
@@ -162,5 +117,32 @@
  * @brief Defines the maximum number of WriteClient, limits the number of active write transactions on client.
  */
 #define CHIP_IM_MAX_NUM_WRITE_CLIENT 2
+
+/**
+ * @def CHIP_DEVICE_CONFIG_ENABLE_SED
+ *
+ * @brief Defines if a matter device is acting as a Sleepy End Device(SED)
+ */
+#ifndef CHIP_DEVICE_CONFIG_ENABLE_SED
+#define CHIP_DEVICE_CONFIG_ENABLE_SED 0
+#endif
+
+/**
+ * @def CHIP_DEVICE_CONFIG_ENABLE_SSED
+ *
+ * @brief Defines if a matter device is acting as a Synchronized Sleepy End Device(SSED)
+ */
+#ifndef CHIP_DEVICE_CONFIG_ENABLE_SSED
+#define CHIP_DEVICE_CONFIG_ENABLE_SSED 0
+#endif
+
+/**
+ * @def CHIP_DEVICE_CONFIG_THREAD_FTD
+ *
+ * @brief Defines if a matter device is acting as Full Thread Device (FTD)
+ */
+#ifndef CHIP_DEVICE_CONFIG_THREAD_FTD
+#define CHIP_DEVICE_CONFIG_THREAD_FTD 1
+#endif
 
 #define CHIP_DEVICE_CONFIG_ENABLE_EXTENDED_DISCOVERY 1
